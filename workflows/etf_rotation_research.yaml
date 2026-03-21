@@ -1,0 +1,24 @@
+name: etf_rotation_research
+description: |
+  ETF轮动研究工作流（研究级），用于每日评估预设ETF池的强弱与轮动方向，仅输出研究结论与通知，不直接驱动交易或仓位调整。
+
+# 建议执行时间：盘后或晚间，避免与盘中信号/风控链路冲突
+schedule: "0 18 * * 1-5"  # 工作日 18:00
+
+steps:
+  - name: rotation_research
+    tool: tool_etf_rotation_research
+    description: |
+      计算ETF轮动评分与排名，并生成符合“研究模式一”结构的 Markdown 报告正文（llm_summary）。
+    params:
+      etf_pool: "510300,510500,159915,512100,512880,512690"
+      lookback_days: 120
+      top_k: 3
+
+  - name: send_rotation_research_report
+    tool: tool_send_daily_report
+    description: 将 rotation_research 返回的 report_data 发送到现有通知渠道（钉钉/飞书关联群）。
+    depends_on: [rotation_research]
+    params:
+      report_data: "{{rotation_research.data.report_data}}"
+

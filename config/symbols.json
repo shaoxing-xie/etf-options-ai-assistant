@@ -1,0 +1,65 @@
+{
+  "version": 1,
+  "groups": {
+    "core": {
+      "description": "核心指数 & 主ETF，priority=high，必须每5分钟全量采集。",
+      "priority": "high",
+      "index_codes": [
+        "000300",
+        "399006",
+        "000905",
+        "000016"
+      ],
+      "etf_codes": [
+        "510300",
+        "510500",
+        "510050",
+        "159915"
+      ],
+      "future_codes": [],
+      "option_underlyings": [
+        "510300",
+        "510050",
+        "159915"
+      ]
+    },
+    "industry_etf": {
+      "description": "行业/主题ETF 标的池（仅存放行业ETF代码），priority=medium，可每30分钟一轮或按需采集。",
+      "priority": "medium",
+      "etf_codes": [
+        "512000",
+        "512010",
+        "512480",
+        "159928",
+        "516160"
+      ]
+    },
+    "futures": {
+      "description": "股指 & 商品期货，priority=medium，按需或每30分钟采集一次。",
+      "priority": "medium",
+      "index_codes": [],
+      "etf_codes": [],
+      "future_codes": [
+        "XIN9",
+        "IF",
+        "IH",
+        "IC",
+        "AU"
+      ],
+      "option_underlyings": []
+    },
+    "options_watchlist": {
+      "description": "长期关注标的/期权合约，priority=low，中午或盘后采集。",
+      "priority": "low",
+      "index_codes": [],
+      "etf_codes": [],
+      "future_codes": [],
+      "option_underlyings": [
+        "510300",
+        "510050",
+        "159915",
+        "510500"
+      ]
+    }
+  }
+}

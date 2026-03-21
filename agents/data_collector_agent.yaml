@@ -1,0 +1,105 @@
+# 数据采集 Agent 配置
+# 负责采集指数、ETF、期权、期货等各类市场数据
+
+name: data_collector_agent
+description: 数据采集 Agent，负责采集指数、ETF、期权、期货数据
+
+# Agent 配置
+agent:
+  type: tool_agent
+  tools:
+    # 指数数据采集
+    - tool_fetch_index_realtime
+    - tool_fetch_index_historical
+    - tool_fetch_index_minute
+    - tool_fetch_index_opening
+    - tool_fetch_global_index_spot
+    
+    # ETF数据采集
+    - tool_fetch_etf_realtime
+    - tool_fetch_etf_historical
+    - tool_fetch_etf_minute
+    
+    # 期权数据采集
+    - tool_fetch_option_realtime
+    - tool_fetch_option_greeks
+    - tool_fetch_option_minute
+    
+    # 期货数据采集
+    - tool_fetch_a50_data
+    
+    # 工具类
+    - tool_get_option_contracts
+    - tool_check_trading_status
+    
+    # 数据访问工具（数据采集agent也需要读取缓存数据）
+    - tool_read_index_daily
+    - tool_read_index_minute
+    - tool_read_etf_daily
+    - tool_read_etf_minute
+    - tool_read_option_minute
+    - tool_read_option_greeks
+
+# 定时任务配置
+schedules:
+  # 早盘数据采集任务
+  # 执行时间：每个工作日 9:15（盘前分析前）
+  # 采集内容：
+  #   - 沪深300指数(000300)的历史日线数据（最近5天）
+  #   - 沪深300ETF(510300)的历史日线数据（最近5天）
+  # 用途：为盘前分析（9:15执行）和策略决策提供基础数据
+  - name: morning_data_collection
+    cron: "15 9 * * 1-5"  # 工作日 9:15
+    task: collect_morning_data
+  
+  # 盘中数据采集任务
+  # 执行时间：每个工作日交易时段内每5分钟执行一次
+  #   - 上午：9:30-11:30（每5分钟）
+  #   - 下午：13:00-15:00（每5分钟）
+  # 采集内容：
+  #   - 沪深300指数(000300)的5分钟K线数据
+  #   - 沪深300ETF(510300)的5分钟K线数据
+  #   - 期权合约(10010466)的Greeks数据（Delta、Gamma、Theta、Vega等）
+  # 用途：实时监控市场变化，为日内交易和风险控制提供数据支持
+  # 注意：由于cron表达式限制，使用多个schedule来实现精确的时间段控制
+  - name: intraday_data_collection_morning
+    cron: "30-59/5 9 * * 1-5"  # 工作日 9:30-9:55 每5分钟
+    task: collect_intraday_data
+  - name: intraday_data_collection_midday
+    cron: "*/5 10-11 * * 1-5"  # 工作日 10:00-11:59 每5分钟
+    task: collect_intraday_data
+  - name: intraday_data_collection_afternoon
+    cron: "*/5 13-14 * * 1-5"  # 工作日 13:00-14:59 每5分钟
+    task: collect_intraday_data
+  - name: intraday_data_collection_closing
+    cron: "0-0/5 15 * * 1-5"  # 工作日 15:00 执行一次（收盘）
+    task: collect_intraday_data
+
+# 任务定义
+tasks:
+  collect_morning_data:
+    steps:
+      - tool: tool_fetch_index_historical
+        params:
+          index_code: "000300"
+          period: "daily"
+          lookback_days: 5
+      - tool: tool_fetch_etf_historical
+        params:
+          etf_code: "510300"
+          period: "daily"
+          lookback_days: 5
+  
+  collect_intraday_data:
+    steps:
+      - tool: tool_fetch_index_minute
+        params:
+          index_code: "000300"
+          period: "5"
+      - tool: tool_fetch_etf_minute
+        params:
+          etf_code: "510300"
+          period: "5"
+      - tool: tool_fetch_option_greeks
+        params:
+          contract_code: "10010466"  # 需要从配置读取

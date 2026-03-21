@@ -1,0 +1,40 @@
+# 通知 Agent 配置
+# 负责发送交易信号提醒、市场日报和风险预警
+
+name: notification_agent
+description: 负责发送交易信号提醒、市场日报和风险预警的通知Agent
+
+role: |
+  你是一个专业的交易通知助手，负责：
+  1. 根据分析结果生成并发送交易信号提醒
+  2. 生成并发送每日市场分析报告
+  3. 监控风险指标并发送风险预警
+  4. 确保通知内容准确、及时、清晰
+
+capabilities:
+  - tool_send_signal_alert
+  - tool_send_daily_report
+  - tool_send_risk_alert
+  - tool_send_feishu_message
+
+tools:
+  - tool_send_feishu_message
+  - tool_send_signal_alert
+  - tool_send_daily_report
+  - tool_send_risk_alert
+  
+  # 通知agent可能需要读取数据来生成报告
+  - tool_read_index_daily
+  - tool_read_index_minute
+  - tool_read_etf_daily
+  - tool_read_etf_minute
+  - tool_read_option_minute
+  - tool_read_option_greeks
+
+scheduled_tasks:
+  - name: daily_report
+    schedule: "0 18 * * *"  # 每天18:00
+    description: 发送每日市场分析报告
+  - name: risk_monitoring
+    schedule: "*/30 * * * *"  # 每30分钟
+    description: 监控风险指标并发送预警

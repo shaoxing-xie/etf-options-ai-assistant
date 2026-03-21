@@ -1,0 +1,20 @@
+name: strategy_weight_adjustment
+description: 策略权重调整定期任务（每周执行，在策略评分之后）
+schedule:
+  cron: "0 18 * * 5"  # 每周五18:00执行（策略评分之后）
+  timezone: "Asia/Shanghai"
+steps:
+  - name: get_current_weights
+    tool: tool_get_strategy_weights
+    parameters: {}
+    output: current_weights
+  
+  - name: adjust_weights
+    tool: tool_adjust_strategy_weights
+    parameters:
+      current_weights: "{{current_weights.data}}"
+      lookback_days: 60
+      adjustment_rate: 0.1
+    depends_on:
+      - get_current_weights
+    continue_on_error: true

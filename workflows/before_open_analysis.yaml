@@ -1,0 +1,42 @@
+# 盘前分析工作流
+# 执行时间：工作日 9:00
+# 功能：盘前市场分析、全球指数、A50期货、开盘数据、趋势分析、波动率预测
+
+name: before_open_analysis
+description: 盘前分析工作流，在交易日开盘前进行市场分析和策略准备
+
+schedule: "0 9 * * 1-5"  # 工作日 9:00（Cron格式：分钟 小时 日 月 星期）
+
+steps:
+  - name: check_trading_status
+    tool: tool_check_trading_status
+    description: 检查交易状态，确认是否为交易日
+    
+  - name: fetch_global_indices
+    tool: tool_fetch_global_index_spot
+    description: 获取全球指数数据（美股、港股等）
+    
+  - name: fetch_a50_futures
+    tool: tool_fetch_a50_data
+    description: 获取A50期货数据
+    
+  - name: fetch_index_opening
+    tool: tool_fetch_index_opening
+    description: 获取指数开盘数据
+    
+  - name: trend_analysis
+    tool: tool_analyze_before_open
+    description: 进行盘前趋势分析，预测当日市场走势
+    
+  - name: volatility_prediction
+    tool: tool_predict_volatility
+    description: 预测当日波动率区间
+    params:
+      underlying: "510300"
+    
+  - name: send_analysis_result
+    tool: tool_send_daily_report
+    description: 发送盘前分析报告到飞书
+    depends_on: [trend_analysis, volatility_prediction]
+    params:
+      report_type: "before_open"

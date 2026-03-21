@@ -1,0 +1,35 @@
+name: release-gate
+
+on:
+  pull_request:
+  push:
+    branches: [ "main" ]
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install tooling
+        run: |
+          python -m pip install --upgrade pip
+          pip install ruff
+
+      - name: Lint (minimum)
+        run: |
+          ruff check scripts/release_safety_gate.py scripts/check_json_syntax.py
+
+      - name: JSON syntax check
+        run: |
+          python scripts/check_json_syntax.py
+
+      - name: Release safety gate
+        run: |
+          python scripts/release_safety_gate.py

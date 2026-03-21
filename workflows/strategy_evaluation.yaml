@@ -1,0 +1,29 @@
+name: strategy_evaluation
+description: 策略评分定期任务（每周执行）
+schedule:
+  cron: "0 18 * * 5"  # 每周五18:00执行
+  timezone: "Asia/Shanghai"
+steps:
+  - name: calculate_strategy_scores
+    tool: tool_calculate_strategy_score
+    parameters:
+      strategy: "trend_following"
+      lookback_days: 60
+      min_signals: 10
+    continue_on_error: true
+  
+  - name: calculate_mean_reversion_score
+    tool: tool_calculate_strategy_score
+    parameters:
+      strategy: "mean_reversion"
+      lookback_days: 60
+      min_signals: 10
+    continue_on_error: true
+  
+  - name: calculate_breakout_score
+    tool: tool_calculate_strategy_score
+    parameters:
+      strategy: "breakout"
+      lookback_days: 60
+      min_signals: 10
+    continue_on_error: true

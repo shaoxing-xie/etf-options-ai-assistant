@@ -1,0 +1,21 @@
+# 盘后分析工作流
+# 执行时间：工作日 15:30
+# 功能：盘后市场分析、趋势判断、LLM增强分析
+
+name: after_close_analysis
+description: 盘后分析工作流，在15:30执行，分析当日市场情况并预测下一交易日趋势
+
+schedule: "30 15 * * 1-5"  # 工作日 15:30（Cron格式：分钟 小时 日 月 星期）
+
+steps:
+  - name: analyze_market
+    tool: tool_analyze_after_close
+    description: 执行盘后市场分析，包括技术指标、趋势判断、市场情绪等
+    params: {}
+  
+  - name: send_analysis_result
+    tool: tool_send_daily_report
+    description: 发送盘后分析报告到飞书
+    depends_on: [analyze_market]
+    params:
+      report_type: "after_close"

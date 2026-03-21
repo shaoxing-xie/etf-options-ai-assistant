@@ -1,0 +1,25 @@
+name: strategy_research
+description: |
+  策略研究与回放评估工作流（研究级），用于基于历史信号与行情数据进行回放评估、
+  策略评分与权重调整建议，仅输出研究结论与报告，不直接改动线上运行策略配置。
+
+# 建议执行时间：每周固定时间（例如周五晚间），与现有 strategy_evaluation / strategy_weight_adjustment 形成互补
+schedule: "0 19 * * 5"  # 每周五 19:00（Asia/Shanghai）
+
+steps:
+  - name: strategy_research
+    tool: tool_strategy_research
+    description: |
+      汇总策略表现/评分/权重建议，并生成符合“研究模式一”结构的 Markdown 报告正文（llm_summary）。
+    params:
+      lookback_days: 120
+      strategies: "trend_following,mean_reversion,breakout"
+      adjustment_rate: 0.1
+
+  - name: send_strategy_research_report
+    tool: tool_send_daily_report
+    description: 将 strategy_research 返回的 report_data 发送到现有通知渠道（钉钉/飞书关联群）。
+    depends_on: [strategy_research]
+    params:
+      report_data: "{{strategy_research.data.report_data}}"
+

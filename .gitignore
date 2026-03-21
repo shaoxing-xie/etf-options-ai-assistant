@@ -1,0 +1,58 @@
+.env
+.env.local
+.env.*.local
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual environments
+.venv/
+venv/
+env/
+.venv_yf/
+
+# Build / packaging
+build/
+dist/
+*.egg-info/
+
+# Logs
+*.log
+logs/
+log/
+
+# Databases and runtime artifacts
+*.db
+*.sqlite
+*.sqlite3
+*.parquet
+*.csv
+*.jsonl
+tmp/
+temp/
+
+# Runtime output directories (do not publish)
+data/
+memory/
+workflows/data/
+workflows/logs/
+
+# OpenClaw runtime data (local only)
+.openclaw/
+
+# IDE/editor
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+.coverage
+htmlcov/
+

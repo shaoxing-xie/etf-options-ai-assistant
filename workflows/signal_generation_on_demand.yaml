@@ -1,0 +1,83 @@
+# 按需信号生成工作流
+# 执行方式：手动触发
+# 功能：按需生成最新交易信号，包括数据获取、技术分析、信号生成、风险评估、仓位计算和通知
+# 支持：仅手动触发
+
+name: signal_generation_on_demand
+description: 按需信号生成工作流，包含6步完整流程，仅支持手动触发
+
+# Cron配置：不设置（仅手动触发）
+schedule: null
+
+# 工作流步骤说明（用于生成结构化消息）
+steps:
+  - name: fetch_etf_realtime
+    agent: data_collector_agent
+    tool: tool_fetch_etf_realtime
+    description: 获取ETF实时数据
+    params:
+      etf_code: "510300"
+    continue_on_failure: true
+
+  - name: calculate_technical_indicators
+    agent: analysis_agent
+    tool: tool_calculate_technical_indicators
+    description: 计算技术指标
+    params:
+      symbol: "510300"
+      data_type: "etf_daily"
+    depends_on: [fetch_etf_realtime]
+
+  - name: generate_signals
+    agent: analysis_agent
+    tool: tool_generate_signals
+    description: 生成交易信号
+    params:
+      underlying: "510300"
+    depends_on: [calculate_technical_indicators]
+
+  - name: assess_risk
+    agent: analysis_agent
+    tool: tool_assess_risk
+    description: 评估风险
+    params:
+      symbol: "510300"
+    depends_on: [generate_signals]
+
+  - name: calculate_position_size
+    agent: analysis_agent
+    tool: tool_calculate_position_size
+    description: 计算仓位大小
+    params:
+      etf_current_price: null  # 从fetch_etf_realtime步骤获取
+      trend_strength: null  # 从generate_signals步骤获取
+      signal_confidence: null  # 从generate_signals步骤获取
+      account_value: 100000  # 默认账户价值，可根据实际情况调整
+      apply_hard_limit: true
+      hard_limit_pct: 0.02
+    depends_on: [assess_risk, generate_signals]
+
+  - name: send_signal_alert
+    agent: notification_agent
+    tool: tool_send_signal_alert
+    description: 发送信号提醒到飞书
+    params:
+      # signal_data将从generate_signals、assess_risk、calculate_position_size步骤的输出中获取
+      min_signal_strength: "medium"
+    depends_on: [generate_signals, assess_risk, calculate_position_size]
+
+# 结构化消息模板（用于OpenClaw cron任务或手动触发）
+structured_message: |
+  执行按需信号生成流程。请按以下步骤顺序执行：
+  
+  步骤1：使用 data_collector_agent 的 tool_fetch_etf_realtime 工具获取ETF实时数据，参数：etf_code="510300"。如果失败，继续执行下一步。
+  
+  步骤2：使用 tool_calculate_technical_indicators 工具计算技术指标，参数：symbol="510300", data_type="etf_daily"。
+  
+  步骤3：使用 tool_generate_signals 工具生成交易信号，参数：underlying="510300"。请保存返回的信号信息用于后续步骤。
+  
+  步骤4：使用 tool_assess_risk 工具评估风险，参数：symbol="510300"。
+  
+  步骤5：使用 tool_calculate_position_size 工具计算仓位大小。请使用步骤1获取的当前价格、步骤3获取的trend_strength和signal_confidence作为参数。参数：account_value=100000, apply_hard_limit=true, hard_limit_pct=0.02。
+  
+  步骤6：如果步骤3生成的信号强度>=medium，使用 notification_agent 的 tool_send_signal_alert 工具发送信号提醒到飞书。请使用步骤3、4、5的结果构建signal_data，参数：min_signal_strength="medium"。

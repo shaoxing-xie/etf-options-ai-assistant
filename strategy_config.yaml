@@ -1,0 +1,9 @@
+# 策略配置说明
+# 实际策略定义在 strategy_config.py 中，本文件为占位以避免 read ENOENT。
+# Agent 应读取 strategy_config.py 获取策略规则与示例配置。
+#
+# 使用方式：python3 -c "from strategy_config import *"
+# 或直接 read strategy_config.py
+
+redirect: strategy_config.py
+description: "策略配置以 Python 模块 strategy_config.py 为准，包含 base_schema、示例策略等。"

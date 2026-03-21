@@ -1,0 +1,123 @@
+# 分析 Agent 配置
+# 负责趋势分析、波动预测、信号生成、风险评估等分析任务
+
+name: analysis_agent
+description: 分析 Agent，负责趋势分析、波动预测、信号生成、风险评估
+
+# Agent 配置
+agent:
+  type: tool_agent
+  tools:
+    # 技术指标
+    - tool_calculate_technical_indicators
+    
+    # 趋势分析
+    - tool_analyze_after_close
+    - tool_analyze_before_open
+    - tool_analyze_opening_market
+    
+    # 波动率预测
+    - tool_predict_volatility
+    - tool_calculate_historical_volatility
+    - tool_predict_intraday_range
+    
+    # 信号生成
+    - tool_generate_signals
+    
+    # 风险评估
+    - tool_assess_risk
+    
+    # ETF趋势跟踪
+    - tool_check_etf_index_consistency
+    - tool_generate_trend_following_signal
+    
+    # 仓位管理
+    - tool_calculate_position_size
+    - tool_check_position_limit
+    - tool_apply_hard_limit
+    
+    # 风险管理
+    - tool_calculate_stop_loss_take_profit
+    - tool_check_stop_loss_take_profit
+    
+    # 策略效果跟踪
+    - tool_record_signal_effect
+    - tool_get_strategy_performance
+    - tool_calculate_strategy_score
+    - tool_adjust_strategy_weights
+    - tool_get_strategy_weights
+    
+    # 数据访问工具（分析agent需要读取数据进行分析）
+    - tool_read_index_daily
+    - tool_read_index_minute
+    - tool_read_etf_daily
+    - tool_read_etf_minute
+    - tool_read_option_minute
+    - tool_read_option_greeks
+
+# 定时任务配置
+schedules:
+  - name: after_close_analysis
+    cron: "30 15 * * 1-5"  # 工作日 15:30
+    task: after_close_analysis_task
+  
+  - name: before_open_analysis
+    cron: "15 9 * * 1-5"  # 工作日 9:15
+    task: before_open_analysis_task
+  
+  - name: opening_market_analysis
+    cron: "28 9 * * 1-5"  # 工作日 9:28
+    task: opening_market_analysis_task
+  
+  - name: intraday_volatility_range
+    cron: "*/30 9-15 * * 1-5"  # 工作日 9:00-15:00 每30分钟
+    task: intraday_volatility_range_task
+  
+  - name: signal_generation
+    cron: "*/5 9-15 * * 1-5"  # 工作日 9:00-15:00 每5分钟
+    task: signal_generation_task
+
+  # 策略反思任务：在次日凌晨回顾前一交易日信号表现并调整策略权重
+  - name: strategy_reflection
+    cron: "0 3 * * 2-6"  # 每周二到周六凌晨3点（对应前一交易日）
+    task: strategy_reflection_task
+
+# 任务定义
+tasks:
+  after_close_analysis_task:
+    steps:
+      - tool: tool_analyze_after_close
+  
+  before_open_analysis_task:
+    steps:
+      - tool: tool_analyze_before_open
+  
+  opening_market_analysis_task:
+    steps:
+      - tool: tool_analyze_opening_market
+  
+  intraday_volatility_range_task:
+    steps:
+      - tool: tool_predict_volatility
+        params:
+          underlying: "510300"
+  
+  signal_generation_task:
+    steps:
+      - tool: tool_generate_signals
+        params:
+          underlying: "510300"
+
+  strategy_reflection_task:
+    steps:
+      - tool: tool_get_strategy_performance
+        params:
+          strategy: "default"
+      - tool: tool_calculate_strategy_score
+        depends_on: [tool_get_strategy_performance]
+        params:
+          strategy: "default"
+      - tool: tool_adjust_strategy_weights
+        depends_on: [tool_calculate_strategy_score]
+        params:
+          current_weights: {}  # 由上游系统填充当前策略权重

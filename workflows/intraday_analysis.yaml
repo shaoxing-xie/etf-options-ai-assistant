@@ -1,0 +1,68 @@
+# 日内分析工作流
+# 执行时间：工作日 9:00-15:00，每15分钟
+# 功能：日内实时分析、技术指标、趋势分析、信号生成、风险评估
+
+name: intraday_analysis
+description: 日内分析工作流，在交易时间内定期进行实时分析和信号生成
+
+schedule: "*/15 9-15 * * 1-5"  # 工作日 9:00-15:00，每15分钟（Cron格式）
+
+steps:
+  - name: fetch_minute_data
+    tool: tool_fetch_index_minute
+    description: 获取指数分钟数据
+    params:
+      index_code: "000300"
+      period: "5"
+      lookback_days: 1
+    
+  - name: fetch_etf_minute
+    tool: tool_fetch_etf_minute
+    description: 获取ETF分钟数据
+    params:
+      etf_code: "510300"
+      period: "5"
+      lookback_days: 1
+    
+  - name: fetch_option_realtime
+    tool: tool_fetch_option_realtime
+    description: 获取期权实时数据
+    
+  - name: fetch_option_greeks
+    tool: tool_fetch_option_greeks
+    description: 获取期权Greeks数据
+    
+  - name: technical_analysis
+    tool: tool_calculate_technical_indicators
+    description: 技术指标分析
+    params:
+      symbol: "510300"
+      data_type: "etf_minute"
+    
+  - name: volatility_prediction
+    tool: tool_predict_volatility
+    description: 预测波动率区间
+    params:
+      underlying: "510300"
+    
+  - name: intraday_range
+    tool: tool_predict_intraday_range
+    description: 预测日内波动区间
+    params:
+      symbol: "510300"
+    
+  - name: generate_intraday_signals
+    tool: tool_generate_signals
+    description: 生成日内交易信号
+    depends_on: [technical_analysis, volatility_prediction, intraday_range]
+    
+  - name: risk_assessment
+    tool: tool_assess_risk
+    description: 风险评估
+    depends_on: [generate_intraday_signals]
+    
+  - name: send_signals
+    tool: tool_send_signal_alert
+    description: 发送符合条件的交易信号
+    depends_on: [risk_assessment]
+    condition: "signal_strength >= 'medium'"

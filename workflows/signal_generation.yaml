@@ -1,0 +1,59 @@
+# 信号生成工作流
+# 执行时间：工作日 9:00-15:00，每30分钟
+# 功能：综合多因子生成交易信号，包括技术指标、趋势、波动率等
+
+name: signal_generation
+description: 信号生成工作流，综合多因子生成交易信号
+
+schedule: "*/30 9-15 * * 1-5"  # 工作日 9:00-15:00，每30分钟（Cron格式）
+
+steps:
+  - name: read_cache_data
+    tool: tool_read_etf_daily
+    description: 读取ETF日线缓存数据
+    params:
+      symbol: "510300"
+      start_date: null  # 自动计算（最近120天）
+      end_date: null
+    
+  - name: technical_indicators
+    tool: tool_calculate_technical_indicators
+    description: 计算技术指标（MA、MACD、RSI、布林带等）
+    params:
+      symbol: "510300"
+      data_type: "etf_daily"
+    
+  - name: historical_volatility
+    tool: tool_calculate_historical_volatility
+    description: 计算历史波动率
+    params:
+      symbol: "510300"
+      lookback_days: 120
+    
+  - name: volatility_prediction
+    tool: tool_predict_volatility
+    description: 预测波动率区间
+    params:
+      underlying: "510300"
+    
+  - name: intraday_range
+    tool: tool_predict_intraday_range
+    description: 预测日内波动区间
+    params:
+      symbol: "510300"
+    
+  - name: generate_signals
+    tool: tool_generate_signals
+    description: 生成综合交易信号（综合技术指标、趋势、波动率等因子）
+    depends_on: [technical_indicators, historical_volatility, volatility_prediction, intraday_range]
+    
+  - name: risk_assessment
+    tool: tool_assess_risk
+    description: 风险评估
+    depends_on: [generate_signals]
+    
+  - name: send_signals
+    tool: tool_send_signal_alert
+    description: 发送符合条件的交易信号（信号强度 >= medium）
+    depends_on: [risk_assessment]
+    condition: "signal_strength >= 'medium'"

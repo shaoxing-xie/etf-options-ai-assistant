@@ -1,0 +1,116 @@
+# 510300 日内监控与信号建议工作流
+# 目标：
+# - 在交易日内每5分钟监控 510300 及其基准指数 000300
+# - 使用30分钟K线的MA10/MA20 + RSI14 作为日内趋势与动量判断
+# - 辅以日线MA20/MA60 作为大方向过滤（仅做趋势过滤，不直接触发）
+# - 结合日内波动区间预测，生成“建议级”信号并通过飞书通知
+# - 不直接访问外部行情，只读取由独立采集工作流写入的本地缓存，以降低数据源压力
+
+name: etf_510300_intraday_monitor
+description: >
+  510300 intraday monitor every 5 minutes with 30m MA/RSI and daily trend filter,
+  generating suggestion-level alerts via Feishu (no auto execution).
+
+# 示例 Cron：工作日 9:30-15:00 每5分钟，但相对采集任务错开约2分钟
+# 假设采集任务为 "*/5 9-15 * * 1-5"（分钟=0,5,10,...），
+# 此监控工作流可设置为 "2-59/5 9-15 * * 1-5"（分钟=2,7,12,...）
+schedule: "2-59/5 9-15 * * 1-5"
+
+steps:
+  - name: read_etf_minute_510300
+    tool: tool_read_etf_minute
+    description: >
+      从本地缓存读取510300的分钟级行情数据（5分钟K），
+      供后续聚合为30分钟K并计算MA/RSI。
+    params:
+      symbol: "510300"
+      period: "5"
+      # 读取最近若干条数据即可，实际聚合为30分钟K
+      lookback_bars: 96   # 约2个交易日的5分钟K（可按实现调整）
+
+  - name: read_index_minute_000300
+    tool: tool_read_index_minute
+    description: >
+      从本地缓存读取000300指数分钟级数据，
+      用于510300相对表现与β背景分析。
+    params:
+      symbol: "000300"
+      period: "5"
+      lookback_bars: 96
+
+  - name: technical_30m_510300
+    tool: tool_calculate_technical_indicators
+    description: 基于30分钟K线计算510300的MA10/MA20与RSI14
+    depends_on:
+      - read_etf_minute_510300
+    params:
+      symbol: "510300"
+      data_type: "etf_minute"   # 从分钟级缓存数据聚合
+      timeframe_minutes: 30     # 按30分钟K聚合计算MA/RSI
+      indicators:
+        - "MA10"
+        - "MA20"
+        - "RSI14"
+
+  - name: predict_intraday_range_510300
+    tool: tool_predict_intraday_range
+    description: 预测510300日内合理波动区间（用于过滤极端高/低波动环境）
+    params:
+      symbol: "510300"
+
+  - name: daily_trend_filter_510300
+    tool: tool_predict_volatility
+    description: >
+      通过volatility/历史数据获取日线级别信息，
+      供下游逻辑根据MA20/MA60判断大方向（仅做过滤，不单独触发信号）。
+    params:
+      underlying: "510300"
+      timeframe: "daily"
+
+  - name: generate_intraday_signals_510300
+    tool: tool_generate_signals
+    description: >
+      结合技术指标与波动信息生成510300日内信号，
+      下游会再按 config.yaml 中 intraday_monitor_510300 的阈值进行过滤。
+    depends_on:
+      - technical_30m_510300
+      - predict_intraday_range_510300
+      - daily_trend_filter_510300
+    params:
+      underlying: "510300"
+      mode: "intraday_monitor"
+
+  - name: risk_assessment_510300
+    tool: tool_assess_risk
+    description: 对当前510300信号进行风险评估（仓位、波动、集中度等）
+    depends_on:
+      - generate_intraday_signals_510300
+
+  - name: send_feishu_suggestion_510300
+    tool: tool_send_signal_alert
+    description: >
+      将满足“建议级”条件的510300信号通过飞书发送，
+      只做建议与风险提示，不自动触发交易。
+    depends_on:
+      - risk_assessment_510300
+    condition: "underlying == '510300' and signal_strength >= 'medium'"
+
+  - name: send_dingtalk_suggestion_510300
+    tool: tool_send_dingtalk_message
+    description: >
+      将满足“建议级”条件的同一份510300信号通过钉钉发送到行情分析交互群，
+      只做建议与风险提示，不自动触发交易。
+    depends_on:
+      - generate_intraday_signals_510300
+      - risk_assessment_510300
+    condition: "underlying == '510300' and signal_strength >= 'medium'"
+    params:
+      title: "510300 日内监控建议（研究级）"
+      message: |
+        [510300 日内监控建议]
+        时间：{{risk_assessment_510300.data.timestamp}}
+
+        信号（generate_intraday_signals）：{{generate_intraday_signals_510300.data}}
+        风险评估（risk_assessment）：{{risk_assessment_510300.data}}
+      mode: "prod"
+

@@ -1,0 +1,92 @@
+# 增强版盘后分析工作流
+# 执行时间：工作日 15:30
+# 功能：完整的盘后分析流程，包括数据采集、分析、波动率计算、信号生成、记录和通知
+# 支持：定时执行 + 手动触发
+
+name: after_close_analysis_enhanced
+description: 增强版盘后分析工作流，包含7步完整流程，支持定时执行和手动触发
+
+# Cron配置（用于定时执行）
+schedule: "30 15 * * 1-5"  # 工作日 15:30（Cron格式：分钟 小时 日 月 星期）
+timezone: "Asia/Shanghai"
+
+# 工作流步骤说明（用于生成结构化消息）
+steps:
+  - name: fetch_etf_realtime
+    agent: data_collector_agent
+    tool: tool_fetch_etf_realtime
+    description: 获取ETF实时数据
+    params:
+      etf_code: "510300,510050,510500"
+    continue_on_failure: true
+
+  - name: fetch_index_realtime
+    agent: data_collector_agent
+    tool: tool_fetch_index_realtime
+    description: 获取指数实时数据用于对比分析
+    params:
+      index_code: "000300,000016,000905"
+    continue_on_failure: true
+
+  - name: analyze_after_close
+    agent: analysis_agent
+    tool: tool_analyze_after_close
+    description: 执行盘后市场分析，包括技术指标、趋势判断、市场情绪等
+    params: {}
+    depends_on: [fetch_etf_realtime, fetch_index_realtime]
+
+  - name: calculate_historical_volatility
+    agent: analysis_agent
+    tool: tool_calculate_historical_volatility
+    description: 计算历史波动率
+    params:
+      symbol: "510300"
+      lookback_days: 60
+    depends_on: [analyze_after_close]
+
+  - name: generate_signals
+    agent: analysis_agent
+    tool: tool_generate_signals
+    description: 生成交易信号
+    params:
+      underlying: "510300"
+    depends_on: [calculate_historical_volatility]
+
+  - name: record_signal_effect
+    agent: analysis_agent
+    tool: tool_record_signal_effect
+    description: 记录信号效果（使用上一步生成的signal_id）
+    params:
+      # signal_id将从generate_signals步骤的输出中获取
+      signal_type: "buy"  # 或从信号结果中动态获取
+      etf_symbol: "510300"
+      strategy: "trend_following"
+    depends_on: [generate_signals]
+    continue_on_failure: true  # 如果记录失败，不影响后续步骤
+
+  - name: send_daily_report
+    agent: notification_agent
+    tool: tool_send_daily_report
+    description: 发送盘后分析报告到飞书
+    params:
+      # report_data需要包含report_type、analysis和signals信息
+      # 将从analyze_after_close步骤和generate_signals步骤的输出中构建
+    depends_on: [analyze_after_close, generate_signals]
+
+# 结构化消息模板（用于OpenClaw cron任务）
+structured_message: |
+  执行盘后完整分析流程（测试模式）。请按以下步骤顺序执行：
+  
+  步骤1：使用 data_collector_agent 的 tool_fetch_etf_realtime 工具获取ETF实时数据，参数：etf_code="510300,510050,510500", mode="test"。如果失败，继续执行下一步。
+  
+  步骤2：使用 data_collector_agent 的 tool_fetch_index_realtime 工具获取指数实时数据，参数：index_code="000300,000016,000905", mode="test"。如果失败，继续执行下一步。
+  
+  步骤3：使用 tool_analyze_after_close 工具执行盘后市场分析。此工具会分析当日市场情况并预测下一交易日趋势。
+  
+  步骤4：使用 tool_calculate_historical_volatility 工具计算历史波动率，参数：symbol="510300", lookback_days=60。
+  
+  步骤5：使用 tool_generate_signals 工具生成交易信号，参数：underlying="510300"。请保存返回的signal_id用于下一步。
+  
+  步骤6：使用 tool_record_signal_effect 工具记录信号效果。请使用步骤5返回的signal_id和信号信息作为参数。如果记录失败，继续执行下一步。
+  
+  步骤7：使用 notification_agent 的 tool_send_daily_report 工具发送盘后分析报告到飞书。请使用步骤3的分析结果和步骤5的信号信息构建report_data字典，包含以下字段：report_type="after_close"、analysis（步骤3的结果）、signals（步骤5的结果）、date、overall_trend、trend_strength、rising_ratio、next_day_suggestion、llm_summary等。参数：report_data=构建的字典。

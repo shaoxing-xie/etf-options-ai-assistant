@@ -1,0 +1,50 @@
+{
+  "version": 1,
+  "jobs": [
+    {
+      "id": "before-open-analysis",
+      "name": "开盘前趋势分析",
+      "description": "每天9:15执行开盘前趋势分析",
+      "schedule": "15 9 * * 1-5",
+      "enabled": true,
+      "message": "执行开盘前趋势分析。请使用 tool_analyze_before_open 工具分析市场趋势，然后使用 tool_send_feishu_message 发送分析结果到飞书。",
+      "channel": "main"
+    },
+    {
+      "id": "opening-market-analysis",
+      "name": "开盘行情分析",
+      "description": "每天9:28执行开盘行情分析（集合竞价）",
+      "schedule": "28 9 * * 1-5",
+      "enabled": true,
+      "message": "执行开盘行情分析。请先使用 tool_fetch_index_opening 获取集合竞价数据，然后使用 tool_analyze_opening_market 分析开盘行情，最后使用 tool_send_feishu_message 发送分析结果到飞书。",
+      "channel": "main"
+    },
+    {
+      "id": "after-close-analysis",
+      "name": "盘后趋势分析",
+      "description": "每天15:30执行盘后趋势分析",
+      "schedule": "30 15 * * 1-5",
+      "enabled": true,
+      "message": "执行盘后趋势分析。请使用 tool_analyze_after_close 工具分析当日交易趋势，生成盘后报告，然后使用 tool_send_daily_report 发送日报到飞书。",
+      "channel": "main"
+    },
+    {
+      "id": "intraday-data-collection",
+      "name": "日内数据采集",
+      "description": "交易时间内每5分钟采集一次实时数据",
+      "schedule": "*/5 9-15 * * 1-5",
+      "enabled": true,
+      "message": "采集日内实时数据。请使用 tool_fetch_index_realtime 和 tool_fetch_etf_realtime 采集当前市场数据（如需期权扩展，可追加 tool_fetch_option_realtime）。",
+      "channel": "main"
+    },
+    {
+      "id": "volatility-update",
+      "name": "波动率更新",
+      "description": "交易时间内每小时更新波动率（10:00-15:00，每整点）",
+      "schedule": "0 10-15 * * 1-5",
+      "enabled": true,
+      "message": "更新波动率数据。请使用 tool_calculate_historical_volatility 和 tool_predict_volatility 更新波动率预测。",
+      "channel": "main"
+    }
+  ]
+}

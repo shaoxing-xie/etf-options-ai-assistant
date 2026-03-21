@@ -1,0 +1,39 @@
+# 开盘分析工作流
+# 执行时间：工作日 9:30（开盘后30分钟）
+# 功能：开盘实时分析、技术指标、日内波动区间预测、开盘信号生成
+
+name: opening_analysis
+description: 开盘分析工作流，在开盘后30分钟内进行实时分析和信号生成
+
+schedule: "30 9 * * 1-5"  # 工作日 9:30（Cron格式：分钟 小时 日 月 星期）
+
+steps:
+  - name: fetch_realtime_data
+    tool: tool_fetch_index_realtime
+    description: 获取实时指数数据
+    
+  - name: fetch_etf_realtime
+    tool: tool_fetch_etf_realtime
+    description: 获取ETF实时数据
+    
+  - name: technical_indicators
+    tool: tool_calculate_technical_indicators
+    description: 计算技术指标（MA、MACD、RSI、布林带等）
+    params:
+      symbol: "510300"
+      data_type: "etf_daily"
+    
+  - name: intraday_range_prediction
+    tool: tool_predict_intraday_range
+    description: 预测日内波动区间
+    params:
+      symbol: "510300"
+    
+  - name: opening_analysis
+    tool: tool_analyze_opening_market
+    description: 执行开盘市场分析
+    
+  - name: generate_opening_signals
+    tool: tool_generate_signals
+    description: 生成开盘交易信号
+    depends_on: [technical_indicators, intraday_range_prediction, opening_analysis]

@@ -1,0 +1,20 @@
+{
+  "id": "option-trading-assistant",
+  "name": "ETF Options AI Assistant",
+  "description": "ETF options AI trading assistant (data collection, analysis, notification tools).",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "apiBaseUrl": {
+        "type": "string",
+        "default": "http://127.0.0.1:5000",
+        "description": "API base URL"
+      },
+      "apiKey": {
+        "type": "string",
+        "description": "API key (optional)"
+      }
+    }
+  }
+}
