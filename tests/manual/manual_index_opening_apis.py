@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 逐一测试 tool_fetch_index_opening 依赖的原始接口
-运行: python3 test_opening_apis.py
+运行（在项目根目录）: python3 tests/manual/manual_index_opening_apis.py
 """
 import sys
 from datetime import datetime

@@ -8,8 +8,9 @@ import subprocess
 import sys
 import os
 
-SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tool_runner.py")
-BASE = os.path.dirname(os.path.abspath(__file__))
+ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+SCRIPT = os.path.join(ROOT, "tool_runner.py")
+BASE = ROOT
 TIMEOUT = 90
 
 def run(tool: str, params: dict, timeout: int = TIMEOUT) -> dict:

@@ -15,8 +15,9 @@ import sys
 from pathlib import Path
 
 
-BASE_DIR = Path(__file__).resolve().parent
-WORKFLOWS_DIR = BASE_DIR / "workflows"
+# 项目根目录（本文件位于 tests/integration/）
+ROOT = Path(__file__).resolve().parents[2]
+WORKFLOWS_DIR = ROOT / "workflows"
 
 # 要运行的工作流测试脚本（相对 workflows/）
 WORKFLOW_SCRIPTS = [
@@ -57,7 +58,7 @@ def run_workflow_script(script_rel_path: str) -> int:
 
 def main() -> None:
     print("=" * 100)
-    print("运行所有定时工作流测试脚本 (test_all_workflows.py)")
+    print("运行所有定时工作流测试脚本 (tests/integration/run_all_workflow_tests.py)")
     print("=" * 100)
 
     results = {}

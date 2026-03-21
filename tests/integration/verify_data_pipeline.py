@@ -4,14 +4,14 @@ import sys
 from pathlib import Path
 
 
-BASE_DIR = Path(__file__).resolve().parent
-TOOL_RUNNER = BASE_DIR / "tool_runner.py"
+ROOT = Path(__file__).resolve().parents[2]
+TOOL_RUNNER = ROOT / "tool_runner.py"
 
 # 显式打印当前数据/缓存根目录，便于确认是否已切到 /home/xie/data
 def print_cache_root():
     try:
         # 直接从 src.config_loader 读取 data_storage 配置
-        sys.path.insert(0, str(BASE_DIR.parent))  # 确保可以导入 src
+        sys.path.insert(0, str(ROOT))  # 确保可以导入 src
         from src.config_loader import load_system_config, get_data_storage_config  # type: ignore
 
         cfg = load_system_config(use_cache=True)

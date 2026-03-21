@@ -75,6 +75,7 @@
 - `docs/reference/错误码说明.md`
 - `docs/reference/trading_journal_schema.md`
 - `docs/reference/limit_up_pullback_default_params.md`
+- `docs/reference/akshare/README.md`：AKShare 接口说明（本地镜像索引）
 
 更多内容见：`docs/reference/README.md`。
 
@@ -85,7 +86,9 @@
 面向二次开发者和代码审阅者：
 
 - `docs/PROJECT_LAYOUT.md`：项目目录结构与关键模块说明
-- `docs/架构与工具审查报告.md`：架构审查与优化建议
+- `docs/architecture/架构与工具审查报告.md`：架构审查与优化建议
+- `tests/README.md`：pytest 与集成/手工测试脚本说明（`tests/integration/`、`tests/manual/`）
+- `scripts/README.md`：运维、发布门禁、预警等 `scripts/` 脚本说明
 
 索引见：`docs/architecture/README.md`。
 

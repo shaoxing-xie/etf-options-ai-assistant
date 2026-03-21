@@ -42,7 +42,10 @@ Keep messages focused on why the change is needed.
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-pytest -q || true
+pytest -q
 ```
+
+- 集成/长耗时脚本（数据管线、工作流串跑、合并工具冒烟）见 `tests/README.md`，按需手动执行，不必在每次 PR 全跑。
+- 运维与发布辅助脚本说明见 `scripts/README.md`.
 
 If OpenClaw integration is touched, include a brief test note in PR description.

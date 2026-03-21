@@ -18,4 +18,9 @@
 - `trading_journal_schema.md`：交易日志 / Journal 的结构定义。
 - `limit_up_pullback_default_params.md`：涨停回马枪等策略的默认参数说明。
 
+### 第三方数据源（AKShare）
+
+- `akshare/README.md`：AKShare 接口说明索引（本地镜像，用于查函数与参数）。
+- `akshare/AKShare*.md`：按资产类别划分的详细说明（股票 / 指数 / 基金 / 期货 / 期权）。
+
 当你在编写工作流、调试工具或集成其他系统时，优先在此目录中查找权威定义。

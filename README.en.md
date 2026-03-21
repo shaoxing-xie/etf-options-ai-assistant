@@ -165,7 +165,7 @@ All detailed docs live under `docs/`. Recommended entry points:
 - **Architecture & development**:  
   - `docs/architecture/README.md`  
   - `docs/PROJECT_LAYOUT.md`  
-  - `docs/架构与工具审查报告.md`
+  - `docs/architecture/架构与工具审查报告.md`
 
 - **Ops & troubleshooting**:  
   - `docs/ops/常见问题库.md`  

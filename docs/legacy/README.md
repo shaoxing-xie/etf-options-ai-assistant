@@ -11,6 +11,6 @@
 
 - 根 `README.md`
 - `docs/README.md` 及各专题 README
-- 最新的架构与工具审查报告
+- `docs/architecture/架构与工具审查报告.md`（架构与工具审查）
 
 为准，再将 legacy 文档视为“历史背景”和“设计思路”的补充材料。

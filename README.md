@@ -194,7 +194,7 @@ bash install_plugin.sh
 - **架构与开发（Architecture）**：  
   - `docs/architecture/README.md`  
   - `docs/PROJECT_LAYOUT.md`  
-  - `docs/架构与工具审查报告.md`
+  - `docs/architecture/架构与工具审查报告.md`
 
 - **运维与排错（Ops）**：  
   - `docs/ops/常见问题库.md`  

@@ -12,7 +12,7 @@
 - `install_plugin.sh`：将本项目安装为 OpenClaw 插件的自动安装脚本。
 - `setup_openclaw_plugin.sh`：在 Remote-WSL 环境下快速配置 OpenClaw 插件结构的脚本。
 - `setup_wsl_access.sh`：在 WSL 中为项目创建符号链接、workspace 目录等的辅助脚本。
-- `test_all_workflows.py` / `verify_data_pipeline.py` 等：整体数据管线与工作流的测试脚本。
+- 集成/冒烟测试脚本见 `tests/README.md`（如 `tests/integration/run_all_workflow_tests.py`、`verify_data_pipeline.py`）。
 
 ### 1. 核心代码：`src/`
 
@@ -80,11 +80,10 @@
 
 ### 4. 脚本与运维：`scripts/`
 
-- `scripts/optimize_database_indexes.py`：为信号记录与预测记录数据库创建/优化索引。
-- `scripts/run_yfinance_test.sh` / `scripts/test_yfinance_global_index.py`：与 yfinance 相关的数据源测试。
-- `scripts/test_sina_stock_zh_a_spot.py`：Sina 数据源测试脚本。
+- 用途与命令见 **`scripts/README.md`**（发布门禁、JSON 校验、工具清单生成、Cron/OpenClaw 辅助、预警轮询、数据库索引等）。
+- 说明：若仓库中已无 `run_yfinance_test.sh` / `test_yfinance_global_index.py` / `test_sina_stock_zh_a_spot.py` 等文件，以 `scripts/` 目录实际内容为准。
 
-> 这些脚本主要面向运维/性能优化/数据源验证，不属于日常工作流的一部分。
+> 这些脚本主要面向运维/发布/排障，不属于 OpenClaw 插件日常调用路径。
 
 ### 5. 数据与日志：`data/` 与 `logs/`
 
@@ -109,9 +108,12 @@
   - `OpenClaw配置指南.md`：在 OpenClaw 中配置插件的详细步骤。
   - `插件集成到OpenClaw指南.md`：与 OpenClaw Gateway、Agent、工作流的集成说明。
   - `工作流参考手册.md`：工作流设计与使用参考。
+- `docs/architecture/`
+  - `README.md`：架构文档索引与阅读顺序。
+  - `架构与工具审查报告.md`：工具分层、清单与可维护性等系统性审查与建议。
 - `docs/reference/`
   - `工具参考手册.md`：所有工具（插件）的详细参数与返回值说明。
-  - `AKShare*` 系列文档：数据源（AKShare）各类接口说明。
+  - `akshare/`：数据源库 AKShare 的接口说明（本地镜像，按股票/指数/基金/期货/期权分文件），入口见 `akshare/README.md`。
 - `docs/ops/`
   - `常见问题库.md`：FAQ 与排障方案。
   - `需要添加交易日判断跳过参数的工具清单.md`：需要补充交易日判断的工具清单。
@@ -120,7 +122,7 @@
 - `docs/original-windows/`
   - 从 Windows 旧工程迁移过来的原始文档与说明（`docs/`, `coze/`, `feishu_src/`, `openclaw_migration/` 等快照），仅用于查阅原始设计与历史背景，不参与当前运行。
 
-> 说明：新文档建议按 “overview / openclaw / reference / ops / legacy” 分类，避免混乱。
+> 说明：新文档建议按 “overview / openclaw / architecture / reference / ops / legacy” 分类，避免混乱。
 
 ### 7. 其他
 
