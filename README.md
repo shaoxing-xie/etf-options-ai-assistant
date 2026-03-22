@@ -233,6 +233,18 @@ etf-options-ai-assistant/
 
 ---
 
+## 联系与反馈
+
+| 场景 | 建议做法 |
+|------|----------|
+| **使用问题 / 功能建议 / Bug** | 到本仓库 [**Issues**](https://github.com/shaoxing-xie/etf-options-ai-assistant/issues) 新建一条；涉及策略融合时可注明 `strategy_engine` / `tool_strategy_engine`（说明见 [`plugins/strategy_engine/README.md`](plugins/strategy_engine/README.md)）。 |
+| **代码贡献** | 阅读 [`CONTRIBUTING.md`](CONTRIBUTING.md) 后提交 **Pull Request**。 |
+| **安全漏洞** | 勿在公开 Issue 中披露利用细节，请按 [`SECURITY.md`](SECURITY.md) 报告。 |
+
+若仓库已启用 **GitHub Discussions**，也可在讨论区发帖交流。Fork 开发可在你的 Fork 上提 Issue，或向上游发 PR。
+
+---
+
 ## 风险提示与免责声明
 
 - 本项目仅作为量化研究与系统设计参考实现，所有输出仅供研究与学习，不构成投资、法律或税务建议。
@@ -254,7 +266,7 @@ etf-options-ai-assistant/
 - `v0.2.x`：策略模块化与更多盘中风险模板
 - `v1.0.0`：生产部署与回滚流程标准化
 
-欢迎提交 Issue/PR，一起把散户可用的交易助手做得更稳、更透明。
+参与方式见上文 [**联系与反馈**](#联系与反馈)（Issue / PR / 安全披露）。
 
 ---
 

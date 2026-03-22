@@ -88,3 +88,16 @@ pytest tests/test_strategy_engine.py -q
 - Journal：`docs/trading_journal_schema.md`（`strategy_fusion` 事件）  
 - Cron 示例：`CRON_JOBS_EXAMPLE.json`（`strategy-fusion-example`，默认不启用生产）  
 - LLM 提示片段：根目录 `Prompt_config.yaml` → `strategy_engine_llm`
+
+## 联系与反馈
+
+若你阅读本模块后希望**提问、建议、报告缺陷或讨论设计**，推荐按下面方式联系维护者（公开、可检索，便于他人受益）：
+
+| 场景 | 建议做法 |
+|------|----------|
+| **使用问题 / 功能建议 / Bug** | 到本仓库 [**Issues**](https://github.com/shaoxing-xie/etf-options-ai-assistant/issues) 新建一条，标题或正文注明 `strategy_engine` 或 `tool_strategy_engine`，并尽量附上复现步骤、环境（Python/OpenClaw 版本）与相关日志片段。 |
+| **代码贡献** | 先阅读仓库根目录 [`CONTRIBUTING.md`](../../CONTRIBUTING.md)，再提交 **Pull Request**；改动涉及融合逻辑或契约时，请同步更新 [`docs/architecture/strategy_engine_and_signal_fusion.md`](../../docs/architecture/strategy_engine_and_signal_fusion.md) 与单测。 |
+| **安全漏洞** | **不要**在公开 Issue 中贴利用细节；请按 [`SECURITY.md`](../../SECURITY.md) 中的说明私下或最小化披露方式报告。 |
+
+若仓库已启用 **GitHub Discussions**，也可在讨论区开帖（同样建议打上与策略引擎相关的标题关键词）。  
+Fork 本仓库开发时，可在你的 Fork 上提 Issue，或向上游发 PR 合并改进。
