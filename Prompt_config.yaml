@@ -249,3 +249,20 @@ llm_prompts:
       **风险警示**：...
       **交易建议**：...
 
+
+# 策略引擎 LLM 输出（可选；providers.llm=true 时由上层 Agent 使用，默认不进入主融合链路）
+strategy_engine_llm:
+  system: |
+    你只输出一个 JSON 对象，不要 Markdown、不要代码块包裹。
+  user_template: |
+    根据当前对话与行情上下文，输出与下列字段严格一致的 JSON（direction 仅 long/short/neutral；score 为 -1 到 1；confidence 为 0 到 1）：
+    {"strategy_id": "llm_overlay", "symbol": "510300", "direction": "neutral", "score": 0.0, "confidence": 0.0, "rationale_refs": ["理由1"]}
+    若无法判断，direction 用 neutral，confidence 偏低。
+
+# OpenClaw / 交易助手：策略引擎路由（可整段并入 Agent system 或 Skill，与 config/openclaw_strategy_engine.yaml 同步维护）
+openclaw_strategy_engine_routing:
+  system_addon: |
+    项目已注册工具 tool_strategy_engine（策略引擎与信号融合）。当用户关注多源信号一致性、合成方向、或可审计的加权结论时，应优先调用 tool_strategy_engine，再结合 tool_assess_risk；不要仅用 tool_generate_signals 代替融合结论。
+    单路信号或明确只要某一模块时，可单独使用 tool_generate_signals 或 tool_generate_trend_following_signal。
+    解读结果时引用返回 data.fused 与 data.candidates；提及 data.inputs_hash 便于对齐 Journal。
+    权重「进化」：config/openclaw_strategy_engine.yaml 中 evolution.persist_effective_weights 为 true 时，有效权重会写入 data/strategy_fusion_effective_weights.json，后续动态权重读取优先使用该文件；策略反思任务请使用与 fusion 一致的 strategy_id 键（见该 yaml 的 evolution.fusion_weight_keys）。

@@ -1,0 +1,42 @@
+# OpenClaw / 分析 Agent 与「策略引擎 · 信号融合」衔接配置
+# 供人工核对与（可选）被 tool_strategy_engine 读取；不改变 fusion 数学定义。
+# 详细契约见 docs/architecture/strategy_engine_and_signal_fusion.md
+
+enabled: true
+
+# 与 agents/analysis_agent.yaml 中工具白名单一致：需包含 tool_strategy_engine
+analysis_agent_tool: tool_strategy_engine
+
+# 默认调用参数（Agent / Cron message 可照抄）
+default_tool_args:
+  underlying: "510300"
+  index_code: "000300"
+  mode: "production"
+  use_dynamic_weights: true
+  write_journal: true
+
+# ---------- 自动「进化」闭环（轻量、可解释）----------
+# 1) 每次融合后可选把 weights_effective 落盘 → 下次 get_strategy_weights(strategies=[...]) 优先读取
+# 2) 定时 strategy_reflection + tool_adjust_strategy_weights 仍可按评分调权；建议 reflection 传入
+#    与 fusion 一致的 strategy_id 键（如 src_signal_generation / etf_trend_following），见 evolution.fusion_weight_keys
+evolution:
+  persist_effective_weights: true
+  effective_weights_path: data/strategy_fusion_effective_weights.json
+  fusion_weight_keys:
+    - src_signal_generation
+    - etf_trend_following
+  notes: |
+    「进化」= 持久化有效权重 + 周期性 tool_adjust_strategy_weights / tool_calculate_strategy_score，
+    而非黑箱 RL。若动态权重键与上表不一致，persist 仍写入，但 get_strategy_weights 可能回退均等权重。
+
+# ---------- 给 OpenClaw / 主会话 Agent 的行为提示（可整段贴入 system 或 Skill）----------
+agent_routing_hints: |
+  【策略引擎与信号融合 tool_strategy_engine】
+  - 当用户关心「多路信号是否一致」「综合偏多偏空」「纪律化合成观点」时，优先调用 tool_strategy_engine，
+    再视需要调用 tool_assess_risk；不要只用 tool_generate_signals 代替融合结论。
+  - 当用户明确只要单路 src 信号或只要趋势模块时，可单独调用 tool_generate_signals 或 tool_generate_trend_following_signal。
+  - 输出解读请引用 data.fused（direction、score、confidence）与 data.candidates 摘要；提及 data.inputs_hash 便于审计。
+  - 若 config/strategy_fusion.yaml 中 providers.llm=true，融合可能包含 LLM 路；默认 llm=false，主链路可解释。
+  - 进化：开启 persist_effective_weights 后，重复运行会沿用上次有效权重；策略反思任务请使用 evolution.fusion_weight_keys 对齐键名。
+
+# Cron：仓库内示例见 CRON_JOBS_EXAMPLE.json 的 strategy-fusion-example（*/30 9-15 * * 1-5）；与 agents/analysis_agent.yaml 的 strategy_fusion 一致；本机以 ~/.openclaw/cron/jobs.json 为准

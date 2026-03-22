@@ -1,7 +1,7 @@
 {
   "id": "option-trading-assistant",
   "name": "ETF Options AI Assistant",
-  "description": "ETF options AI trading assistant (data collection, analysis, notification tools).",
+  "description": "ETF options AI trading assistant: data collection, analysis, notification, risk tools, plus tool_strategy_engine (multi-source signal fusion per config/openclaw_strategy_engine.yaml).",
   "configSchema": {
     "type": "object",
     "additionalProperties": false,

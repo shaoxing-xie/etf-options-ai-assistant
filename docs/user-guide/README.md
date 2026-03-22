@@ -8,6 +8,9 @@
   - `docs/openclaw/工作流参考手册.md`：盘前 / 盘后 / 开盘 / 盘中等工作流的整体设计和调度策略。
 - **信号与风控巡检**  
   - `docs/openclaw/信号与风控巡检工作流.md`：工作流 A（信号 + 风控巡检）的端到端说明。
+- **策略引擎与多路信号融合**  
+  - `docs/architecture/strategy_engine_and_signal_fusion.md`：工具 `tool_strategy_engine`、Journal、与风控边界。  
+  - 调度：仓库 `agents/analysis_agent.yaml` 的 **`strategy_fusion`**（交易时段 **每 30 分钟**）；OpenClaw 实操见 `docs/openclaw/工作流参考手册.md`「策略引擎与信号融合」、`config/openclaw_strategy_engine.yaml`。
 - **通知与日报**  
   - 结合工具手册中的飞书工具以及相应工作流配置文档。
 

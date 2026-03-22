@@ -303,8 +303,21 @@ from plugins.data_access.read_cache_data import (
     tool_read_option_greeks
 )
 
+# 合并入口（与 config/tools_manifest.yaml / tool_runner.py 一致，OpenClaw 侧优先暴露）
+from plugins.merged.fetch_index_data import tool_fetch_index_data
+from plugins.merged.fetch_etf_data import tool_fetch_etf_data
+from plugins.merged.fetch_option_data import tool_fetch_option_data
+from plugins.merged.read_market_data import tool_read_market_data
+from plugins.data_collection.sector import tool_fetch_sector_data
+
 # 导出所有工具函数
 __all__ = [
+    # 数据采集 - 合并入口（推荐）
+    'tool_fetch_index_data',
+    'tool_fetch_etf_data',
+    'tool_fetch_option_data',
+    'tool_read_market_data',
+    'tool_fetch_sector_data',
     # 数据采集 - 指数
     'tool_fetch_index_realtime',
     'tool_fetch_index_historical',
@@ -360,6 +373,11 @@ __all__ = [
   "description": "期权交易助手插件 - 数据采集、分析、通知工具",
   "main": "index.py",
   "tools": [
+    "tool_fetch_index_data",
+    "tool_fetch_etf_data",
+    "tool_fetch_option_data",
+    "tool_read_market_data",
+    "tool_fetch_sector_data",
     "tool_fetch_index_realtime",
     "tool_fetch_index_historical",
     "tool_fetch_index_minute",
@@ -544,14 +562,30 @@ curl http://localhost:5000/api/status
 
 ### 9.1 测试单个工具
 
-在OpenClaw Dashboard或通过命令行测试：
+**说明**：OpenClaw CLI **没有** `openclaw tool` 子命令（2026.3.x 为 `unknown command 'tool'`）。验证插件工具请用下面两种方式之一。
+
+**方式 A：与 Gateway 相同实现路径——在项目根用 `tool_runner.py`（推荐）**
 
 ```bash
-# 测试交易状态检查工具
-openclaw tool call tool_check_trading_status
+cd ~/etf-options-ai-assistant   # 或你的克隆路径
+.venv/bin/python tool_runner.py tool_check_trading_status '{}'
+.venv/bin/python tool_runner.py tool_fetch_index_realtime '{"index_code":"000300"}'
+```
 
-# 测试指数实时数据工具
-openclaw tool call tool_fetch_index_realtime --index_code "000300"
+**方式 B：让已配置工具的 Agent 代为调用**
+
+```bash
+openclaw agent --agent etf_data_collector_agent --message "请只调用一次 tool_check_trading_status，并把返回 JSON 摘要给我" --json
+```
+
+（将 `etf_data_collector_agent` 换成你 `openclaw.json` / agents 里实际的数据采集 Agent `id`。）
+
+**插件与网关健康（非单工具调用）**
+
+```bash
+openclaw plugins doctor
+openclaw gateway probe
+openclaw health
 ```
 
 ### 9.2 在Agent中使用

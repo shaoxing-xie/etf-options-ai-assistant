@@ -36,6 +36,16 @@ Payload fields (best-effort; may be null for partial updates):
 - `exit_reason`
 - `source`
 
+## event_type: strategy_fusion（可选，additive）
+
+由 `tool_strategy_engine` 在成功融合后追加。Payload 建议字段：
+
+- `policy_version`
+- `weights_effective`
+- `candidates`（摘要列表或完整结构，注意体积）
+- `fused`（融合结果 dict）
+- `inputs_hash`（与引擎输出一致）
+
 Notes:
 - Journal write failures must **never** break trading tools. It's a side-channel for observability and replay.
 - This schema is intentionally stable and minimal. Additive changes only.

@@ -7,6 +7,7 @@ OpenClaw 插件工具
 
 import sys
 import os
+import json
 from typing import Dict, Any, Optional, List
 
 # 添加父目录到路径以导入strategy_evaluator
@@ -126,6 +127,46 @@ def adjust_strategy_weights(
         }
 
 
+def _fusion_weights_json_path() -> str:
+    return os.environ.get(
+        "STRATEGY_FUSION_WEIGHTS_PATH",
+        os.path.join(parent_dir, "data", "strategy_fusion_effective_weights.json"),
+    )
+
+
+def _load_persisted_fusion_weights(
+    strategies: List[str],
+    path: Optional[str] = None,
+) -> Optional[Dict[str, float]]:
+    """
+    读取 tool_strategy_engine 落盘的有效权重（与 SignalCandidate.strategy_id 键一致）。
+    仅当 strategies 中每个 id 在文件中均有值时返回，否则 None。
+    """
+    p = path or _fusion_weights_json_path()
+    if not os.path.isfile(p):
+        return None
+    try:
+        with open(p, encoding="utf-8") as f:
+            blob = json.load(f)
+        raw = blob.get("weights") if isinstance(blob, dict) else None
+        if not isinstance(raw, dict):
+            return None
+        out: Dict[str, float] = {}
+        for k in strategies:
+            if k not in raw:
+                return None
+            try:
+                out[str(k)] = float(raw[k])
+            except (TypeError, ValueError):
+                return None
+        s = sum(out.values())
+        if s <= 0:
+            return None
+        return {k: v / s for k, v in out.items()}
+    except (OSError, json.JSONDecodeError, TypeError):
+        return None
+
+
 def get_strategy_weights(
     strategies: Optional[List[str]] = None,
     default_weights: Optional[Dict[str, float]] = None
@@ -148,7 +189,13 @@ def get_strategy_weights(
             }
         
         if strategies:
-            # 均等分配
+            persisted = _load_persisted_fusion_weights(list(strategies))
+            if persisted is not None:
+                return {
+                    "success": True,
+                    "data": persisted,
+                }
+            # 均等分配（无落盘或键不齐时）
             weight = 1.0 / len(strategies)
             weights = {s: weight for s in strategies}
             return {

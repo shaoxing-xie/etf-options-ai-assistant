@@ -45,6 +45,15 @@
       "enabled": true,
       "message": "更新波动率数据。请使用 tool_calculate_historical_volatility 和 tool_predict_volatility 更新波动率预测。",
       "channel": "main"
+    },
+    {
+      "id": "strategy-fusion-example",
+      "name": "策略引擎融合（示例，默认关闭）",
+      "description": "聚合 tool_generate_signals 与趋势信号并融合；详见 docs/architecture/strategy_engine_and_signal_fusion.md",
+      "schedule": "*/30 9-15 * * 1-5",
+      "enabled": false,
+      "message": "执行 tool_strategy_engine（underlying=510300, index_code=000300）。根据 fused 结果可选调用 tool_assess_risk、tool_record_signal_effect（journal_extra 可带 raw/fused/weights）、tool_send_signal_alert。",
+      "channel": "main"
     }
   ]
 }

@@ -6,7 +6,10 @@
 
 - `README.md`：项目总体说明（A股 / ETF 交易助手系统介绍、功能概览）。
 - `config.yaml`：系统主配置（市场数据、通知、日志、系统参数等）。
-- `Prompt_config.yaml`：LLM 提示词模板与分析类型配置。
+- `Prompt_config.yaml`：LLM 提示词模板与分析类型配置（含 `openclaw_strategy_engine_routing` 等可选 OpenClaw 路由片段）。
+- `config/strategy_fusion.yaml`：多策略融合阈值与默认权重（`tool_strategy_engine`）。
+- `config/openclaw_strategy_engine.yaml`：OpenClaw 与策略引擎衔接（路由提示、权重落盘进化、默认工具参数）。
+- `CRON_JOBS_EXAMPLE.json`：Cron 任务示例（含 `strategy-fusion-example`，`*/30 9-15 * * 1-5`，默认关闭）。
 - `index.ts`：OpenClaw 插件入口（注册所有工具，调用 `tool_runner.py`）。
 - `tool_runner.py`：Python 工具路由入口（统一分发到 `plugins/` 和 `src/` 中的各个工具）。
 - `install_plugin.sh`：将本项目安装为 OpenClaw 插件的自动安装脚本。
@@ -51,7 +54,8 @@
   - `intraday_range.py` / `historical_volatility.py` 等：日内区间、历史波动率分析。
   - `etf_trend_tracking.py`：ETF-指数趋势一致性与趋势跟随信号。
   - `etf_position_manager.py` / `etf_risk_manager.py` / `risk_assessment.py`：仓位管理、止盈止损、整体风险评估。
-  - `strategy_tracker.py` / `strategy_evaluator.py` / `strategy_weight_manager.py`：策略效果记录、评分与权重管理。
+  - `strategy_tracker.py` / `strategy_evaluator.py` / `strategy_weight_manager.py`：策略效果记录、评分与权重管理（`get_strategy_weights` 可优先读 `data/strategy_fusion_effective_weights.json`）。  
+- `plugins/strategy_engine/`：**策略引擎与信号融合**（`SignalCandidate`、Fusion v1/v1.1/v1.2、`tool_strategy_engine`）；说明见 [`plugins/strategy_engine/README.md`](../plugins/strategy_engine/README.md)。
 - `plugins/notification/`：通知类插件
   - `send_feishu_message.py`：飞书文本/卡片消息发送。
   - `send_signal_alert.py`：交易信号告警。
@@ -130,7 +134,7 @@
 
 ### 7. 其他
 
-- `agents/README.md`：OpenClaw Agent 配置说明（Agent 角色与任务）。
+- `agents/README.md`：OpenClaw Agent 配置说明（Agent 角色与任务；**`analysis_agent.yaml`** 含 `tool_strategy_engine` 与 **`strategy_fusion`** 定时，交易时段每 **30** 分钟）。
 - `plugins/**/README.md` / `workflows/README.md` / `plugins/data_collection/**/README.md` 等：  
   - 各子模块的本地说明文件，补充 `工具参考手册.md`。
 

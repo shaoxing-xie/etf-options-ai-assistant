@@ -8,7 +8,8 @@
 主要内容包括：
 
 - **当前可用（推荐）**  
-  - `工作流参考手册.md`：各个工作流（盘前、盘后、盘中、研究模式一、策略评估等）的配置与调度。
+  - `工作流参考手册.md`：各个工作流（盘前、盘后、盘中、研究模式一、策略评估等）的配置与调度。  
+  - **策略引擎与信号融合**：工具 `tool_strategy_engine`；仓库定时 **`strategy_fusion`**（交易时段 **每 30 分钟**）；详见 `docs/architecture/strategy_engine_and_signal_fusion.md`、`config/openclaw_strategy_engine.yaml`、`workflows/strategy_fusion_routine.yaml`；本机 Cron 以 `~/.openclaw/cron/jobs.json` 为准。
   - `Strategy_Research_Loop.md`：策略研究闭环设计与相关工作流说明。
   - `ETF_Rotation_Research_Workflow.md`：ETF 轮动研究工作流的设计与调度建议。
   - `信号与风控巡检工作流.md`：巡检工作流与风控检查流程。

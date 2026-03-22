@@ -201,6 +201,10 @@ TOOL_MAP: Dict[str, ToolSpec] = {
         module_path="analysis.etf_trend_tracking",
         function_name="tool_generate_trend_following_signal",
     ),
+    "tool_strategy_engine": ToolSpec(
+        module_path="strategy_engine.tool_strategy_engine",
+        function_name="tool_strategy_engine",
+    ),
     # Market Regime / Research
     "tool_detect_market_regime": ToolSpec(
         module_path="analysis.market_regime",
@@ -297,6 +301,10 @@ TOOL_MAP: Dict[str, ToolSpec] = {
     "tool_fetch_northbound_flow": ToolSpec(
         module_path="plugins.data_collection.northbound",
         function_name="tool_fetch_northbound_flow",
+    ),
+    "tool_fetch_sector_data": ToolSpec(
+        module_path="plugins.data_collection.sector",
+        function_name="tool_fetch_sector_data",
     ),
     "tool_fetch_stock_financials": ToolSpec(
         module_path="plugins.data_collection.financials",

@@ -194,7 +194,7 @@ OpenClaw平台
 
 | 工作流名称 | 配置文件 | 对应原系统任务 | 状态 |
 |----------|---------|--------------|------|
-| 盘后分析 | `workflows/after_close_analysis.yaml` | `after_close_analysis_task()` | ✅ 已配置 |
+| 盘后分析 | `workflows/after_close_analysis_enhanced.yaml`（精简版 `after_close_analysis.yaml` 已移除） | `after_close_analysis_task()` | ✅ 已配置 |
 | 策略评分 | `workflows/strategy_evaluation.yaml` | 策略评分定期任务 | ✅ 已配置（第二阶段） |
 | 策略权重调整 | `workflows/strategy_weight_adjustment.yaml` | 策略权重调整定期任务 | ✅ 已配置（第二阶段） |
 | 开盘前分析 | `workflows/before_open_analysis.yaml` | `before_open_analysis_task()` | ✅ 已配置 |
@@ -329,7 +329,7 @@ option_trading_assistant/etf-options-ai-assistant/
 │   ├── notification_agent.yaml
 │   └── README.md
 ├── workflows/                       # 工作流配置
-│   ├── after_close_analysis.yaml
+│   ├── after_close_analysis_enhanced.yaml
 │   ├── before_open_analysis.yaml
 │   ├── opening_analysis.yaml
 │   ├── intraday_analysis.yaml

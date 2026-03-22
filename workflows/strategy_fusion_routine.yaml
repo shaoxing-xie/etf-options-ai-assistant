@@ -1,0 +1,24 @@
+# 策略引擎与信号融合 — OpenClaw / Agent 步骤模板
+# 与 agents/analysis_agent.yaml 中 strategy_fusion_task、config/openclaw_strategy_engine.yaml 一致。
+# 实际 Cron 绑定以 ~/.openclaw/cron/jobs.json 为准；示例见 CRON_JOBS_EXAMPLE.json
+
+name: strategy_fusion_routine
+description: 定时或按需运行 tool_strategy_engine，可选后续风控与通知
+
+steps:
+  - name: fuse
+    tool: tool_strategy_engine
+    params:
+      underlying: "510300"
+      index_code: "000300"
+      mode: "production"
+      use_dynamic_weights: true
+      write_journal: true
+
+  - name: optional_risk
+    tool: tool_assess_risk
+    note: 若 fused 非 neutral 且需要下单前校验时再调用；参数按业务填写
+
+  - name: optional_notify
+    tool: tool_send_signal_alert
+    note: 可将 fused 摘要写入通知；勿泄露敏感账户信息

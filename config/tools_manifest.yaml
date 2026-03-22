@@ -49,6 +49,50 @@ tools:
     description_short: 获取全球主要指数实时行情（道琼斯、纳斯达克、标普500等）。
     parameters: { type: object, properties: {} }
 
+  # ---------- 合并工具 - 数据采集统一入口（merged/，委托 data_collection） ----------
+  - id: tool_fetch_index_data
+    label: 获取指数数据（统一入口）
+    description: data_type=realtime|historical|minute|opening|global_spot，内部委托 plugins.data_collection.index.*。
+    description_short: 指数数据统一入口（merged）。
+    parameters:
+      type: object
+      properties:
+        data_type: { type: string, description: "realtime|historical|minute|opening|global_spot" }
+        index_code: { type: string, description: "指数代码", default: "000001" }
+        period: { type: string }
+        start_date: { type: string }
+        end_date: { type: string }
+        lookback_days: { type: number, default: 5 }
+        mode: { type: string, default: "production" }
+      required: [data_type]
+
+  - id: tool_fetch_etf_data
+    label: 获取ETF数据（统一入口）
+    description: data_type=realtime|historical|minute，内部委托 plugins.data_collection.etf.*。
+    description_short: ETF 数据统一入口（merged）。
+    parameters:
+      type: object
+      properties:
+        data_type: { type: string, description: "realtime|historical|minute" }
+        etf_code: { type: string, default: "510300" }
+        period: { type: string }
+        start_date: { type: string }
+        end_date: { type: string }
+        lookback_days: { type: number, default: 5 }
+      required: [data_type]
+
+  - id: tool_fetch_option_data
+    label: 获取期权数据（统一入口）
+    description: data_type=realtime|greeks|minute，内部委托 plugins.data_collection.option.*。
+    description_short: 期权数据统一入口（merged）。
+    parameters:
+      type: object
+      properties:
+        data_type: { type: string, description: "realtime|greeks|minute" }
+        contract_code: { type: string, description: "期权合约代码" }
+        period: { type: string, default: "15" }
+      required: [data_type, contract_code]
+
   # ---------- 数据采集 - ETF ----------
   - id: tool_fetch_etf_realtime
     label: 获取ETF实时数据
@@ -136,6 +180,16 @@ tools:
         data_type: { type: string, description: "realtime|historical", default: "realtime" }
         start_date: { type: string, description: "开始日期（历史数据）" }
         end_date: { type: string, description: "结束日期（历史数据）" }
+
+  - id: tool_fetch_sector_data
+    label: 获取板块轮动数据
+    description: 行业/概念板块涨跌与轮动（东财优先，AkShare 备用）。sector_type=industry|concept，period=today|week|month。
+    description_short: 板块轮动（行业/概念）。
+    parameters:
+      type: object
+      properties:
+        sector_type: { type: string, description: "industry|concept", default: "industry" }
+        period: { type: string, description: "today|week|month", default: "today" }
 
   - id: tool_get_option_contracts
     label: 获取期权合约列表
@@ -332,6 +386,23 @@ tools:
         min_trend_strength: { type: number, description: "最小趋势强度", default: 0.6 }
         min_consistency_score: { type: number, description: "最小一致性得分", default: 0.7 }
 
+  - id: tool_strategy_engine
+    label: 策略引擎与信号融合
+    description: |
+      【何时优先调用】用户问「多路信号是否一致」「综合偏多/偏空」「合成交易观点」「纪律化融合」、或需在单路 tool_generate_signals 之外要统一审计视图时，应调用本工具。
+      聚合多路 Rule 信号（src 信号生成 + ETF 趋势等），按 config/strategy_fusion.yaml 与动态/落盘权重融合，返回 data.candidates、data.fused、data.weights_effective、data.inputs_hash；可选写 Journal（strategy_fusion）。
+      不替代 tool_generate_signals；单路明细仍可用原工具。进化闭环见 config/openclaw_strategy_engine.yaml（persist_effective_weights + 周期性 tool_adjust_strategy_weights）。
+    description_short: 多策略加权融合；综合信号/一致性场景优先
+    parameters:
+      type: object
+      properties:
+        underlying: { type: string, description: "ETF 标的代码", default: "510300" }
+        index_code: { type: string, description: "指数代码", default: "000300" }
+        mode: { type: string, description: "传给 src 信号生成的模式", default: "production" }
+        use_dynamic_weights: { type: boolean, description: "是否合并动态权重（优先 data/strategy_fusion_effective_weights.json，其次 get_strategy_weights）", default: true }
+        write_journal: { type: boolean, description: "是否追加 strategy_fusion 事件到 Journal", default: true }
+        config_path: { type: string, description: "自定义 strategy_fusion.yaml 路径（可选）" }
+
   # ---------- 风险控制 ----------
   - id: tool_calculate_position_size
     label: 计算建议仓位（含硬锁定）
@@ -416,6 +487,9 @@ tools:
         profit_loss: { type: number, description: "盈亏金额（可选）" }
         profit_loss_pct: { type: number, description: "盈亏比例（可选）" }
         status: { type: string, description: "pending|executed|closed", default: "pending" }
+        journal_extra:
+          type: object
+          description: "可选，合并写入 trading_journal signal_recorded（如 raw_signals/fused/weights）"
       required: [signal_id, signal_type, etf_symbol, signal_strength, strategy, entry_price]
 
   - id: tool_get_strategy_performance
@@ -520,6 +594,22 @@ tools:
       required: [risk_data]
 
   # ---------- 数据访问（缓存读取） ----------
+  - id: tool_read_market_data
+    label: 从缓存读取市场数据（统一入口）
+    description: data_type 或 data_types=index_daily|index_minute|etf_daily|etf_minute|option_minute|option_greeks，读本地/原系统缓存。
+    description_short: 缓存市场数据统一读取（merged）。
+    parameters:
+      type: object
+      properties:
+        data_type: { type: string }
+        data_types: { type: array, items: { type: string } }
+        symbol: { type: string }
+        contract_code: { type: string }
+        period: { type: string }
+        start_date: { type: string }
+        end_date: { type: string }
+        date: { type: string }
+
   - id: tool_read_index_daily
     label: 读取指数日线数据
     description: 从原系统缓存读取指数日线数据。

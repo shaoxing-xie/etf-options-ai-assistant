@@ -23,6 +23,8 @@ agent:
     
     # 信号生成
     - tool_generate_signals
+    # 多路 Rule 聚合 + 融合（OpenClaw 应优先用于「综合信号/一致性」类问题）
+    - tool_strategy_engine
     
     # 风险评估
     - tool_assess_risk
@@ -57,6 +59,7 @@ agent:
 
 # 定时任务配置
 schedules:
+  # 调度逻辑名；OpenClaw 工作流 YAML 见 workflows/after_close_analysis_enhanced.yaml（已移除精简版 after_close_analysis.yaml）
   - name: after_close_analysis
     cron: "30 15 * * 1-5"  # 工作日 15:30
     task: after_close_analysis_task
@@ -76,6 +79,11 @@ schedules:
   - name: signal_generation
     cron: "*/5 9-15 * * 1-5"  # 工作日 9:00-15:00 每5分钟
     task: signal_generation_task
+
+  # 策略引擎融合：与单路 signal_generation 并行；输出 candidates + fused，供通知/风控前组合观点
+  - name: strategy_fusion
+    cron: "*/30 9-15 * * 1-5"  # 工作日 9:00-15:00 每30分钟
+    task: strategy_fusion_task
 
   # 策略反思任务：在次日凌晨回顾前一交易日信号表现并调整策略权重
   - name: strategy_reflection
@@ -107,6 +115,15 @@ tasks:
       - tool: tool_generate_signals
         params:
           underlying: "510300"
+
+  strategy_fusion_task:
+    steps:
+      - tool: tool_strategy_engine
+        params:
+          underlying: "510300"
+          index_code: "000300"
+          use_dynamic_weights: true
+          write_journal: true
 
   strategy_reflection_task:
     steps:

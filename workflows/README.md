@@ -1,161 +1,95 @@
-# 工作流配置
+# 工作流配置（`workflows/`）
 
-本目录包含 OpenClaw 工作流配置文件。
+本目录存放 **YAML 工作流定义**，供 OpenClaw Cron / Agent / 本地 step 脚本引用。  
+**运行时产物**（日志、JSON 报告）在子目录 `logs/`、`data/` 下，与 `.yaml` 定义文件分开。
 
-## 工作流列表
+---
 
-1. **after_close_analysis.yaml** - 盘后分析工作流（工作日 15:30）
-2. **before_open_analysis.yaml** - 盘前分析工作流（工作日 9:00）
-3. **opening_analysis.yaml** - 开盘分析工作流（工作日 9:30）
-4. **intraday_analysis.yaml** - 日内分析工作流（工作日 9:00-15:00，每15分钟）
-5. **signal_generation.yaml** - 信号生成工作流（工作日 9:00-15:00，每30分钟）
+## 一览表
 
-## 工作流格式说明
+| 文件 | 调度（摘要） | 用途 |
+|------|----------------|------|
+| `before_open_analysis.yaml` | 工作日 9:00 | 盘前：交易状态、全球指数、A50、开盘、盘前分析、波动率、日报 |
+| `before_open_analysis_enhanced.yaml` | 工作日 9:20 | 增强盘前：开盘数据、全球指数、分析、波动率、日内区间、日报 |
+| `opening_analysis.yaml` | 工作日 9:30 | 开盘：指数/ETF 实时、指标、日内区间、开盘分析、信号 |
+| `intraday_analysis.yaml` | 工作日 9–15 点每 15 分钟 | 日内：分钟/期权/Greeks、指标、波动、区间、信号、风控、告警 |
+| `after_close_analysis_enhanced.yaml` | 工作日 15:30 | **唯一**盘后工作流：实时行情、盘后分析、历史波动率、信号、效果记录、日报（已替代原精简版 `after_close_analysis.yaml`） |
+| `signal_generation.yaml` | 工作日 9–15 点每 30 分钟 | 读 **ETF 日线缓存** + 指标/波动/区间/信号/风控/告警 |
+| `signal_generation_on_demand.yaml` | `schedule: null`（仅手动） | 按需信号：实时 ETF、指标、信号、风控、仓位、告警 |
+| `etf_510300_intraday_monitor.yaml` | 工作日 9–15 点每 5 分钟（错开采集） | **仅读本地缓存** 510300/000300 分钟线，指标与建议级告警（含钉钉） |
+| `etf_rotation_research.yaml` | 工作日 18:00 | ETF 轮动研究 + 日报 |
+| `strategy_research.yaml` | 周五 19:00 | 策略研究/回放报告 + 日报 |
+| `strategy_evaluation.yaml` | 周五 18:00（`schedule.cron` + `timezone`） | 多策略 `tool_calculate_strategy_score` |
+| `strategy_weight_adjustment.yaml` | 周五 18:00（与上同时段） | 读权重并 `tool_adjust_strategy_weights`（依赖评分结果时请避免与 evaluation 步骤冲突或错开时间） |
+| `strategy_fusion_routine.yaml` | 无内置 cron（随 Agent / 手动） | `tool_strategy_engine` → 可选风控/通知；与 `agents/analysis_agent.yaml` 的 `strategy_fusion` 呼应（交易时段 **每 30 分钟** `*/30 9-15 * * 1-5`） |
 
-所有工作流使用统一的 YAML 格式：
+---
 
-```yaml
-name: workflow_name
-description: 工作流描述
+## 按场景分组
 
-schedule: "cron表达式"  # Cron格式：分钟 小时 日 月 星期
+**交易日主链路（采集 + 分析）**  
+`before_open_analysis` / `opening_analysis` / `intraday_analysis` / `after_close_analysis_enhanced` — 以 **`tool_fetch_*`** 拉行情为主（盘后仅保留增强版 YAML）。
 
-steps:
-  - name: step_name
-    tool: tool_function_name
-    description: 步骤描述
-    params:
-      param1: value1
-    depends_on: [previous_step]  # 可选：依赖的步骤
-    condition: "condition_expression"  # 可选：执行条件
-```
+**依赖「读缓存」的工作流**（底层见 `plugins/data_access` → `read_cache_data` / `tool_read_market_data`）  
+- `signal_generation.yaml`：`tool_read_etf_daily`  
+- `etf_510300_intraday_monitor.yaml`：`tool_read_etf_minute`、`tool_read_index_minute`  
 
-## 工作流详细说明
+**增强 / 按需**  
+- `before_open_analysis_enhanced.yaml`：相对基础盘前步骤更多。  
+- `signal_generation_on_demand.yaml`：无定时，适合手动触发。
 
-### 1. after_close_analysis（盘后分析）
+**研究 / 策略运维**  
+- `etf_rotation_research`、`strategy_research`：研究输出 + 日报。  
+- `strategy_evaluation`、`strategy_weight_adjustment`：周期性评分与权重（YAML 内为 **结构化 `schedule`**，见下节）。
 
-**执行时间**：工作日 15:30  
-**功能**：
-- 执行盘后市场分析
-- 技术指标计算
-- 趋势判断
-- LLM增强分析
-- 发送分析报告
+**多策略融合（可选）**  
+- 工具 **`tool_strategy_engine`**：不替代 `tool_generate_signals`；可在 Cron/按需流程中 **并行或单独** 调用，输出 `candidates` + `fused`（见 `docs/architecture/strategy_engine_and_signal_fusion.md`）。示例 Cron 见根目录 `CRON_JOBS_EXAMPLE.json` 中 `strategy-fusion-example`（**`*/30 9-15 * * 1-5`**，默认 `enabled: false`）。  
+- 步骤模板 **`strategy_fusion_routine.yaml`**；OpenClaw 衔接与进化参数见 **`config/openclaw_strategy_engine.yaml`**。
 
-**步骤**：
-1. `tool_analyze_after_close` - 盘后分析
-2. `tool_send_daily_report` - 发送报告
+---
 
-### 2. before_open_analysis（盘前分析）
+## YAML 格式说明
 
-**执行时间**：工作日 9:00  
-**功能**：
-- 检查交易状态
-- 获取全球指数数据
-- 获取A50期货数据
-- 获取指数开盘数据
-- 盘前趋势分析
-- 波动率预测
-- 发送分析报告
+不同文件有两种常见写法：
 
-**步骤**：
-1. `tool_check_trading_status` - 检查交易状态
-2. `tool_fetch_global_index_spot` - 全球指数
-3. `tool_fetch_a50_data` - A50期货
-4. `tool_fetch_index_opening` - 指数开盘数据
-5. `tool_analyze_before_open` - 盘前分析
-6. `tool_predict_volatility` - 波动率预测
-7. `tool_send_daily_report` - 发送报告
+1. **单行 Cron**（与旧文档一致）  
+   `schedule: "30 15 * * 1-5"`
 
-### 3. opening_analysis（开盘分析）
+2. **结构化调度**（含时区）  
+   ```yaml
+   schedule:
+     cron: "0 18 * * 5"
+     timezone: "Asia/Shanghai"
+   ```
 
-**执行时间**：工作日 9:30（开盘后30分钟）  
-**功能**：
-- 获取实时指数和ETF数据
-- 计算技术指标
-- 预测日内波动区间
-- 开盘市场分析
-- 生成开盘信号
+步骤字段在各文件中可能为 `params` 或 `parameters`，并以具体 YAML 为准。
 
-**步骤**：
-1. `tool_fetch_index_realtime` - 实时指数数据
-2. `tool_fetch_etf_realtime` - 实时ETF数据
-3. `tool_calculate_technical_indicators` - 技术指标
-4. `tool_predict_intraday_range` - 日内波动区间
-5. `tool_analyze_opening_market` - 开盘分析
-6. `tool_generate_signals` - 生成信号
+通用约定（若文件内未写则以前端/OpenClaw 解析为准）：
 
-### 4. intraday_analysis（日内分析）
+- `tool`：工具名须与 `tool_runner.py` / `config/tools_manifest.yaml` 一致。  
+- `depends_on`：步骤依赖。  
+- `continue_on_error`：部分策略类步骤为 `true`，避免单步失败阻断后续。
 
-**执行时间**：工作日 9:00-15:00，每15分钟  
-**功能**：
-- 获取分钟级数据（指数、ETF、期权）
-- 技术指标分析
-- 波动率预测
-- 日内波动区间预测
-- 生成交易信号
-- 风险评估
-- 发送信号
+---
 
-**步骤**：
-1. `tool_fetch_index_minute` - 指数分钟数据
-2. `tool_fetch_etf_minute` - ETF分钟数据
-3. `tool_fetch_option_realtime` - 期权实时数据
-4. `tool_fetch_option_greeks` - 期权Greeks数据
-5. `tool_calculate_technical_indicators` - 技术指标
-6. `tool_predict_volatility` - 波动率预测
-7. `tool_predict_intraday_range` - 日内波动区间
-8. `tool_generate_signals` - 生成信号
-9. `tool_assess_risk` - 风险评估
-10. `tool_send_signal_alert` - 发送信号（条件：信号强度 >= medium）
+## 子目录
 
-### 5. signal_generation（信号生成）
+| 路径 | 说明 |
+|------|------|
+| `logs/` | 工作流或脚本运行日志（如 `intraday_monitor_*.json`、历史 `option_trading_*.log`） |
+| `data/` | 产物数据：趋势分析、波动区间、预测记录、市场广度等 JSON |
 
-**执行时间**：工作日 9:00-15:00，每30分钟  
-**功能**：
-- 读取缓存数据
-- 计算技术指标和历史波动率
-- 预测波动率和日内区间
-- 生成综合交易信号
-- 风险评估
-- 发送符合条件的信号
+勿将 `logs/`、`data/` 下的生成物当作「工作流定义」；**源定义仅根目录 `*.yaml`**。
 
-**步骤**：
-1. `tool_read_etf_daily` - 读取缓存数据
-2. `tool_calculate_technical_indicators` - 技术指标
-3. `tool_calculate_historical_volatility` - 历史波动率
-4. `tool_predict_volatility` - 波动率预测
-5. `tool_predict_intraday_range` - 日内波动区间
-6. `tool_generate_signals` - 生成信号
-7. `tool_assess_risk` - 风险评估
-8. `tool_send_signal_alert` - 发送信号（条件：信号强度 >= medium）
+---
 
-## Cron 表达式说明
+## 与 OpenClaw 的衔接
 
-格式：`分钟 小时 日 月 星期`
+实际 Cron / Agent 绑定以 **`~/.openclaw/cron/jobs.json`** 与项目 **`docs/openclaw/`** 为准；本目录 YAML 可作为**步骤与工具名的参考模板**。
 
-- `"30 15 * * 1-5"` - 工作日 15:30
-- `"0 9 * * 1-5"` - 工作日 9:00
-- `"*/15 9-15 * * 1-5"` - 工作日 9:00-15:00，每15分钟
-- `"*/30 9-15 * * 1-5"` - 工作日 9:00-15:00，每30分钟
+---
 
-## 使用方式
+## 测试与手动跑
 
-1. **自动执行**：根据 schedule 配置自动触发
-2. **手动触发**：通过 OpenClaw Agent 手动调用
-3. **集成调用**：作为子工作流被其他流程调用
-
-## 注意事项
-
-1. **工具名称**：所有工具名称必须以 `tool_` 开头
-2. **依赖关系**：使用 `depends_on` 定义步骤依赖
-3. **执行条件**：使用 `condition` 定义条件执行
-4. **参数配置**：根据实际需求配置工具参数
-5. **时区设置**：确保 Cron 表达式使用正确的时区（Asia/Shanghai）
-
-## 测试建议
-
-1. **手动测试**：先手动触发工作流，验证每个步骤
-2. **定时测试**：修改 Cron 表达式为近期时间，测试定时触发
-3. **错误处理**：验证错误处理和依赖关系
-4. **性能监控**：监控工作流执行时间和资源使用
+参见仓库 `tests/README.md`、`tests/integration/run_all_workflow_tests.py`。  
+修改工具名后请同步 **`config/tools_manifest.yaml`** 并执行 `python scripts/generate_tools_json.py`。

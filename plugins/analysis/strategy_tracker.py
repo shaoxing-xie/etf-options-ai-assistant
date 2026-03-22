@@ -62,7 +62,8 @@ def record_signal_effect(
     profit_loss_pct: Optional[float] = None,
     holding_days: Optional[int] = None,
     status: str = 'pending',  # 'pending' | 'executed' | 'closed'
-    exit_reason: Optional[str] = None
+    exit_reason: Optional[str] = None,
+    journal_extra: Optional[Dict] = None,
 ) -> bool:
     """
     记录信号效果
@@ -156,25 +157,28 @@ def record_signal_effect(
         # 追加写入统一 journal（不破坏旧逻辑；失败不影响主流程）
         if JOURNAL_AVAILABLE:
             try:
+                jp: Dict[str, Any] = {
+                    "signal_id": record.get("signal_id"),
+                    "date": record.get("date"),
+                    "timestamp": record.get("timestamp"),
+                    "signal_type": record.get("signal_type"),
+                    "symbol": record.get("etf_symbol"),
+                    "signal_strength": record.get("signal_strength"),
+                    "strategy": record.get("strategy"),
+                    "entry_price": record.get("entry_price"),
+                    "exit_price": record.get("exit_price"),
+                    "profit_loss": record.get("profit_loss"),
+                    "profit_loss_pct": record.get("profit_loss_pct"),
+                    "holding_days": record.get("holding_days"),
+                    "status": record.get("status"),
+                    "exit_reason": record.get("exit_reason"),
+                    "source": "strategy_tracker",
+                }
+                if journal_extra and isinstance(journal_extra, dict):
+                    jp = {**jp, **journal_extra}
                 append_journal_event(
                     "signal_recorded",
-                    {
-                        "signal_id": record.get("signal_id"),
-                        "date": record.get("date"),
-                        "timestamp": record.get("timestamp"),
-                        "signal_type": record.get("signal_type"),
-                        "symbol": record.get("etf_symbol"),
-                        "signal_strength": record.get("signal_strength"),
-                        "strategy": record.get("strategy"),
-                        "entry_price": record.get("entry_price"),
-                        "exit_price": record.get("exit_price"),
-                        "profit_loss": record.get("profit_loss"),
-                        "profit_loss_pct": record.get("profit_loss_pct"),
-                        "holding_days": record.get("holding_days"),
-                        "status": record.get("status"),
-                        "exit_reason": record.get("exit_reason"),
-                        "source": "strategy_tracker",
-                    },
+                    jp,
                     actor="tool_record_signal_effect",
                     base_dir=BASE_DIR,
                 )
@@ -332,7 +336,8 @@ def tool_record_signal_effect(
     profit_loss_pct: Optional[float] = None,
     holding_days: Optional[int] = None,
     status: Optional[str] = None,
-    exit_reason: Optional[str] = None
+    exit_reason: Optional[str] = None,
+    journal_extra: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """OpenClaw 工具：记录信号效果（支持部分更新）"""
     try:
@@ -387,7 +392,8 @@ def tool_record_signal_effect(
             profit_loss_pct=profit_loss_pct,
             holding_days=holding_days,
             status=status,
-            exit_reason=exit_reason
+            exit_reason=exit_reason,
+            journal_extra=journal_extra,
         )
         
         return {

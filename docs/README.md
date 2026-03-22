@@ -43,6 +43,10 @@
   - `docs/openclaw/工作流参考手册.md`
 - 信号与风控巡检：
   - `docs/openclaw/信号与风控巡检工作流.md`
+- **策略引擎与多路信号融合**（`tool_strategy_engine`）：
+  - `docs/architecture/strategy_engine_and_signal_fusion.md`
+  - `config/openclaw_strategy_engine.yaml`、`workflows/strategy_fusion_routine.yaml`
+  - 仓库 `agents/analysis_agent.yaml` 中 **`strategy_fusion`**：交易时段 **每 30 分钟**；本机 OpenClaw 以 `~/.openclaw/cron/jobs.json` 为准
 - 通知与日报：
   - 结合工具参考手册与相关工作流文档
 
@@ -68,6 +72,8 @@
 
 当你需要查某个工具的参数、返回值或错误码时使用：
 
+- **策略融合工具**：`tool_strategy_engine` — 见 `docs/reference/工具参考手册.md` 与 `config/tools_manifest.yaml`
+
 - **数据采集插件的分类与 Provider 约定**（OpenClaw 技能/工具索引）：`plugins/data_collection/README.md`、`plugins/data_collection/ROADMAP.md`
 - `docs/reference/工具参考手册.md`
 - `docs/reference/工具参考手册-速查.md`
@@ -87,6 +93,7 @@
 面向二次开发者和代码审阅者：
 
 - `docs/PROJECT_LAYOUT.md`：项目目录结构与关键模块说明
+- `docs/architecture/strategy_engine_and_signal_fusion.md`：策略引擎与信号融合（含 OpenClaw / 本机 Cron 约定）
 - `docs/architecture/架构与工具审查报告.md`：架构审查与优化建议
 - `tests/README.md`：pytest 与集成/手工测试脚本说明（`tests/integration/`、`tests/manual/`）
 - `scripts/README.md`：运维、发布门禁、预警等 `scripts/` 脚本说明

@@ -177,6 +177,7 @@ bash install_plugin.sh
 - **使用指南（User Guide）**：  
   - 工作流与调度：`docs/openclaw/工作流参考手册.md`  
   - 信号与风控巡检：`docs/openclaw/信号与风控巡检工作流.md`  
+  - **策略引擎与多路信号融合**：`docs/architecture/strategy_engine_and_signal_fusion.md`（工具 `tool_strategy_engine`）；OpenClaw 衔接配置 `config/openclaw_strategy_engine.yaml`；仓库定时 **`strategy_fusion`** 为交易时段 **每 30 分钟**，本机请在 `~/.openclaw/cron/jobs.json` 中按需启用对应任务。  
   - 通知与日报：参考工具手册与相关工作流文档  
 
 - **OpenClaw 集成（Integration）**：  
@@ -195,7 +196,8 @@ bash install_plugin.sh
 - **架构与开发（Architecture）**：  
   - `docs/architecture/README.md`  
   - `docs/PROJECT_LAYOUT.md`  
-  - `docs/architecture/架构与工具审查报告.md`
+  - `docs/architecture/架构与工具审查报告.md`  
+  - `docs/architecture/strategy_engine_and_signal_fusion.md`（策略引擎与多路信号融合 v1.0）
 
 - **运维与排错（Ops）**：  
   - `docs/ops/常见问题库.md`  
@@ -218,8 +220,10 @@ etf-options-ai-assistant/
 ├── LICENSE
 ├── config.yaml
 ├── Prompt_config.yaml
+├── config/strategy_fusion.yaml      # 融合阈值与默认权重
+├── config/openclaw_strategy_engine.yaml  # OpenClaw 路由 / 权重落盘进化（可选读）
 ├── src/                 # 核心业务逻辑（数据采集、分析、信号、风控等）
-├── plugins/             # OpenClaw 插件层（工具封装与入口）
+├── plugins/             # OpenClaw 插件层（含 plugins/strategy_engine 策略融合）
 ├── workflows/           # OpenClaw 工作流定义与数据产物
 ├── docs/                # 项目文档（入门、使用、集成、参考、架构、运维等）
 ├── scripts/             # 安装、诊断与工具脚本

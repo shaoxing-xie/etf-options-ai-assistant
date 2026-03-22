@@ -1,0 +1,22 @@
+# 策略融合策略 v1.0 — 与 docs/architecture/strategy_engine_and_signal_fusion.md 一致
+version: "1.0"
+
+policy:
+  # |加权分| 低于此阈值则 neutral
+  score_threshold: 0.2
+  # 同向比例低于此值则 neutral（v1.1）
+  agree_ratio_min: 0.6
+  # v1.2：强多/强空同时存在时的绝对分阈值
+  strong_abs_score: 0.65
+
+# 默认权重（键 = SignalCandidate.strategy_id，与 plugins/strategy_engine/rule_adapters 一致）。
+# 与 strategy_config.py 的 id（如 trend_following_510300）无强制同名；动态权重仅当
+# tool_get_strategy_weights 返回的 key 与本键一致时才覆盖。
+strategy_weights:
+  src_signal_generation: 0.5
+  etf_trend_following: 0.5
+
+providers:
+  src_signal_generation: true
+  etf_trend_following: true
+  llm: false

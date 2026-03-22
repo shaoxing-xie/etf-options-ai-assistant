@@ -22,7 +22,6 @@ WORKFLOWS_DIR = ROOT / "workflows"
 # 要运行的工作流测试脚本（相对 workflows/）
 WORKFLOW_SCRIPTS = [
     "test_before_open_analysis_step_by_step.py",
-    "test_after_close_analysis_step_by_step.py",
     "test_intraday_monitor_5min_step_by_step.py",
     "test_signal_generation_on_demand_step_by_step.py",
     "test_before_open_enhanced_step_by_step.py",

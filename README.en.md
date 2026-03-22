@@ -165,7 +165,9 @@ All detailed docs live under `docs/`. Recommended entry points:
 - **Architecture & development**:  
   - `docs/architecture/README.md`  
   - `docs/PROJECT_LAYOUT.md`  
-  - `docs/architecture/架构与工具审查报告.md`
+  - `docs/architecture/架构与工具审查报告.md`  
+  - `docs/architecture/strategy_engine_and_signal_fusion.md` — multi-source signal fusion (`tool_strategy_engine`), `config/strategy_fusion.yaml`, `config/openclaw_strategy_engine.yaml`, `plugins/strategy_engine/README.md`  
+  - Scheduled **`strategy_fusion`** in `agents/analysis_agent.yaml`: **every 30 minutes** during `9:00–15:00` on trading days (`*/30 9-15 * * 1-5`); mirror in local `~/.openclaw/cron/jobs.json` if needed.
 
 - **Ops & troubleshooting**:  
   - `docs/ops/常见问题库.md`  
@@ -189,8 +191,10 @@ etf-options-ai-assistant/
 ├── LICENSE
 ├── config.yaml
 ├── Prompt_config.yaml
+├── config/strategy_fusion.yaml              # Fusion thresholds & default weights
+├── config/openclaw_strategy_engine.yaml     # OpenClaw routing / weight persistence (optional)
 ├── src/                 # Core business logic (data, analysis, signals, risk, etc.)
-├── plugins/             # OpenClaw plugin layer (tool wrappers and entrypoints)
+├── plugins/             # OpenClaw plugin layer (incl. plugins/strategy_engine fusion)
 ├── workflows/           # OpenClaw workflow definitions and generated artifacts
 ├── docs/                # Project docs (getting started, usage, integration, reference, arch, ops)
 ├── scripts/             # Install, diagnostics, utility scripts

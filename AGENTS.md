@@ -17,6 +17,8 @@ Before doing anything else:
 
 Don't ask permission. Just do it.
 
+**Multi-strategy fusion:** Use **`tool_strategy_engine`** when the user wants a **combined / consistency-aware** view (not only single-path `tool_generate_signals`). It aggregates rule sources, fuses per `config/strategy_fusion.yaml`, returns `candidates`, `fused`, `weights_effective`, `inputs_hash`; optional Journal. OpenClaw routing hints: `config/openclaw_strategy_engine.yaml` + `Prompt_config.yaml` → `openclaw_strategy_engine_routing`. Weight persistence for iterative refinement: `data/strategy_fusion_effective_weights.json` when `evolution.persist_effective_weights` is enabled. See `docs/architecture/strategy_engine_and_signal_fusion.md`. Does not replace `tool_generate_signals`.
+
 ## Memory
 
 You wake up fresh each session. These files are your continuity:
