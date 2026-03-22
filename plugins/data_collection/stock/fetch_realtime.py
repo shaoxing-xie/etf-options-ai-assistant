@@ -1,9 +1,14 @@
 """
 获取A股股票实时数据。
-数据源调用顺序：1. mootdx/TDX（_fetch_realtime_mootdx）；2. 腾讯行情（_fetch_realtime_tencent，qt.gtimg.cn）；3. 兜底 AkShare（_fetch_realtime_akshare，ak.stock_zh_a_spot 新浪财经 A 股快照）。
+
+Provider 顺序（与 `providers/stock_realtime.py`、`ROADMAP.md` 一致）：
+1. mootdx / TDX（通达信远程，非纯 HTTP）→ _fetch_realtime_mootdx
+2. 东财五档（可选，单票）→ stock_bid_ask_em，quote_type=depth
+3. 腾讯 HTTP（qt.gtimg.cn）→ _fetch_realtime_tencent
+4. AkShare 全市场快照筛选（stock_zh_a_spot）→ _fetch_realtime_akshare
 """
 
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Tuple
 from datetime import datetime
 import logging
 import os
@@ -376,9 +381,114 @@ def _fetch_realtime_akshare(codes: List[str]) -> Optional[List[Dict[str, Any]]]:
         return None
 
 
+STOCK_REALTIME_CHAIN_ORDER: Tuple[str, ...] = (
+    "mootdx",
+    "eastmoney_bid_ask",
+    "qt.gtimg.cn",
+    "stock_zh_a_spot",
+)
+
+
+def _fetch_bid_ask_em_single(code: str) -> Optional[List[Dict[str, Any]]]:
+    """东财五档盘口（单票），失败返回 None。用于与快照链互补。"""
+    if not AKSHARE_AVAILABLE:
+        return None
+    c = _normalize_stock_code(code)
+    try:
+        df = ak.stock_bid_ask_em(symbol=c)
+    except Exception:
+        return None
+    if df is None or df.empty:
+        return None
+    row = df.iloc[0]
+    sell1 = None
+    buy1 = None
+    for col in df.columns:
+        cs = str(col)
+        if "卖" in cs and "价" in cs:
+            try:
+                sell1 = float(row[col])
+            except (TypeError, ValueError):
+                pass
+        if "买" in cs and "价" in cs:
+            try:
+                buy1 = float(row[col])
+            except (TypeError, ValueError):
+                pass
+    mid = None
+    if sell1 is not None and buy1 is not None:
+        mid = (sell1 + buy1) / 2.0
+    elif sell1 is not None:
+        mid = sell1
+    elif buy1 is not None:
+        mid = buy1
+    if mid is None:
+        return None
+    return [
+        {
+            "stock_code": code.strip(),
+            "name": "",
+            "current_price": mid,
+            "change": 0.0,
+            "change_percent": 0.0,
+            "open": 0.0,
+            "high": 0.0,
+            "low": 0.0,
+            "prev_close": 0.0,
+            "volume": 0,
+            "amount": 0.0,
+            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "quote_type": "depth",
+        }
+    ]
+
+
+def run_stock_realtime_chain(
+    codes: List[str],
+    *,
+    mode: str = "production",
+    include_depth: bool = True,
+) -> Tuple[Optional[List[Dict[str, Any]]], Optional[str], Dict[str, Any]]:
+    """
+    A 股实时 Provider 链（供 OpenClaw 与单测）。返回 (rows, source, debug)。
+    """
+    debug: Dict[str, Any] = {
+        "chain": list(STOCK_REALTIME_CHAIN_ORDER),
+        "attempted": [],
+        "notes": [],
+    }
+    results: Optional[List[Dict[str, Any]]] = None
+    source: Optional[str] = None
+
+    debug["attempted"].append("mootdx")
+    results = _fetch_realtime_mootdx(codes)
+    if results:
+        return results, "mootdx", debug
+
+    if include_depth and len(codes) == 1 and AKSHARE_AVAILABLE:
+        debug["attempted"].append("eastmoney_bid_ask")
+        depth = _fetch_bid_ask_em_single(codes[0])
+        if depth:
+            return depth, "eastmoney_bid_ask", debug
+
+    debug["attempted"].append("qt.gtimg.cn")
+    results = _fetch_realtime_tencent(codes)
+    if results:
+        return results, "qt.gtimg.cn", debug
+
+    debug["attempted"].append("stock_zh_a_spot")
+    results = _fetch_realtime_akshare(codes)
+    if results:
+        return results, "stock_zh_a_spot", debug
+
+    debug["notes"].append("所有实时 Provider 均未返回数据")
+    return None, None, debug
+
+
 def fetch_stock_realtime(
     stock_code: str = "600000",
     mode: str = "production",
+    include_depth: bool = True,
 ) -> Dict[str, Any]:
     """
     获取A股股票实时数据，支持多股票代码（逗号分隔）
@@ -388,7 +498,7 @@ def fetch_stock_realtime(
         debug = {
             "sys_executable": sys.executable,
             "mootdx_available": MOOTDX_AVAILABLE,
-            "attempt_order": ["mootdx", "qt.gtimg.cn", "stock_zh_a_spot"],
+            "attempt_order": list(STOCK_REALTIME_CHAIN_ORDER),
             "attempted": [],
             "notes": [],
         }
@@ -421,29 +531,11 @@ def fetch_stock_realtime(
     if not codes:
         return {"success": False, "message": "未提供有效的股票代码", "data": None}
 
-    # 1. 主数据源：mootdx / TDX（_fetch_realtime_mootdx）
+    results, source, chain_debug = run_stock_realtime_chain(
+        codes, mode=mode, include_depth=include_depth
+    )
     if mode == "test":
-        debug["attempted"].append("mootdx")
-        if not MOOTDX_AVAILABLE:
-            debug["notes"].append("mootdx 不可用：当前 Python 无法导入 mootdx（MOOTDX_AVAILABLE=False）")
-    results = _fetch_realtime_mootdx(codes)
-    source = "mootdx" if results else None
-    if mode == "test" and results is None and MOOTDX_AVAILABLE:
-        debug["notes"].append("mootdx 已尝试但返回空/失败（df 为空或异常被吞掉），已准备回退到腾讯")
-
-    # 2. 腾讯行情（_fetch_realtime_tencent）：沪市 sh+代码、深市 sz+代码，GET https://qt.gtimg.cn/q={逗号分隔}
-    if results is None:
-        if mode == "test":
-            debug["attempted"].append("qt.gtimg.cn")
-        results = _fetch_realtime_tencent(codes)
-        source = "qt.gtimg.cn" if results else None
-
-    # 3. 兜底：AkShare（_fetch_realtime_akshare）：ak.stock_zh_a_spot() 新浪财经 A 股实时快照
-    if results is None:
-        if mode == "test":
-            debug["attempted"].append("stock_zh_a_spot")
-        results = _fetch_realtime_akshare(codes)
-        source = "stock_zh_a_spot" if results else None
+        debug = {**debug, **chain_debug}
 
     if not results:
         logger.warning(
@@ -452,7 +544,7 @@ def fetch_stock_realtime(
         )
         ret = {
             "success": False,
-            "message": "无法获取股票实时行情（mootdx、腾讯 qt.gtimg.cn、AkShare stock_zh_a_spot 均不可用或返回空数据）",
+            "message": "无法获取股票实时行情（mootdx、东财五档、腾讯 qt.gtimg.cn、AkShare stock_zh_a_spot 均不可用或返回空数据）",
             "data": None,
             "source": source or "none",
             "count": 0,
@@ -483,9 +575,12 @@ def fetch_stock_realtime(
 def tool_fetch_stock_realtime(
     stock_code: str = "600000",
     mode: str = "production",
+    include_depth: bool = True,
 ) -> Dict[str, Any]:
     """
     OpenClaw 工具：获取股票实时数据
     """
-    return fetch_stock_realtime(stock_code=stock_code, mode=mode)
+    return fetch_stock_realtime(
+        stock_code=stock_code, mode=mode, include_depth=include_depth
+    )
 

@@ -10,6 +10,7 @@
 
 主要文档：
 
+- 插件侧「工具与数据域」总索引：仓库内 `plugins/data_collection/README.md`、`plugins/data_collection/ROADMAP.md`（与 `config/tools_manifest.yaml` / `tool_runner.py` 对照维护）。
 - `工具参考手册.md`：主入口，说明工具来源（`config/tools_manifest.yaml`）、分类与使用方式。
 - `工具参考手册-速查.md`：按分类列出的工具速查表（工具 ID / 标签 / 一句话说明）。
 - `工具参考手册-场景.md`：按使用场景组织的工具组合与示例。

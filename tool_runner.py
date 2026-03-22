@@ -31,7 +31,7 @@ ALIASES = {
     "tool_fetch_global_index_spot": ("tool_fetch_index_data", {"data_type": "global_spot"}),
     "tool_fetch_etf_realtime": ("tool_fetch_etf_data", {"data_type": "realtime"}),
     "tool_fetch_etf_historical": ("tool_fetch_etf_data", {"data_type": "historical"}),
-    # ETF 分钟数据改为走 data_collection.etf.fetch_minute（新浪优先），而不是 akshare-only
+    # ETF 分钟数据改为走 plugins.data_collection.etf.fetch_minute（新浪优先），而不是 akshare-only
     "tool_fetch_etf_minute": ("tool_fetch_etf_minute_direct", {}),
     "tool_fetch_option_realtime": ("tool_fetch_option_data", {"data_type": "realtime"}),
     "tool_fetch_option_greeks": ("tool_fetch_option_data", {"data_type": "greeks"}),
@@ -60,10 +60,11 @@ ALIASES = {
     "tool_calculate_strategy_score": ("tool_strategy_analytics", {"action": "score"}),
     "tool_get_strategy_weights": ("tool_strategy_weights", {"action": "get"}),
     "tool_adjust_strategy_weights": ("tool_strategy_weights", {"action": "adjust"}),
-    # 股票行情工具（直接映射到 data_collection.stock）
+    # 股票行情工具（直接映射到 plugins.data_collection.stock）
     "tool_fetch_stock_historical": ("tool_fetch_stock_historical", {}),
     "tool_fetch_stock_minute": ("tool_fetch_stock_minute", {}),
     "tool_fetch_stock_realtime": ("tool_fetch_stock_realtime", {}),
+    "tool_fetch_etf_iopv_snapshot": ("tool_fetch_etf_iopv_snapshot", {}),
 }
 
 class TradingCopilotParams(BaseModel):
@@ -111,7 +112,7 @@ TOOL_MAP: Dict[str, ToolSpec] = {
     ),
     # 直连版 ETF 分钟数据（新浪优先 + 东方财富 + 原系统缓存）
     "tool_fetch_etf_minute_direct": ToolSpec(
-        module_path="data_collection.etf.fetch_minute",
+        module_path="plugins.data_collection.etf.fetch_minute",
         function_name="tool_fetch_etf_minute",
     ),
     "tool_fetch_option_data": ToolSpec(
@@ -120,23 +121,27 @@ TOOL_MAP: Dict[str, ToolSpec] = {
     ),
     # 数据采集 - 期货与工具（保留）
     "tool_fetch_a50_data": ToolSpec(
-        module_path="data_collection.futures.fetch_a50",
+        module_path="plugins.data_collection.futures.fetch_a50",
         function_name="tool_fetch_a50_data",
     ),
+    "tool_fetch_etf_iopv_snapshot": ToolSpec(
+        module_path="plugins.data_collection.etf.fetch_realtime",
+        function_name="tool_fetch_etf_iopv_snapshot",
+    ),
     "tool_get_option_contracts": ToolSpec(
-        module_path="data_collection.utils.get_contracts",
+        module_path="plugins.data_collection.utils.get_contracts",
         function_name="tool_get_option_contracts",
     ),
     "tool_check_trading_status": ToolSpec(
-        module_path="data_collection.utils.check_trading_status",
+        module_path="plugins.data_collection.utils.check_trading_status",
         function_name="tool_check_trading_status",
     ),
     "tool_get_a_share_market_regime": ToolSpec(
-        module_path="data_collection.utils.a_share_market_regime",
+        module_path="plugins.data_collection.utils.a_share_market_regime",
         function_name="tool_get_a_share_market_regime",
     ),
     "tool_filter_a_share_tradability": ToolSpec(
-        module_path="data_collection.utils.a_share_tradability_filter",
+        module_path="plugins.data_collection.utils.a_share_tradability_filter",
         function_name="tool_filter_a_share_tradability",
     ),
     # Copilot（编排入口）
@@ -243,58 +248,58 @@ TOOL_MAP: Dict[str, ToolSpec] = {
     ),
     # 股票行情
     "tool_fetch_stock_historical": ToolSpec(
-        module_path="data_collection.stock.fetch_historical",
+        module_path="plugins.data_collection.stock.fetch_historical",
         function_name="tool_fetch_stock_historical",
     ),
     "tool_fetch_stock_minute": ToolSpec(
-        module_path="data_collection.stock.fetch_minute",
+        module_path="plugins.data_collection.stock.fetch_minute",
         function_name="tool_fetch_stock_minute",
     ),
     "tool_fetch_stock_realtime": ToolSpec(
-        module_path="data_collection.stock.fetch_realtime",
+        module_path="plugins.data_collection.stock.fetch_realtime",
         function_name="tool_fetch_stock_realtime",
     ),
     # 个股数据聚合
     "tool_stock_data_fetcher": ToolSpec(
-        module_path="data_collection.stock.stock_data_fetcher",
+        module_path="plugins.data_collection.stock.stock_data_fetcher",
         function_name="tool_stock_data_fetcher",
     ),
     "tool_stock_monitor": ToolSpec(
-        module_path="data_collection.stock.stock_data_fetcher",
+        module_path="plugins.data_collection.stock.stock_data_fetcher",
         function_name="tool_stock_monitor",
     ),
     # 涨停回马枪 - 数据与回测
     "tool_fetch_limit_up_stocks": ToolSpec(
-        module_path="data_collection.limit_up.fetch_limit_up",
+        module_path="plugins.data_collection.limit_up.fetch_limit_up",
         function_name="tool_fetch_limit_up_stocks",
     ),
     "tool_sector_heat_score": ToolSpec(
-        module_path="data_collection.limit_up.sector_heat",
+        module_path="plugins.data_collection.limit_up.sector_heat",
         function_name="tool_sector_heat_score",
     ),
     "tool_write_limit_up_with_sector": ToolSpec(
-        module_path="data_collection.limit_up.daily_report",
+        module_path="plugins.data_collection.limit_up.daily_report",
         function_name="tool_write_limit_up_with_sector",
     ),
     "tool_limit_up_daily_flow": ToolSpec(
-        module_path="data_collection.limit_up.daily_report",
+        module_path="plugins.data_collection.limit_up.daily_report",
         function_name="tool_limit_up_daily_flow",
     ),
     # 涨停回马枪相关技能封装
     "tool_dragon_tiger_list": ToolSpec(
-        module_path="data_collection.dragon_tiger",
+        module_path="plugins.data_collection.dragon_tiger",
         function_name="tool_dragon_tiger_list",
     ),
     "tool_capital_flow": ToolSpec(
-        module_path="data_collection.capital_flow",
+        module_path="plugins.data_collection.capital_flow",
         function_name="tool_capital_flow",
     ),
     "tool_fetch_northbound_flow": ToolSpec(
-        module_path="data_collection.northbound",
+        module_path="plugins.data_collection.northbound",
         function_name="tool_fetch_northbound_flow",
     ),
     "tool_fetch_stock_financials": ToolSpec(
-        module_path="data_collection.financials",
+        module_path="plugins.data_collection.financials",
         function_name="tool_fetch_stock_financials",
     ),
     "tool_quantitative_screening": ToolSpec(

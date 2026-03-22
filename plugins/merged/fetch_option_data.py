@@ -18,13 +18,13 @@ def tool_fetch_option_data(
     if not contract_code:
         return {"success": False, "message": "缺少 contract_code", "data": None}
     if data_type == "realtime":
-        from data_collection.option.fetch_realtime import tool_fetch_option_realtime
+        from plugins.data_collection.option.fetch_realtime import tool_fetch_option_realtime
         return tool_fetch_option_realtime(contract_code=contract_code, **kwargs)
     if data_type == "greeks":
-        from data_collection.option.fetch_greeks import tool_fetch_option_greeks
+        from plugins.data_collection.option.fetch_greeks import tool_fetch_option_greeks
         return tool_fetch_option_greeks(contract_code=contract_code, **kwargs)
     if data_type == "minute":
-        from data_collection.option.fetch_minute import tool_fetch_option_minute
+        from plugins.data_collection.option.fetch_minute import tool_fetch_option_minute
         return tool_fetch_option_minute(contract_code=contract_code, period=period or "15", **kwargs)
     return {
         "success": False,

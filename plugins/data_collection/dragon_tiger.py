@@ -139,7 +139,7 @@ def tool_dragon_tiger_list(date: Optional[str] = None) -> Dict[str, Any]:
           "warnings": [...],        # 例如 "龙虎榜数据缺失，仅返回涨停池"
         }
     """
-    from data_collection.limit_up.fetch_limit_up import (  # type: ignore[import]
+    from plugins.data_collection.limit_up.fetch_limit_up import (  # type: ignore[import]
         tool_fetch_limit_up_stocks,
     )
 

@@ -1,5 +1,7 @@
 akracer==0.0.14
 akshare==1.18.35
+baostock>=0.8.8
+efinance>=0.5.5
 anyio==4.12.1
 beautifulsoup4==4.14.3
 certifi==2026.2.25

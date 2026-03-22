@@ -171,6 +171,22 @@
       }
     },
     {
+      "id": "tool_fetch_etf_iopv_snapshot",
+      "label": "获取 ETF IOPV/折价率",
+      "description": "从东财 ETF 列表（AkShare fund_etf_spot_em）按代码筛选 IOPV 实时估值、基金折价率等字段。",
+      "description_short": "ETF IOPV/折价率快照（东财列表）。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "etf_code": {
+            "type": "string",
+            "description": "ETF代码，支持逗号分隔多代码",
+            "default": "510300"
+          }
+        }
+      }
+    },
+    {
       "id": "tool_fetch_option_realtime",
       "label": "获取期权实时数据",
       "description": "获取期权实时行情数据。",
@@ -256,8 +272,8 @@
     {
       "id": "tool_get_option_contracts",
       "label": "获取期权合约列表",
-      "description": "获取期权合约信息列表。",
-      "description_short": "获取期权合约信息列表。",
+      "description": "获取上交所 ETF 期权合约列表；返回中含 expiry_months_queried（本次请求所查询的到期月份）。",
+      "description_short": "获取期权合约信息列表（含到期月份查询列表）。",
       "parameters": {
         "type": "object",
         "properties": {

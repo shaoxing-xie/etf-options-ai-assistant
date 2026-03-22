@@ -68,6 +68,7 @@
 
 当你需要查某个工具的参数、返回值或错误码时使用：
 
+- **数据采集插件的分类与 Provider 约定**（OpenClaw 技能/工具索引）：`plugins/data_collection/README.md`、`plugins/data_collection/ROADMAP.md`
 - `docs/reference/工具参考手册.md`
 - `docs/reference/工具参考手册-速查.md`
 - `docs/reference/工具参考手册-场景.md`

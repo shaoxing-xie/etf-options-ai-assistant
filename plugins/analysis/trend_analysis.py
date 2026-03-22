@@ -138,10 +138,8 @@ def trend_analysis(
                 # 如果原系统获取失败，使用 OpenClaw 工具获取开盘数据（mode=test 避免 9:28 定时任务被交易日检查拦截）
                 if not opening_data_result or not opening_data_result.get('success'):
                     try:
-                        try:
-                            from data_collection.index.fetch_opening import fetch_index_opening
-                        except ImportError:
-                            from plugins.data_collection.index.fetch_opening import fetch_index_opening
+                        from plugins.data_collection.index.fetch_opening import fetch_index_opening
+
                         opening_data_result = fetch_index_opening(mode="test")
                     except Exception as e:
                         import logging

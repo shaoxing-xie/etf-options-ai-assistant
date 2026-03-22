@@ -101,8 +101,8 @@ def tool_sector_heat_score(
     若未传 sector_data，则内部调用 tool_fetch_sector_data(industry)。
     返回: success, date, sectors: [{ name, score, limit_up_count, avg_change, net_flow, phase, leaders }]
     """
-    from data_collection.limit_up.fetch_limit_up import tool_fetch_limit_up_stocks
-    from data_collection.sector import tool_fetch_sector_data
+    from plugins.data_collection.limit_up.fetch_limit_up import tool_fetch_limit_up_stocks
+    from plugins.data_collection.sector import tool_fetch_sector_data
 
     dt = date or datetime.now().strftime("%Y%m%d")
     if limit_up_data is None:

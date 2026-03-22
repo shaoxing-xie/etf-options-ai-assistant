@@ -83,8 +83,8 @@ def tool_write_limit_up_with_sector(
     可选 output_path 覆盖默认路径。
     返回: success, date, path, sectors_count, limit_up_count
     """
-    from data_collection.limit_up.fetch_limit_up import tool_fetch_limit_up_stocks
-    from data_collection.limit_up.sector_heat import tool_sector_heat_score
+    from plugins.data_collection.limit_up.fetch_limit_up import tool_fetch_limit_up_stocks
+    from plugins.data_collection.limit_up.sector_heat import tool_sector_heat_score
 
     from datetime import datetime
     dt = date or datetime.now().strftime("%Y%m%d")

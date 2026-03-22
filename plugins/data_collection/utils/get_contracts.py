@@ -1,7 +1,9 @@
 """
-获取期权合约列表
-融合 Coze 插件 get_option_contracts.py
-OpenClaw 插件工具
+获取期权合约列表（上交所 ETF 期权标的）
+
+融合 Coze 插件 get_option_contracts.py。合约 **主数据**（挂牌月份、最后交易日、行权价阶梯）
+以交易所规则为准；本工具通过新浪接口拉取 **当前可查询月份** 下的合约代码列表，
+与 `ROADMAP.md` 附录 D 及 `option/README.md` 描述一致。
 """
 
 from typing import Optional, Dict, Any, List
@@ -149,7 +151,8 @@ def get_option_contracts(
                 'underlying_name': underlying_info.get('name'),
                 'option_type': option_type,
                 'contracts': contracts,
-                'count': len(contracts)
+                'count': len(contracts),
+                'expiry_months_queried': expiry_months,
             }
         }
     

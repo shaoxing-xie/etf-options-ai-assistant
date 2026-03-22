@@ -34,12 +34,16 @@
 ### 2. OpenClaw 插件：`plugins/`
 
 - `plugins/data_collection/`：数据采集插件
-  - `stock/`：A股股票数据采集（实时、监控、基础行情）。
+  - `README.md`：OpenClaw 工具索引（标的物 → 数据域 → 周期）与 `TOOL_MAP` 对照。
+  - `ROADMAP.md`：路线图、双层降级（多 Provider × 包内多路由）、附录 DTO/标的映射等。
+  - `config/`：静态配置（如 `symbol_mapping.yaml`）。
+  - `providers/`：Provider 链再导出（如 A 股实时），供单测与文档 import。
+  - `stock/`：A股股票数据采集（实时、日线、分钟、聚合等）。
   - `index/`：指数数据采集（实时、历史、分钟、开盘等）。
-  - `etf/`：ETF 实时/历史/分钟数据采集。
+  - `etf/`：ETF 实时/历史/分钟数据采集（含 IOPV/折价快照工具）。
   - `option/`：期权实时、Greeks、分钟数据采集（扩展能力）。
   - `futures/`：A50 期指数据采集。
-  - `utils/`：批量采集、交易时间判断等通用工具。
+  - `utils/`：批量采集、交易时间判断、期权合约列表等通用工具。
 - `plugins/analysis/`：分析类插件
   - `technical_indicators.py`：技术指标计算（MACD、RSI、MA、ATR 等）。
   - `trend_analysis.py`：盘后/盘前/开盘趋势分析的插件封装。

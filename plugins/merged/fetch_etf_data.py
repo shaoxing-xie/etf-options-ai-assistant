@@ -19,10 +19,10 @@ def tool_fetch_etf_data(
     data_type: realtime | historical | minute
     """
     if data_type == "realtime":
-        from data_collection.etf.fetch_realtime import tool_fetch_etf_realtime
+        from plugins.data_collection.etf.fetch_realtime import tool_fetch_etf_realtime
         return tool_fetch_etf_realtime(etf_code=etf_code or "510300", **kwargs)
     if data_type == "historical":
-        from data_collection.etf.fetch_historical import tool_fetch_etf_historical
+        from plugins.data_collection.etf.fetch_historical import tool_fetch_etf_historical
         return tool_fetch_etf_historical(
             etf_code=etf_code or "510300",
             period=period or "daily",
@@ -30,7 +30,7 @@ def tool_fetch_etf_data(
             end_date=end_date
         )
     if data_type == "minute":
-        from data_collection.etf.fetch_minute import tool_fetch_etf_minute
+        from plugins.data_collection.etf.fetch_minute import tool_fetch_etf_minute
         return tool_fetch_etf_minute(
             etf_code=etf_code or "510300",
             period=period or "5",

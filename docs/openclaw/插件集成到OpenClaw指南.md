@@ -168,12 +168,12 @@ ln -s /mnt/d/Ubuntu应用环境配置/mcp/option_trading_assistant/etf-options-a
 import sys
 import os
 
-# 直接添加Windows路径到Python路径
-windows_plugin_path = "/mnt/d/Ubuntu应用环境配置/mcp/option_trading_assistant/etf-options-ai-assistant/plugins"
-sys.path.insert(0, windows_plugin_path)
+# 添加项目根目录到 Python 路径（与仓库内 `from plugins.data_collection...` 一致）
+windows_project_root = "/mnt/d/Ubuntu应用环境配置/mcp/option_trading_assistant/etf-options-ai-assistant"
+sys.path.insert(0, windows_project_root)
 
 # 然后正常导入
-from data_collection.index.fetch_realtime import tool_fetch_index_realtime
+from plugins.data_collection.index.fetch_realtime import tool_fetch_index_realtime
 # ...
 ```
 
@@ -249,11 +249,11 @@ from typing import Dict, Any, List
 import sys
 import os
 
-# 添加插件目录到路径
+# 将扩展目录作为项目根加入路径（该目录下应有 plugins/data_collection、plugins/analysis 等）
 plugin_dir = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, os.path.join(plugin_dir, 'plugins'))
+sys.path.insert(0, plugin_dir)
 
-# 导入数据采集工具
+# 导入数据采集工具（与仓库内一致：项目根 + from plugins.data_collection...）
 from plugins.data_collection.index.fetch_realtime import tool_fetch_index_realtime
 from plugins.data_collection.index.fetch_historical import tool_fetch_index_historical
 from plugins.data_collection.index.fetch_minute import tool_fetch_index_minute
@@ -261,6 +261,7 @@ from plugins.data_collection.index.fetch_opening import tool_fetch_index_opening
 from plugins.data_collection.index.fetch_global import tool_fetch_global_index_spot
 
 from plugins.data_collection.etf.fetch_realtime import tool_fetch_etf_realtime
+from plugins.data_collection.etf.fetch_realtime import tool_fetch_etf_iopv_snapshot
 from plugins.data_collection.etf.fetch_historical import tool_fetch_etf_historical
 from plugins.data_collection.etf.fetch_minute import tool_fetch_etf_minute
 

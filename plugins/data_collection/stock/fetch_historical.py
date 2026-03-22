@@ -25,6 +25,12 @@ try:
 except Exception:  # noqa: BLE001
     MOOTDX_AVAILABLE = False
 
+try:
+    import baostock as bs  # noqa: F401
+    BAOSTOCK_AVAILABLE = True
+except ImportError:
+    BAOSTOCK_AVAILABLE = False
+
 
 def _ensure_src_import():
     """
@@ -210,6 +216,90 @@ def _fetch_stock_daily_mootdx(
     return df
 
 
+def _fetch_stock_daily_baostock(
+    clean_code: str,
+    start_date_norm: str,
+    end_date_norm: str,
+) -> Optional[pd.DataFrame]:
+    """Baostock 日线（无 token，长历史；前复权 adjustflag=3）。"""
+    if not BAOSTOCK_AVAILABLE:
+        return None
+    try:
+        import baostock as bs
+    except ImportError:
+        return None
+    prefix = "sh" if clean_code.startswith(("5", "6", "9")) else "sz"
+    code_bs = f"{prefix}.{clean_code}"
+    lg = bs.login()
+    if lg.error_code != "0":
+        try:
+            bs.logout()
+        except Exception:
+            pass
+        return None
+    try:
+        rs = bs.query_history_k_data_plus(
+            code_bs,
+            "date,open,high,low,close,volume,amount,adjustflag",
+            start_date=start_date_norm,
+            end_date=end_date_norm,
+            frequency="d",
+            adjustflag="3",
+        )
+        rows: List[List[str]] = []
+        while rs.error_code == "0" and rs.next():
+            rows.append(rs.get_row_data())
+        if not rows:
+            return None
+        df = pd.DataFrame(rows, columns=rs.fields)
+    except Exception:
+        return None
+    finally:
+        try:
+            bs.logout()
+        except Exception:
+            pass
+
+    if df is None or df.empty:
+        return None
+    if "date" in df.columns:
+        df["日期"] = pd.to_datetime(df["date"]).dt.strftime("%Y-%m-%d")
+    df = normalize_column_names(df)
+    df = calculate_missing_fields(df)
+    return df if not df.empty else None
+
+
+def _to_ak_tx_symbol(clean_code: str) -> str:
+    if clean_code.startswith(("5", "6", "9")):
+        return f"sh{clean_code}"
+    return f"sz{clean_code}"
+
+
+def _fetch_stock_daily_tencent_ak(
+    clean_code: str,
+    start_date_yyyymmdd: str,
+    end_date_yyyymmdd: str,
+) -> Optional[pd.DataFrame]:
+    """AkShare 腾讯日线 stock_zh_a_hist_tx（第三备用免费源）。"""
+    if not AKSHARE_AVAILABLE:
+        return None
+    try:
+        ak_df = ak.stock_zh_a_hist_tx(
+            symbol=_to_ak_tx_symbol(clean_code),
+            start_date=start_date_yyyymmdd,
+            end_date=end_date_yyyymmdd,
+            adjust="qfq",
+        )
+    except Exception:
+        return None
+    if ak_df is None or ak_df.empty:
+        return None
+    ak_df = normalize_column_names(ak_df)
+    if "日期" in ak_df.columns:
+        ak_df["日期"] = pd.to_datetime(ak_df["日期"]).dt.strftime("%Y-%m-%d")
+    return calculate_missing_fields(ak_df)
+
+
 def fetch_single_stock_historical(
     stock_code: str,
     period: str = "daily",
@@ -221,11 +311,14 @@ def fetch_single_stock_historical(
     """
     获取单只 A 股股票历史数据（日线为主）
 
-    优先级：
+    Provider 顺序（与 ROADMAP 一致）：
     1. 本地缓存（stock_daily）
-    2. Tushare （pro.stock_daily）
-    3. AkShare 新浪日线接口（stock_zh_a_daily）
-    4. AkShare 东财日线接口（stock_zh_a_hist）
+    2. mootdx 日线
+    3. Baostock（无 token）
+    4. AkShare 新浪 stock_zh_a_daily
+    5. AkShare 东财 stock_zh_a_hist（前复权）
+    6. AkShare 腾讯 stock_zh_a_hist_tx
+    7. Tushare pro.daily（EOD，需 token，置后）
     """
     if period != "daily":
         # 目前仅规划/实现日线，周/月后续扩展
@@ -292,29 +385,17 @@ def fetch_single_stock_historical(
         except Exception:
             df_mootdx = None
 
-    # 3. Tushare 作为后备主数据源
-    if (df is None or df.empty) and TUSHARE_AVAILABLE:
+    # 3. Baostock
+    if (df is None or df.empty) and BAOSTOCK_AVAILABLE:
         try:
-            token = tushare_token
-            if not token and hasattr(ts, "get_apis"):
-                # 若未来需要，可从全局配置读取；此处保持显式参数优先
-                pass
-            if token:
-                pro = ts.pro_api(token)
-            else:
-                pro = ts.pro_api()
-            ts_code = f"{clean_code}.SH" if clean_code.startswith(("5", "6")) else f"{clean_code}.SZ"
-            ts_df = pro.daily(
-                ts_code=ts_code,
-                start_date=start_date_yyyymmdd,
-                end_date=end_date_yyyymmdd,
+            bs_df = _fetch_stock_daily_baostock(
+                clean_code=clean_code,
+                start_date_norm=start_date_norm,
+                end_date_norm=end_date_norm,
             )
-            if ts_df is not None and not ts_df.empty:
-                ts_df = ts_df.sort_values("trade_date")
-                ts_df["date"] = pd.to_datetime(ts_df["trade_date"]).dt.strftime("%Y-%m-%d")
-                ts_df = normalize_column_names(ts_df)
-                df = calculate_missing_fields(ts_df)
-                source = "tushare"
+            if bs_df is not None and not bs_df.empty:
+                df = bs_df
+                source = "baostock"
         except Exception:
             pass
 
@@ -360,6 +441,45 @@ def fetch_single_stock_historical(
                     ak_df["日期"] = pd.to_datetime(ak_df["日期"]).dt.strftime("%Y-%m-%d")
                 df = calculate_missing_fields(ak_df)
                 source = "akshare_eastmoney"
+        except Exception:
+            pass
+
+    # 6. AkShare 腾讯日线（stock_zh_a_hist_tx）
+    if (df is None or df.empty) and AKSHARE_AVAILABLE:
+        try:
+            tx_df = _fetch_stock_daily_tencent_ak(
+                clean_code=clean_code,
+                start_date_yyyymmdd=start_date_yyyymmdd,
+                end_date_yyyymmdd=end_date_yyyymmdd,
+            )
+            if tx_df is not None and not tx_df.empty:
+                df = tx_df
+                source = "akshare_tencent_daily"
+        except Exception:
+            pass
+
+    # 7. Tushare（EOD，需 token，置后）
+    if (df is None or df.empty) and TUSHARE_AVAILABLE:
+        try:
+            token = tushare_token
+            if not token and hasattr(ts, "get_apis"):
+                pass
+            if token:
+                pro = ts.pro_api(token)
+            else:
+                pro = ts.pro_api()
+            ts_code = f"{clean_code}.SH" if clean_code.startswith(("5", "6")) else f"{clean_code}.SZ"
+            ts_df = pro.daily(
+                ts_code=ts_code,
+                start_date=start_date_yyyymmdd,
+                end_date=end_date_yyyymmdd,
+            )
+            if ts_df is not None and not ts_df.empty:
+                ts_df = ts_df.sort_values("trade_date")
+                ts_df["date"] = pd.to_datetime(ts_df["trade_date"]).dt.strftime("%Y-%m-%d")
+                ts_df = normalize_column_names(ts_df)
+                df = calculate_missing_fields(ts_df)
+                source = "tushare"
         except Exception:
             pass
 

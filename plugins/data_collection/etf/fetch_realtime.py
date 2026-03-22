@@ -7,6 +7,7 @@ OpenClaw 插件工具
 import pandas as pd
 from typing import Optional, Dict, Any, List
 from datetime import datetime
+from contextlib import nullcontext
 import os
 import sys
 
@@ -468,3 +469,110 @@ def tool_fetch_etf_realtime(
         mode: 运行模式，"production"（默认，检查交易日）或 "test"（跳过检查）
     """
     return fetch_etf_realtime(etf_code=etf_code, mode=mode)
+
+
+def fetch_etf_iopv_snapshot(
+    etf_code: str = "510300",
+) -> Dict[str, Any]:
+    """
+    从东方财富 ETF 列表拉取 IOPV 实时估值与基金折价率（AkShare fund_etf_spot_em）。
+    失败时返回 success=False，不抛异常。
+    """
+    if not AKSHARE_AVAILABLE:
+        return {
+            "success": False,
+            "message": "akshare not installed",
+            "data": None,
+            "source": "fund_etf_spot_em",
+        }
+    codes = [c.strip() for c in str(etf_code).split(",") if c.strip()]
+    if not codes:
+        return {
+            "success": False,
+            "message": "未提供有效的 ETF 代码",
+            "data": None,
+            "source": "fund_etf_spot_em",
+        }
+    try:
+        ctx = without_proxy_env() if PROXY_ENV_AVAILABLE else nullcontext()
+        with ctx:
+            spot_df = ak.fund_etf_spot_em()
+    except Exception as e:
+        return {
+            "success": False,
+            "message": f"fund_etf_spot_em failed: {e}",
+            "data": None,
+            "source": "fund_etf_spot_em",
+        }
+    if spot_df is None or spot_df.empty or "代码" not in spot_df.columns:
+        return {
+            "success": False,
+            "message": "东财 ETF 列表为空或格式变更",
+            "data": None,
+            "source": "fund_etf_spot_em",
+        }
+
+    rows: List[Dict[str, Any]] = []
+    for raw in codes:
+        c = raw.upper().replace(".SH", "").replace(".SZ", "")
+        if c.lower().startswith(("sh", "sz")) and len(c) > 2:
+            c = c[2:]
+        m = spot_df[spot_df["代码"].astype(str) == c]
+        if m.empty:
+            rows.append(
+                {
+                    "code": c,
+                    "found": False,
+                    "message": "未在东财 ETF 列表中匹配",
+                }
+            )
+            continue
+        r = m.iloc[0]
+        iopv = None
+        discount = None
+        for col in spot_df.columns:
+            if "IOPV" in str(col):
+                try:
+                    iopv = float(r[col])
+                except (TypeError, ValueError):
+                    pass
+            if "折价" in str(col):
+                try:
+                    discount = float(r[col])
+                except (TypeError, ValueError):
+                    pass
+        name_val = ""
+        if "名称" in r.index:
+            name_val = str(r["名称"])
+        px = 0.0
+        if "最新价" in r.index:
+            try:
+                px = float(r["最新价"])
+            except (TypeError, ValueError):
+                px = 0.0
+        rows.append(
+            {
+                "code": c,
+                "found": True,
+                "name": name_val,
+                "latest_price": px,
+                "iopv": iopv,
+                "discount_pct": discount,
+            }
+        )
+
+    data_out: Any = rows[0] if len(rows) == 1 else rows
+    return {
+        "success": True,
+        "message": "Successfully fetched ETF IOPV / discount metadata",
+        "data": data_out,
+        "source": "fund_etf_spot_em",
+        "count": len(rows),
+    }
+
+
+def tool_fetch_etf_iopv_snapshot(
+    etf_code: str = "510300",
+) -> Dict[str, Any]:
+    """OpenClaw 工具：ETF IOPV / 折价率（东财列表）"""
+    return fetch_etf_iopv_snapshot(etf_code=etf_code)

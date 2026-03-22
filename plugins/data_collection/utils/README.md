@@ -47,10 +47,13 @@ result = tool_get_option_contracts(
                 "trade_month": "202502"
             }
         ],
-        "count": 20
+        "count": 20,
+        "expiry_months_queried": ["202502", "202503"]
     }
 }
 ```
+
+说明：`expiry_months_queried` 为本次实际向新浪接口请求的到期月份列表（与 [ROADMAP.md](../ROADMAP.md) 附录「期权合约主数据」一致；完整行权阶梯仍以交易所规则为准）。
 
 **技术实现要点**：
 - 使用新浪接口（`option_sse_list_sina`, `option_sse_codes_sina`）

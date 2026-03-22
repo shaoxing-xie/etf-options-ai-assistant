@@ -22,10 +22,10 @@ def tool_fetch_index_data(
     data_type: realtime | historical | minute | opening | global_spot
     """
     if data_type == "realtime":
-        from data_collection.index.fetch_realtime import tool_fetch_index_realtime
+        from plugins.data_collection.index.fetch_realtime import tool_fetch_index_realtime
         return tool_fetch_index_realtime(index_code=index_code or "000001", mode=mode)
     if data_type == "historical":
-        from data_collection.index.fetch_historical import tool_fetch_index_historical
+        from plugins.data_collection.index.fetch_historical import tool_fetch_index_historical
         return tool_fetch_index_historical(
             index_code=index_code or "000300",
             period=period or "daily",
@@ -33,7 +33,7 @@ def tool_fetch_index_data(
             end_date=end_date
         )
     if data_type == "minute":
-        from data_collection.index.fetch_minute import tool_fetch_index_minute
+        from plugins.data_collection.index.fetch_minute import tool_fetch_index_minute
         return tool_fetch_index_minute(
             index_code=index_code or "000300",
             period=period or "5",
@@ -41,13 +41,13 @@ def tool_fetch_index_data(
             mode=mode
         )
     if data_type == "opening":
-        from data_collection.index.fetch_opening import tool_fetch_index_opening
+        from plugins.data_collection.index.fetch_opening import tool_fetch_index_opening
         return tool_fetch_index_opening(
             index_codes=kwargs.get("index_codes") or index_code,
             mode=mode,
         )
     if data_type == "global_spot":
-        from data_collection.index.fetch_global import tool_fetch_global_index_spot
+        from plugins.data_collection.index.fetch_global import tool_fetch_global_index_spot
         return tool_fetch_global_index_spot(**kwargs)
     return {
         "success": False,

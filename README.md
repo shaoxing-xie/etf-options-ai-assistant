@@ -168,6 +168,7 @@ bash install_plugin.sh
 
 本项目的详细文档都集中在 `docs/` 目录下，建议从这里开始：
 
+- **数据采集插件（标的物 / 数据域 / 行情周期、Provider 矩阵）**：`plugins/data_collection/README.md`（与 [`ROADMAP.md`](plugins/data_collection/ROADMAP.md) 互链）
 - **文档首页**：`docs/README.md`
 - **入门（Getting Started）**：  
   - `docs/getting-started/README.md`  

@@ -24,6 +24,12 @@ try:
 except Exception:  # noqa: BLE001
     MOOTDX_AVAILABLE = False
 
+try:
+    import efinance as ef  # noqa: F401
+    EFINANCE_AVAILABLE = True
+except ImportError:
+    EFINANCE_AVAILABLE = False
+
 
 def _ensure_src_import():
     selected_root: Optional[Path] = None
@@ -224,6 +230,60 @@ def _fetch_stock_minute_sina(
         return None
 
 
+def _fetch_stock_minute_efinance(
+    clean_code: str,
+    period: str,
+    start_date_str: str,
+    end_date_str: str,
+) -> Optional[pd.DataFrame]:
+    """
+    efinance 东财路径，作为 AkShare 双路由均失败后的第四 Provider。
+    klt：1/5/15/30/60 分钟（与 efinance 文档一致）。
+    """
+    if not EFINANCE_AVAILABLE:
+        return None
+    try:
+        import efinance as ef
+    except ImportError:
+        return None
+    klt_map = {"1": 1, "5": 5, "15": 15, "30": 30, "60": 60}
+    klt = klt_map.get(period)
+    if klt is None:
+        return None
+    beg = start_date_str[:10].replace("-", "")
+    end = end_date_str[:10].replace("-", "")
+    try:
+        df = ef.stock.get_quote_history(
+            stock_codes=clean_code,
+            beg=beg,
+            end=end,
+            klt=klt,
+            fqt=1,
+        )
+    except Exception:
+        return None
+    if df is None or df.empty:
+        return None
+    df = df.copy()
+    time_col = None
+    for c in df.columns:
+        if str(c) in ("时间", "日期"):
+            time_col = c
+            break
+    if time_col is None:
+        return None
+    if time_col != "时间":
+        df = df.rename(columns={time_col: "时间"})
+    df = normalize_column_names(df)
+    df = calculate_missing_fields(df)
+    if "时间" in df.columns:
+        df["时间"] = pd.to_datetime(df["时间"], errors="coerce")
+        df = df[df["时间"].notna()].copy()
+        df["时间"] = df["时间"].dt.strftime("%Y-%m-%d %H:%M:%S")
+        df = df.sort_values("时间").reset_index(drop=True)
+    return df
+
+
 def _fetch_stock_minute_eastmoney(
     clean_code: str,
     period: str,
@@ -343,9 +403,13 @@ def fetch_single_stock_minute(
     end_date: Optional[str] = None,
     lookback_days: int = 5,
     use_cache: bool = True,
+    minute_source_preference: str = "auto",
 ) -> Tuple[Optional[pd.DataFrame], Optional[str]]:
     """
-    获取单只股票的分钟数据
+    获取单只股票的分钟数据。
+
+    minute_source_preference: auto | sina | eastmoney | efinance
+    在 mootdx 之后按此顺序尝试 AkShare/efinance 路由（默认与现网一致：新浪 → 东财 → efinance）。
     """
     if period not in ["1", "5", "15", "30", "60"]:
         return None, None
@@ -405,27 +469,65 @@ def fetch_single_stock_minute(
     if df is not None and not df.empty:
         source = "mootdx"
 
-    # 主数据源2：AkShare + 新浪接口
-    if (df is None or df.empty) and AKSHARE_AVAILABLE:
-        df = _fetch_stock_minute_sina(
-            stock_code=stock_code,
-            period=period,
-            start_date_str=start_date_str,
-            end_date_str=end_date_str,
-        )
-        if df is not None and not df.empty:
-            source = "sina_akshare"
+    pref = (minute_source_preference or "auto").strip().lower()
+    if pref not in ("auto", "sina", "eastmoney", "efinance"):
+        pref = "auto"
 
-    # 备用：东财分钟接口
-    if (df is None or df.empty) and AKSHARE_AVAILABLE:
-        df = _fetch_stock_minute_eastmoney(
-            clean_code=clean_code,
-            period=period,
-            start_date_str=start_date_str,
-            end_date_str=end_date_str,
-        )
-        if df is not None and not df.empty:
-            source = "eastmoney_akshare"
+    def _try_sina() -> None:
+        nonlocal df, source
+        if (df is None or df.empty) and AKSHARE_AVAILABLE:
+            tmp = _fetch_stock_minute_sina(
+                stock_code=stock_code,
+                period=period,
+                start_date_str=start_date_str,
+                end_date_str=end_date_str,
+            )
+            if tmp is not None and not tmp.empty:
+                df = tmp
+                source = "sina_akshare"
+
+    def _try_em() -> None:
+        nonlocal df, source
+        if (df is None or df.empty) and AKSHARE_AVAILABLE:
+            tmp = _fetch_stock_minute_eastmoney(
+                clean_code=clean_code,
+                period=period,
+                start_date_str=start_date_str,
+                end_date_str=end_date_str,
+            )
+            if tmp is not None and not tmp.empty:
+                df = tmp
+                source = "eastmoney_akshare"
+
+    def _try_ef() -> None:
+        nonlocal df, source
+        if (df is None or df.empty) and EFINANCE_AVAILABLE:
+            tmp = _fetch_stock_minute_efinance(
+                clean_code=clean_code,
+                period=period,
+                start_date_str=start_date_str,
+                end_date_str=end_date_str,
+            )
+            if tmp is not None and not tmp.empty:
+                df = tmp
+                source = "efinance"
+
+    if pref == "auto":
+        _try_sina()
+        _try_em()
+        _try_ef()
+    elif pref == "sina":
+        _try_sina()
+        _try_em()
+        _try_ef()
+    elif pref == "eastmoney":
+        _try_em()
+        _try_sina()
+        _try_ef()
+    else:  # efinance
+        _try_ef()
+        _try_sina()
+        _try_em()
 
     # 合并部分缓存
     if df is not None and not df.empty and cached_partial_df is not None:
@@ -486,6 +588,7 @@ def fetch_stock_minute(
     lookback_days: int = 5,
     mode: str = "production",
     use_cache: bool = True,
+    minute_source_preference: str = "auto",
 ) -> Dict[str, Any]:
     """
     获取股票分钟数据，支持多股票代码（逗号分隔）
@@ -551,6 +654,7 @@ def fetch_stock_minute(
                         end_date=None,
                         lookback_days=lookback_days or 5,
                         use_cache=use_cache,
+                        minute_source_preference=minute_source_preference,
                     )
                     if df_out is not None and not df_out.empty:
                         fetched.append(f"{clean_code}/{p}min")
@@ -598,6 +702,7 @@ def fetch_stock_minute(
             end_date=end_date_norm,
             lookback_days=lookback_days,
             use_cache=use_cache,
+            minute_source_preference=minute_source_preference,
         )
         if data_source:
             source = data_source
@@ -704,6 +809,7 @@ def tool_fetch_stock_minute(
     lookback_days: int = 5,
     mode: str = "production",
     use_cache: bool = True,
+    minute_source_preference: str = "auto",
 ) -> Dict[str, Any]:
     """
     OpenClaw 工具：获取股票分钟数据
@@ -716,5 +822,6 @@ def tool_fetch_stock_minute(
         lookback_days=lookback_days,
         mode=mode,
         use_cache=use_cache,
+        minute_source_preference=minute_source_preference,
     )
 

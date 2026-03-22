@@ -19,13 +19,13 @@ from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 import pandas as pd
 
-from data_collection.etf.fetch_historical import (  # type: ignore[import]
+from plugins.data_collection.etf.fetch_historical import (  # type: ignore[import]
     fetch_single_etf_historical,
 )
-from data_collection.stock.fetch_historical import (  # type: ignore[import]
+from plugins.data_collection.stock.fetch_historical import (  # type: ignore[import]
     fetch_single_stock_historical,
 )
-from data_collection.financials import tool_fetch_stock_financials  # type: ignore[import]
+from plugins.data_collection.financials import tool_fetch_stock_financials  # type: ignore[import]
 
 logger = logging.getLogger(__name__)
 

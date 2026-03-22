@@ -17,7 +17,7 @@ def _get_realtime_prices(etf_symbol: str, index_code: str) -> Tuple[Optional[flo
     etf_price = None
     idx_price = None
     try:
-        from data_collection.etf.fetch_realtime import tool_fetch_etf_realtime
+        from plugins.data_collection.etf.fetch_realtime import tool_fetch_etf_realtime
 
         r = tool_fetch_etf_realtime(etf_code=etf_symbol, mode="test")
         meta["etf_realtime"] = {"success": bool(r.get("success"))} if isinstance(r, dict) else {"success": False}
@@ -31,7 +31,7 @@ def _get_realtime_prices(etf_symbol: str, index_code: str) -> Tuple[Optional[flo
         meta["etf_realtime_error"] = str(e)
 
     try:
-        from data_collection.index.fetch_realtime import tool_fetch_index_realtime
+        from plugins.data_collection.index.fetch_realtime import tool_fetch_index_realtime
 
         r = tool_fetch_index_realtime(index_code=index_code, mode="test")
         meta["index_realtime"] = {"success": bool(r.get("success"))} if isinstance(r, dict) else {"success": False}

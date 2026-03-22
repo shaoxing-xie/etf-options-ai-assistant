@@ -39,7 +39,7 @@ def tool_predict_intraday_range(
         # 1) 获取当前价格（优先用插件实时工具；失败则用日线最后收盘兜底）
         current_price: Optional[float] = None
         try:
-            from data_collection.etf.fetch_realtime import tool_fetch_etf_realtime
+            from plugins.data_collection.etf.fetch_realtime import tool_fetch_etf_realtime
 
             rt = tool_fetch_etf_realtime(etf_code=sym, mode="test")
             if isinstance(rt, dict) and rt.get("success"):
