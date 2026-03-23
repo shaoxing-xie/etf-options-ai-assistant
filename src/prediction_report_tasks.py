@@ -13,7 +13,7 @@ from src.prediction_reporter import (
     format_weekly_report_message,
     format_monthly_report_message
 )
-from src.notifier import send_feishu_notification
+from src.notifier import send_feishu_notification  # type: ignore[import-not-found]
 from src.config_loader import load_system_config
 
 logger = get_module_logger(__name__)

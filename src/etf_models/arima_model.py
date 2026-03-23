@@ -4,7 +4,7 @@ ARIMA模型适配器
 """
 
 import pandas as pd
-from typing import Dict, Any, Optional
+from typing import Dict, Any
 from src.logger_config import get_module_logger
 from src.trend_analyzer_arima import predict_index_trend_arima
 

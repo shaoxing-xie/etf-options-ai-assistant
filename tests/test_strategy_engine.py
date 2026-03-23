@@ -18,7 +18,7 @@ from strategy_engine.fusion import (  # noqa: E402
     fuse_for_symbol,
     merge_weights,
 )
-from strategy_engine.schemas import FusionResult, SignalCandidate  # noqa: E402
+from strategy_engine.schemas import SignalCandidate  # noqa: E402
 from strategy_engine.tool_strategy_engine import _run_inputs_hash  # noqa: E402
 
 

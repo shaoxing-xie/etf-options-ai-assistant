@@ -5,6 +5,16 @@ GK优化：增加指数GARCH区间预测
 """
 
 from .iv_percentile_adjuster import IVPercentileAdjuster
+from typing import Any
+
+# 先把可选引擎/预测器声明为 Any，避免 ImportError 分支把“类型”重新赋值为 None 时触发 mypy 的 misc/assignment 报错
+GARCHIVPredictor: Any = None
+BlackScholesPricer: Any = None
+GARCHIVEngine: Any = None
+ARCH_AVAILABLE: bool = False
+
+IndexGARCHPredictor: Any = None
+INDEX_GARCH_AVAILABLE: bool = False
 
 # 阶段2：GARCH-IV引擎（可选）
 try:
@@ -14,10 +24,6 @@ try:
     GARCH_AVAILABLE = True
 except ImportError:
     GARCH_AVAILABLE = False
-    GARCHIVPredictor = None
-    BlackScholesPricer = None
-    GARCHIVEngine = None
-    ARCH_AVAILABLE = False
 
 # GK优化：指数GARCH预测器（可选）
 try:
@@ -25,7 +31,6 @@ try:
     INDEX_GARCH_AVAILABLE = True
 except ImportError:
     INDEX_GARCH_AVAILABLE = False
-    IndexGARCHPredictor = None
 
 __all__ = [
     'IVPercentileAdjuster',

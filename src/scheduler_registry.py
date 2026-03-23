@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from typing import Optional
 from threading import Thread
-from apscheduler.schedulers.blocking import BlockingScheduler
+from apscheduler.schedulers.blocking import BlockingScheduler  # type: ignore[import-not-found]
 
 # 全局scheduler实例
 _scheduler: Optional[BlockingScheduler] = None

@@ -4,7 +4,6 @@
 """
 
 import pandas as pd
-import numpy as np
 from typing import Dict, Optional, Any
 from datetime import datetime
 import pytz
@@ -26,7 +25,6 @@ from src.volatility_range import (
     get_remaining_trading_time
 )
 from src.indicator_calculator import calculate_rsi, calculate_macd
-from src.system_status import get_current_market_status
 from src.prediction_recorder import record_prediction
 
 logger = get_module_logger(__name__)
@@ -605,7 +603,7 @@ def predict_option_volatility_range_on_demand(
         if not underlying:
             # 输出详细的调试信息
             logger.warning(f"未找到合约 {contract_code} 的配置")
-            logger.warning(f"配置中的合约列表:")
+            logger.warning("配置中的合约列表:")
             for underlying_config in underlyings_list:
                 logger.warning(f"  标的物: {underlying_config.get('underlying')}")
                 for contract in underlying_config.get('call_contracts', []):
@@ -710,8 +708,8 @@ def predict_option_volatility_range_on_demand(
                                 expiry_dt = dt.strptime(expiry_date, '%Y-%m-%d')
                                 days_to_expiry = (expiry_dt.date() - now.date()).days
                                 days_to_expiry = max(0, days_to_expiry)
-                            except:
-                                pass
+                            except Exception as e:
+                                logger.debug(f"计算剩余天数失败: expiry_date={expiry_date}, 错误: {e}", exc_info=True)
                         break
                 if expiry_date:
                     break

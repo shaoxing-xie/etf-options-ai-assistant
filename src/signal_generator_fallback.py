@@ -4,13 +4,10 @@
 """
 
 import pandas as pd
-import numpy as np
-from datetime import datetime
 from typing import Dict, Optional, Any, List
-import pytz
 
 from src.logger_config import get_module_logger, log_error_with_context
-from src.indicator_calculator import calculate_rsi, calculate_macd, calculate_price_change_rate
+from src.indicator_calculator import calculate_rsi, calculate_macd
 from src.signal_generator import create_signal_with_volatility_range
 from src.config_loader import load_system_config
 
@@ -64,10 +61,9 @@ def generate_signals_fallback(
         signal_params = config.get('signal_params', {})
         rsi_oversold = signal_params.get('rsi_oversold', 40)
         rsi_overbought = signal_params.get('rsi_overbought', 60)
-        price_change_threshold = signal_params.get('price_change_threshold', 1.5)
         deduplication_time = signal_params.get('signal_deduplication_time', 1800)
         
-        signals = []
+        signals: List[Dict[str, Any]] = []
         
         # 1. 计算日线级别的技术指标
         daily_indicators = calculate_daily_indicators(
@@ -81,9 +77,10 @@ def generate_signals_fallback(
             return signals
         
         latest_rsi = daily_indicators.get('rsi')
-        latest_macd = daily_indicators.get('macd')
         latest_price_change = daily_indicators.get('price_change_pct')
-        yesterday_close = daily_indicators.get('yesterday_close')
+        # 用安全的 float 变量替代 Any|None，避免 mypy 在阈值比较处报错
+        latest_rsi_val: float = float(latest_rsi) if latest_rsi is not None else 50.0
+        latest_price_change_val: float = float(latest_price_change) if latest_price_change is not None else 0.0
         
         # 2. 获取开盘策略信息
         overall_trend = "震荡"
@@ -98,20 +95,16 @@ def generate_signals_fallback(
         # 3. 提取期权Greeks数据
         call_iv = None
         put_iv = None
-        call_delta = None
-        put_delta = None
         
         if call_option_greeks is not None:
             from src.volatility_range import extract_greeks_from_data
             call_greeks = extract_greeks_from_data(call_option_greeks)
             call_iv = call_greeks.get('iv')
-            call_delta = call_greeks.get('delta')
         
         if put_option_greeks is not None:
             from src.volatility_range import extract_greeks_from_data
             put_greeks = extract_greeks_from_data(put_option_greeks)
             put_iv = put_greeks.get('iv')
-            put_delta = put_greeks.get('delta')
         
         # 4. 根据简化规则生成信号
         # 规则1：买入Call信号
@@ -120,8 +113,8 @@ def generate_signals_fallback(
             'trend_ok': overall_trend == "强势",
             'strength_ok': trend_strength >= 0.7,
             'direction_ok': strategy_direction == "偏多",
-            'rsi_ok': latest_rsi is not None and latest_rsi < rsi_oversold,
-            'price_change_ok': latest_price_change is not None and latest_price_change > 0.5,
+            'rsi_ok': latest_rsi is not None and latest_rsi_val < rsi_oversold,
+            'price_change_ok': latest_price_change is not None and latest_price_change_val > 0.5,
             'iv_ok': call_iv is None or call_iv < 50  # IV不太高
         }
         
@@ -135,9 +128,9 @@ def generate_signals_fallback(
         if rule1_triggered and call_option_price is not None:
             # 计算信号强度
             strength = 0.5
-            if latest_rsi < 30:
+            if latest_rsi_val < 30:
                 strength += 0.2
-            if latest_price_change > 1.0:
+            if latest_price_change_val > 1.0:
                 strength += 0.2
             if trend_strength >= 0.8:
                 strength += 0.1
@@ -145,8 +138,8 @@ def generate_signals_fallback(
             signal = create_signal_with_volatility_range(
                 signal_type='call',
                 reason='降级方案：日线超卖+价格上涨+强势趋势',
-                rsi=latest_rsi or 50,
-                price_change=latest_price_change or 0,
+                rsi=latest_rsi_val,
+                price_change=latest_price_change_val,
                 trend=overall_trend,
                 strength=min(1.0, strength),
                 signal_type_label='中等信号',
@@ -165,8 +158,8 @@ def generate_signals_fallback(
             'trend_ok': overall_trend == "弱势",
             'strength_ok': trend_strength >= 0.7,
             'direction_ok': strategy_direction == "偏空",
-            'rsi_ok': latest_rsi is not None and latest_rsi > rsi_overbought,
-            'price_change_ok': latest_price_change is not None and latest_price_change < -0.5,
+            'rsi_ok': latest_rsi is not None and latest_rsi_val > rsi_overbought,
+            'price_change_ok': latest_price_change is not None and latest_price_change_val < -0.5,
             'iv_ok': put_iv is None or put_iv < 50  # IV不太高
         }
         
@@ -180,9 +173,9 @@ def generate_signals_fallback(
         if rule2_triggered and put_option_price is not None:
             # 计算信号强度
             strength = 0.5
-            if latest_rsi > 70:
+            if latest_rsi_val > 70:
                 strength += 0.2
-            if latest_price_change < -1.0:
+            if latest_price_change_val < -1.0:
                 strength += 0.2
             if trend_strength >= 0.8:
                 strength += 0.1
@@ -190,8 +183,8 @@ def generate_signals_fallback(
             signal = create_signal_with_volatility_range(
                 signal_type='put',
                 reason='降级方案：日线超买+价格下跌+弱势趋势',
-                rsi=latest_rsi or 50,
-                price_change=latest_price_change or 0,
+                rsi=latest_rsi_val,
+                price_change=latest_price_change_val,
                 trend=overall_trend,
                 strength=min(1.0, strength),
                 signal_type_label='中等信号',
@@ -233,7 +226,7 @@ def calculate_daily_indicators(
         dict: 包含RSI、MACD、价格变化率等技术指标
     """
     try:
-        result = {}
+        result: Dict[str, Optional[float]] = {}
         
         # 确定收盘价列名
         index_close_col = None

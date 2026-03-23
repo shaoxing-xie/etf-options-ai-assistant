@@ -12,8 +12,7 @@ ARIMA趋势预测模块（GK优化 + ARIMA集成完善）
 
 import pandas as pd
 import numpy as np
-from typing import Dict, Optional, Any, Tuple, List
-from datetime import datetime, timedelta
+from typing import Dict, Optional, Any, Tuple
 import warnings
 
 # 抑制statsmodels ARIMA模型拟合时的常见警告（这些警告不影响功能）
@@ -40,7 +39,7 @@ except ImportError:
     ARIMA_AVAILABLE = False
     warnings.warn("statsmodels库未安装，ARIMA趋势预测功能将不可用。请运行: pip install statsmodels")
 
-from src.logger_config import get_module_logger, log_error_with_context
+from src.logger_config import get_module_logger, log_error_with_context  # noqa: E402
 
 logger = get_module_logger(__name__)
 
@@ -94,8 +93,11 @@ def _select_optimal_arima_order(
                     # 尝试推断为日频率
                     try:
                         price_series_for_arima = price_series_for_arima.asfreq('D')
-                    except:
-                        pass
+                    except Exception as e:
+                        logger.debug(
+                            f"ARIMA频率推断失败（仍继续使用原序列）: {e}",
+                            exc_info=True,
+                        )
             
             model = ARIMA(price_series_for_arima, order=order)
             fit_result = model.fit()
@@ -188,7 +190,8 @@ def _improve_confidence(
             avg_pvalue = float(pvalues.mean())
             pvalue_confidence = max(0.5, min(0.95, 1.0 - avg_pvalue * 2))
             confidence_factors.append(pvalue_confidence)
-        except:
+        except Exception as e:
+            logger.debug(f"基于p值的置信度计算失败: {e}", exc_info=True)
             pvalue_confidence = 0.7
             confidence_factors.append(pvalue_confidence)
         
@@ -200,7 +203,8 @@ def _improve_confidence(
             aic_normalized = max(0.5, min(0.95, 1.0 - (aic / 10000)))
             bic_normalized = max(0.5, min(0.95, 1.0 - (bic / 10000)))
             confidence_factors.append((aic_normalized + bic_normalized) / 2)
-        except:
+        except Exception as e:
+            logger.debug(f"基于AIC/BIC的置信度计算失败: {e}", exc_info=True)
             confidence_factors.append(0.7)
         
         # 3. Ljung-Box检验（残差自相关检验）
@@ -223,11 +227,12 @@ def _improve_confidence(
             # 归一化（假设方差在0-10000范围内）
             var_normalized = max(0.5, min(0.95, 1.0 - (residual_var / 10000)))
             confidence_factors.append(var_normalized)
-        except:
+        except Exception as e:
+            logger.debug(f"基于残差方差的置信度计算失败: {e}", exc_info=True)
             confidence_factors.append(0.7)
         
         # 综合置信度（取平均值）
-        final_confidence = np.mean(confidence_factors)
+        final_confidence: float = float(np.mean(confidence_factors))
         return max(0.5, min(0.95, final_confidence))
         
     except Exception as e:
@@ -352,8 +357,8 @@ def predict_index_trend_arima(
                 # 尝试推断为日频率
                 try:
                     price_series_for_arima = price_series_for_arima.asfreq('D')
-                except:
-                    pass
+                except Exception as e:
+                    logger.debug(f"推断 ARIMA 价格序列频率失败，忽略: {e}", exc_info=True)
         
         model = ARIMA(price_series_for_arima, order=arima_order)
         fit_result = model.fit()
@@ -363,7 +368,7 @@ def predict_index_trend_arima(
         # 获取残差（用于置信度计算）
         try:
             residuals = fit_result.resid.values
-        except:
+        except Exception:
             residuals = np.array([])
         
         # 预测未来价格
@@ -402,7 +407,7 @@ def predict_index_trend_arima(
             }
         )
         
-        avg_forecast_price = np.mean(forecast_prices)
+        avg_forecast_price: float = float(np.mean(forecast_prices))
         
         # 如果预测结果为 nan，则使用当前价格作为预测均值
         if np.isnan(avg_forecast_price) or not np.isfinite(avg_forecast_price):
@@ -417,7 +422,7 @@ def predict_index_trend_arima(
             avg_forecast_price = current_price  # 使用当前价格作为预测值
         
         # 动态趋势判断（基于ATR调整阈值）
-        price_change_pct = (avg_forecast_price - current_price) / current_price * 100
+        price_change_pct: float = float((avg_forecast_price - current_price) / current_price * 100)
         
         _append_debug(
             {
@@ -444,16 +449,18 @@ def predict_index_trend_arima(
                 }
             )
             direction = "震荡"
-            trend_strength = 0.5
+            trend_strength: float = 0.5
         elif price_change_pct > dynamic_threshold:  # 上涨超过动态阈值
             direction = "上行"
-            trend_strength = min(1.0, abs(price_change_pct) / (dynamic_threshold * 3))  # 强度基于涨幅
+            trend_strength = float(min(1.0, abs(price_change_pct) / (dynamic_threshold * 3)))  # 强度基于涨幅
         elif price_change_pct < -dynamic_threshold:  # 下跌超过动态阈值
             direction = "下行"
-            trend_strength = min(1.0, abs(price_change_pct) / (dynamic_threshold * 3))
+            trend_strength = float(min(1.0, abs(price_change_pct) / (dynamic_threshold * 3)))
         else:
             direction = "震荡"
-            trend_strength = max(0.2, 0.5 - abs(price_change_pct) / (dynamic_threshold * 2))  # 震荡时强度较低
+            trend_strength = float(
+                max(0.2, 0.5 - abs(price_change_pct) / (dynamic_threshold * 2))
+            )  # 震荡时强度较低
         
         # 改进置信度计算（结合残差分析和Ljung-Box检验）
         confidence = _improve_confidence(fit_result, residuals)

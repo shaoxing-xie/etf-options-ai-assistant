@@ -4,7 +4,6 @@
 """
 
 import pandas as pd
-import numpy as np
 from typing import Dict, Any, Optional
 from src.logger_config import get_module_logger
 from src.indicator_calculator import (

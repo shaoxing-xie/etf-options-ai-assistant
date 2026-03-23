@@ -6,7 +6,7 @@
 import pandas as pd
 import pandas_ta_classic as ta
 import numpy as np
-from typing import Optional, Dict, Any
+from typing import Optional, Dict
 
 from src.logger_config import get_module_logger, log_error_with_context, log_function_call, log_function_result
 
@@ -426,7 +426,7 @@ def calculate_volume_ma(
             logger.warning("成交量MA计算结果为空")
             return None
         
-        log_function_result(logger, "calculate_volume_ma", f"计算成功")
+        log_function_result(logger, "calculate_volume_ma", "计算成功")
         return volume_ma
         
     except Exception as e:
@@ -620,10 +620,33 @@ def calculate_option_macd(
             histogram_series = macd_result.get('histogram')
             
             if macd_series is not None and not macd_series.empty:
-                result = {
-                    'macd': float(macd_series.iloc[-1]) if not pd.isna(macd_series.iloc[-1]) else None,
-                    'signal': float(signal_series.iloc[-1]) if signal_series is not None and not signal_series.empty and not pd.isna(signal_series.iloc[-1]) else None,
-                    'histogram': float(histogram_series.iloc[-1]) if histogram_series is not None and not histogram_series.empty and not pd.isna(histogram_series.iloc[-1]) else None
+                macd_val: Optional[float] = (
+                    float(macd_series.iloc[-1])
+                    if not pd.isna(macd_series.iloc[-1])
+                    else None
+                )
+                signal_val: Optional[float] = (
+                    float(signal_series.iloc[-1])
+                    if signal_series is not None
+                    and not signal_series.empty
+                    and not pd.isna(signal_series.iloc[-1])
+                    else None
+                )
+                histogram_val: Optional[float] = (
+                    float(histogram_series.iloc[-1])
+                    if histogram_series is not None
+                    and not histogram_series.empty
+                    and not pd.isna(histogram_series.iloc[-1])
+                    else None
+                )
+                if macd_val is None or signal_val is None or histogram_val is None:
+                    logger.debug("期权MACD计算结果存在NaN/缺失，返回None")
+                    return None
+
+                result: Dict[str, float] = {
+                    'macd': macd_val,
+                    'signal': signal_val,
+                    'histogram': histogram_val,
                 }
                 log_function_result(logger, "calculate_option_macd", 
                                   f"计算成功，MACD={result['macd']:.4f}, Signal={result['signal']:.4f}")

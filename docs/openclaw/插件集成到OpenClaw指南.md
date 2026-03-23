@@ -1,6 +1,6 @@
 # 插件集成到OpenClaw指南
 
-> 状态：该文档为早期集成记录，包含较多 `/mnt/d/...` 路径示例。  
+> 状态：该文档为早期集成记录，已更新为主线 WSL2 适用内容（不再依赖旧版兼容 API）。  
 > 当前发布与生产部署请优先参考：
 > - `docs/publish/deployment-openclaw.md`
 > - `docs/publish/plugins-and-skills.md`
@@ -20,62 +20,31 @@
 - ✅ OpenClaw版本：2026.2.15
 - ✅ Gateway运行中：http://127.0.0.1:18789
 - ✅ 已注册插件：option_trader, feishu相关插件
-- ✅ 环境：Windows 11 + WSL2
+- ✅ 环境：WSL2 + Ubuntu（OpenClaw 主线部署）
 
-### 2. 配置Windows和WSL文件系统互访
+### 2. 主线部署建议（无需路径互访）
 
-**重要**：配置Windows和WSL可以互访文件系统，避免文件复制。
+当前主线部署为 **完全基于 WSL + Ubuntu**，通常 **无需依赖旧版兼容 API**。
 
-#### 2.1 确认Windows路径在WSL中的映射
-
-```bash
-# 在WSL中测试Windows路径访问
-# Windows D盘 -> WSL /mnt/d/
-# Windows C盘 -> WSL /mnt/c/
-
-# 测试您的项目路径
-ls /mnt/d/Ubuntu应用环境配置/mcp/option_trading_assistant/etf-options-ai-assistant/plugins/
-
-# 如果可访问，说明文件系统互访已配置好
-```
-
-#### 2.2 路径映射关系
-
-| Windows路径 | WSL路径 |
-|------------|---------|
-| `D:\Ubuntu应用环境配置\mcp\` | `/mnt/d/Ubuntu应用环境配置/mcp/` |
-| `D:\Ubuntu应用环境配置\mcp\option_trading_assistant\` | `/mnt/d/Ubuntu应用环境配置/mcp/option_trading_assistant/` |
-| `D:\Ubuntu应用环境配置\mcp\option_trading_assistant\etf-options-ai-assistant\plugins\` | `/mnt/d/Ubuntu应用环境配置/mcp/option_trading_assistant/etf-options-ai-assistant/plugins/` |
-
-#### 2.3 配置建议
-
-**推荐方案**：使用符号链接，让OpenClaw插件直接访问Windows路径，无需复制文件。
-
-### 3. 确认原系统API服务
-
-**重要**：确保原系统的API服务正在运行：
+推荐直接在项目根目录执行主线安装脚本（会把插件安装到 `~/.openclaw/extensions/option-trading-assistant`，并创建必要的符号链接）：
 
 ```bash
-# 在Windows中启动原系统API服务
-# 原系统API地址：http://localhost:5000
-# 启动命令（在Windows PowerShell中）：
-cd D:\Ubuntu应用环境配置\mcp\option_trading_assistant
-python main.py --api-only
-
-# 或者在WSL中测试API连接
-curl http://localhost:5000/api/status
+cd /home/xie/etf-options-ai-assistant
+bash install_plugin.sh
 ```
 
-**注意**：由于OpenClaw在WSL中，原系统API在Windows中，需要确保：
-- ✅ Windows防火墙允许5000端口访问
-- ✅ 或者使用 `127.0.0.1:5000` 而不是 `localhost:5000`
+安装完成后重启并验收（见 `docs/publish/service-ops.md`）：
 
-### 4. 确认插件代码位置
-
-插件代码位于：
+```bash
+set -a; source ~/.openclaw/.env; set +a
+~/scripts/restart-openclaw-services.sh
 ```
-Windows: D:\Ubuntu应用环境配置\mcp\option_trading_assistant\etf-options-ai-assistant\plugins\
-WSL:     /mnt/d/Ubuntu应用环境配置/mcp/option_trading_assistant/etf-options-ai-assistant/plugins/
+
+### 3. 确认插件代码位置
+
+插件源代码位于（WSL 环境）：
+```
+/home/xie/etf-options-ai-assistant/plugins/
 ```
 
 ---
@@ -125,111 +94,24 @@ mkdir -p plugins
 
 ---
 
-## 🔧 第三步：配置文件系统互访（推荐方案）
+## 🔧 第三步：主线安装与验证（WSL2）
 
-### 方案A：使用符号链接（推荐，无需复制文件）
-
-**优势**：
-- ✅ 无需复制文件，节省磁盘空间
-- ✅ 代码修改后立即生效，无需同步
-- ✅ 保持单一数据源，避免版本不一致
-
-**步骤**：
+不建议再进行路径互访配置。当前主线部署推荐直接使用仓库提供的安装脚本：
 
 ```bash
-# 在WSL中执行
+cd /home/xie/etf-options-ai-assistant
+bash install_plugin.sh
+```
+
+安装完成后，验证 OpenClaw 扩展目录下的插件结构是否正常：
+
+```bash
 cd ~/.openclaw/extensions/option-trading-assistant
-
-# 创建plugins目录（如果不存在）
-mkdir -p plugins
-
-# 创建符号链接到Windows路径
-ln -s /mnt/d/Ubuntu应用环境配置/mcp/option_trading_assistant/etf-options-ai-assistant/plugins/* ./plugins/
-
-# 或者逐个创建符号链接（更安全）
-ln -s /mnt/d/Ubuntu应用环境配置/mcp/option_trading_assistant/etf-options-ai-assistant/plugins/data_collection ./plugins/data_collection
-ln -s /mnt/d/Ubuntu应用环境配置/mcp/option_trading_assistant/etf-options-ai-assistant/plugins/analysis ./plugins/analysis
-ln -s /mnt/d/Ubuntu应用环境配置/mcp/option_trading_assistant/etf-options-ai-assistant/plugins/notification ./plugins/notification
-ln -s /mnt/d/Ubuntu应用环境配置/mcp/option_trading_assistant/etf-options-ai-assistant/plugins/data_access ./plugins/data_access
+ls -la
+ls -la plugins
 ```
 
-### 方案B：直接使用Windows路径（最简单）
-
-**优势**：
-- ✅ 最简单，无需任何配置
-- ✅ 代码修改后立即生效
-
-**步骤**：
-
-在插件入口文件中直接使用Windows路径：
-
-```python
-# 在 index.py 中
-import sys
-import os
-
-# 添加项目根目录到 Python 路径（与仓库内 `from plugins.data_collection...` 一致）
-windows_project_root = "/mnt/d/Ubuntu应用环境配置/mcp/option_trading_assistant/etf-options-ai-assistant"
-sys.path.insert(0, windows_project_root)
-
-# 然后正常导入
-from plugins.data_collection.index.fetch_realtime import tool_fetch_index_realtime
-# ...
-```
-
-### 方案C：复制文件（传统方案）
-
-如果符号链接有问题，可以复制文件：
-
-```bash
-# 在WSL中执行
-cd ~/.openclaw/extensions/option-trading-assistant
-
-# 复制插件目录
-cp -r /mnt/d/Ubuntu应用环境配置/mcp/option_trading_assistant/etf-options-ai-assistant/plugins ./plugins
-
-# 或者使用rsync（更高效，支持增量更新）
-rsync -av /mnt/d/Ubuntu应用环境配置/mcp/option_trading_assistant/etf-options-ai-assistant/plugins/ ./plugins/
-```
-
-### 3.2 验证文件访问
-
-```bash
-# 检查Windows路径是否可访问
-ls -la /mnt/d/Ubuntu应用环境配置/mcp/option_trading_assistant/etf-options-ai-assistant/plugins/
-
-# 检查符号链接（如果使用方案A）
-ls -la ~/.openclaw/extensions/option-trading-assistant/plugins/
-
-# 应该看到：
-# data_collection -> /mnt/d/.../plugins/data_collection
-# analysis -> /mnt/d/.../plugins/analysis
-# notification -> /mnt/d/.../plugins/notification
-# data_access -> /mnt/d/.../plugins/data_access
-```
-
-### 3.3 配置WSL访问Windows文件系统
-
-**确保WSL可以访问Windows文件系统**：
-
-```bash
-# 在WSL中测试Windows路径访问
-# D盘路径：/mnt/d/
-# C盘路径：/mnt/c/
-
-# 测试访问
-ls /mnt/d/Ubuntu应用环境配置/mcp/
-
-# 如果无法访问，检查WSL配置
-# 在Windows PowerShell中执行：
-wsl --list --verbose
-```
-
-**注意事项**：
-- ⚠️ Windows路径中的中文字符在WSL中可能需要UTF-8编码
-- ⚠️ 文件权限：Windows文件在WSL中可能显示为 `drwxrwxrwx`（所有权限）
-- ⚠️ 性能：直接访问Windows文件系统可能比WSL原生文件系统稍慢
-- ✅ 建议：使用符号链接（方案A），兼顾性能和便利性
+如结构异常，请回到 `docs/publish/deployment-openclaw.md` 按主线流程复验。
 
 ---
 
@@ -291,6 +173,7 @@ from plugins.analysis.intraday_range import tool_predict_intraday_range
 from plugins.notification.send_feishu_message import tool_send_feishu_message
 from plugins.notification.send_signal_alert import tool_send_signal_alert
 from plugins.notification.send_daily_report import tool_send_daily_report
+from plugins.notification.send_analysis_report import tool_send_analysis_report
 from plugins.notification.send_risk_alert import tool_send_risk_alert
 
 # 导入数据访问工具
@@ -351,6 +234,7 @@ __all__ = [
     'tool_send_feishu_message',
     'tool_send_signal_alert',
     'tool_send_daily_report',
+    'tool_send_analysis_report',
     'tool_send_risk_alert',
     # 数据访问工具
     'tool_read_index_daily',
@@ -404,6 +288,7 @@ __all__ = [
     "tool_send_feishu_message",
     "tool_send_signal_alert",
     "tool_send_daily_report",
+    "tool_send_analysis_report",
     "tool_send_risk_alert",
     "tool_read_index_daily",
     "tool_read_index_minute",
@@ -543,17 +428,15 @@ python3 -c "import sys; print(sys.path)"
 #### 3. API连接失败
 
 **可能原因**：
-- 原系统API服务未运行
+- 若你使用的是当前主线流程，通常 **不需要** 兼容 API。
+- 若你确实在插件配置里启用了 `apiBaseUrl`，则需确保该服务在 **当前环境（WSL/容器）** 已启动。
 - 网络连接问题
 - API地址配置错误
 
 **解决方法**：
 ```bash
-# 测试API连接
-curl http://localhost:5000/api/status
-
-# 如果失败，检查原系统服务
-# 在Windows中启动：python main.py --api-only
+# 若你启用了兼容 API，则在与服务相同的环境中测试连通性
+curl "<apiBaseUrl>/api/status"
 ```
 
 ---
@@ -571,6 +454,14 @@ cd ~/etf-options-ai-assistant   # 或你的克隆路径
 .venv/bin/python tool_runner.py tool_check_trading_status '{}'
 .venv/bin/python tool_runner.py tool_fetch_index_realtime '{"index_code":"000300"}'
 ```
+
+**钉钉自定义机器人（SEC 加签）环境变量**：
+如果要调用 `tool_send_dingtalk_message` / `tool_send_analysis_report`，需要在 `~/.openclaw/.env` 配好：
+- `OPENCLAW_DINGTALK_CUSTOM_ROBOT_WEBHOOK_URL`：自定义机器人 webhook（包含 `access_token`）
+- `OPENCLAW_DINGTALK_CUSTOM_ROBOT_SECRET`：SEC 安全模式密钥（`SEC...`）
+- `DINGTALK_KEYWORD`（或 `MONITOR_DINGTALK_KEYWORD`）：机器人“关键词安全校验”用
+
+建议测试时使用 `mode="test"`（不发网络请求，只做参数校验），避免调试阶段触发 webhook 限流或签名窗口问题。
 
 **方式 B：让已配置工具的 Agent 代为调用**
 
@@ -634,7 +525,7 @@ tools:
 
 1. 查看OpenClaw日志：`openclaw logs --follow`
 2. 检查插件代码：确保所有工具函数都正确导出
-3. 测试API连接：确保原系统API服务正常运行
+3. 测试API连接：若启用了兼容 API，则确保 `apiBaseUrl` 对应的服务在当前环境可用
 4. 参考OpenClaw文档：https://docs.openclaw.ai
 
 ---

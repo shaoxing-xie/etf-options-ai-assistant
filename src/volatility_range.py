@@ -168,22 +168,24 @@ def calculate_greeks_contribution(
         }
 
 # 阶段2优化：导入GARCH-IV引擎
+GARCHIVEngineCls: Optional[Any] = None
 try:
-    from src.volatility_engine import GARCHIVEngine, GARCH_AVAILABLE
+    from src.volatility_engine import GARCHIVEngine as _GARCHIVEngine, GARCH_AVAILABLE
+    GARCHIVEngineCls = _GARCHIVEngine
     GARCH_IV_AVAILABLE = GARCH_AVAILABLE
 except ImportError as e:
     logger.debug(f"GARCH-IV引擎导入失败: {e}，将使用阶段1方法")
     GARCH_IV_AVAILABLE = False
-    GARCHIVEngine = None
 
 # GK优化：导入指数GARCH预测器
+IndexGARCHPredictorCls: Optional[Any] = None
 try:
-    from src.volatility_engine.index_garch_predictor import IndexGARCHPredictor
+    from src.volatility_engine.index_garch_predictor import IndexGARCHPredictor as _IndexGARCHPredictor
+    IndexGARCHPredictorCls = _IndexGARCHPredictor
     INDEX_GARCH_AVAILABLE = True
 except ImportError as e:
     logger.debug(f"指数GARCH预测器导入失败: {e}，将使用原有方法")
     INDEX_GARCH_AVAILABLE = False
-    IndexGARCHPredictor = None
 
 
 def get_remaining_trading_time(config: Optional[Dict] = None) -> int:
@@ -307,8 +309,9 @@ def calculate_index_volatility_range(
                         price_series=price_series,
                         current_price=current_price,
                         remaining_ratio=remaining_ratio,
-                        models=None,  # 使用默认模型组合
-                        weights=None,  # 使用等权重
+                        # ensemble_garch_predictions 的类型标注要求 list，这里保留 None 以使用函数内部默认行为
+                        models=None,  # type: ignore[arg-type]
+                        weights=None,  # type: ignore[arg-type]
                         confidence_level=0.95
                     )
                     
@@ -358,7 +361,8 @@ def calculate_index_volatility_range(
                     garch_q = 1
                     arima_order = (1, 1, 1)
                 
-                garch_predictor = IndexGARCHPredictor(
+                assert IndexGARCHPredictorCls is not None
+                garch_predictor = IndexGARCHPredictorCls(
                     garch_p=garch_p,
                     garch_q=garch_q,
                     arima_order=arima_order,
@@ -453,7 +457,6 @@ def calculate_index_volatility_range(
         # 综合方法（加权平均）- 使用市场状态自适应权重
         try:
             from src.volatility_weights import get_market_state_weights, determine_market_state, calculate_dynamic_weights
-            from src.trend_analyzer import analyze_index_trend
             
             # 判断市场状态（需要日线数据，如果没有则使用分钟数据）
             market_state = 'range'  # 默认
@@ -725,7 +728,8 @@ def calculate_etf_volatility_range(
                 remaining_ratio = remaining_minutes / 240.0 if remaining_minutes > 0 else 1.0
                 
                 # 初始化GARCH预测器
-                garch_predictor = IndexGARCHPredictor(
+                assert IndexGARCHPredictorCls is not None
+                garch_predictor = IndexGARCHPredictorCls(
                     garch_p=1,
                     garch_q=1,
                     arima_order=(1, 1, 1),
@@ -1008,7 +1012,7 @@ def calculate_etf_volatility_range_multi_period(
             }
 
 
-def extract_greeks_from_data(greeks_df: pd.DataFrame) -> Dict[str, float]:
+def extract_greeks_from_data(greeks_df: pd.DataFrame) -> Dict[str, Optional[float]]:
     """
     从Greeks数据中提取所有Greeks值
     
@@ -1018,7 +1022,7 @@ def extract_greeks_from_data(greeks_df: pd.DataFrame) -> Dict[str, float]:
     Returns:
         dict: 包含Delta、Gamma、Theta、Vega、IV的字典
     """
-    result = {
+    result: Dict[str, Optional[float]] = {
         'delta': None,
         'gamma': None,
         'theta': None,
@@ -1462,7 +1466,8 @@ def calculate_option_volatility_range(
                         # 如果未传入引擎实例，创建新实例（实时系统）
                         # 如果传入了引擎实例，复用该实例（回测优化，利用缓存）
                         if garch_engine is None:
-                            garch_engine = GARCHIVEngine(config)
+                            assert GARCHIVEngineCls is not None
+                            garch_engine = GARCHIVEngineCls(config)
                         
                         # 尝试使用GARCH-IV预测
                         garch_result = garch_engine.predict_option_range(
@@ -1657,9 +1662,9 @@ def calculate_option_volatility_range(
                 risk_warnings.append(
                     "Gamma 较高，若突破方向相反，价格可能出现快速反向放大，需控制仓位与止损"
                 )
-        except Exception:
-            # 风险提示失败不影响主流程
-            pass
+        except Exception as e:
+            # 风险提示失败不影响主流程，但记录一下，便于追踪潜在数据问题
+            logger.debug(f"生成 risk_warnings 失败，忽略: {e}", exc_info=True)
         if risk_warnings:
             result["risk_warnings"] = risk_warnings
         
@@ -1784,7 +1789,7 @@ def calculate_volatility_ranges(
     index_minute_15m: pd.DataFrame = None,
     etf_minute_30m: pd.DataFrame = None,  # 新增：ETF分钟数据
     etf_minute_15m: pd.DataFrame = None,  # 新增：ETF分钟数据
-    etf_current_price: float = None,
+    etf_current_price: Optional[float] = None,
     call_option_price: Optional[float] = None,
     put_option_price: Optional[float] = None,
     call_option_greeks: Optional[pd.DataFrame] = None,

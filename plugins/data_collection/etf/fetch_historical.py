@@ -5,13 +5,11 @@ OpenClaw 插件工具
 改进版本：支持缓存、多ETF、自动计算成交额/涨跌幅、完善字段映射
 """
 
-import requests
 import pandas as pd
 import numpy as np
-from typing import Optional, Dict, Any, List, Tuple
+from typing import Optional, Dict, Any, Tuple
 from datetime import datetime, timedelta
 from pathlib import Path
-import os
 import sys
 
 try:
@@ -54,8 +52,7 @@ try:
             sys.path.insert(0, str(root_for_import))
         from src.data_cache import (
             get_cached_etf_daily, save_etf_daily_cache,
-            merge_cached_and_fetched_data, get_cache_file_path,
-            load_cached_data, save_cached_data
+            merge_cached_and_fetched_data
         )
         from src.config_loader import load_system_config
         # 引入原系统的 Tushare 备份模块（统一 token / 频控）
@@ -308,7 +305,7 @@ def fetch_single_etf_historical(
                     # 更新start_date和end_date用于后续筛选
                     start_date = normalize_date(start_date_formatted)
                     end_date = normalize_date(end_date_formatted)
-        except Exception as e:
+        except Exception:
             # 缓存失败不影响主流程
             pass
     # ========== 缓存逻辑结束 ==========
@@ -362,7 +359,7 @@ def fetch_single_etf_historical(
                     '涨跌幅': tushare_df['pct_chg']
                 })
                 source = "tushare"
-        except Exception as e:
+        except Exception:
             pass
     
     # 方法4：使用新浪接口
@@ -388,9 +385,9 @@ def fetch_single_etf_historical(
                             # 计算缺失字段
                             df = calculate_missing_fields(df)
                             source = "sina"
-                    except Exception as e:
+                    except Exception:
                         pass
-        except Exception as e:
+        except Exception:
             pass
     
     # 方法5：使用东方财富接口（备用）
@@ -409,7 +406,7 @@ def fetch_single_etf_historical(
                 # 计算缺失字段
                 df = calculate_missing_fields(df)
                 source = "eastmoney"
-        except Exception as e:
+        except Exception:
             pass
     
     # ========== 合并部分缓存数据 ==========
@@ -425,7 +422,7 @@ def fetch_single_etf_historical(
             if date_col:
                 df = merge_cached_and_fetched_data(cached_partial_df, df, date_col)
                 source = f"{source}+cache" if source else "cache"
-        except Exception as e:
+        except Exception:
             pass
     # ========== 缓存合并结束 ==========
     
@@ -434,7 +431,7 @@ def fetch_single_etf_historical(
         try:
             config = load_system_config()
             save_etf_daily_cache(clean_code, df, config=config)
-        except Exception as e:
+        except Exception:
             pass
     # ========== 缓存保存结束 ==========
     

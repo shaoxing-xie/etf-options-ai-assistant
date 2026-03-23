@@ -4,7 +4,7 @@
 TOOL_MAP 已指向 src.signal_generation，此处供工作流/测试中「from analysis.signal_generation import tool_generate_signals」兼容。
 """
 
-from typing import Dict, Any, Optional
+from typing import Dict, Any
 
 try:
     from src.signal_generation import tool_generate_signals as _tool_generate_signals

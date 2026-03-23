@@ -42,7 +42,7 @@ OpenClaw平台
 
 - ✅ **数据采集系统**：继续使用原系统的数据采集逻辑
 - ✅ **数据存储系统**：继续使用原系统的本地文件存储（JSON/Parquet）
-- ✅ **直接访问**：利用 Windows/WSL 文件系统共享，直接导入原系统模块
+- ✅ **直接访问**：利用 本地文件系统共享，直接导入原系统模块
 - ✅ **定时任务**：通过OpenClaw工作流替代原系统的APScheduler
 
 ### 2. 融合Coze插件工具
@@ -955,7 +955,7 @@ Agent/Workflow继续处理
 
 ### 2. 直接访问方式
 
-OpenClaw插件采用直接访问方式，利用 Windows/WSL 文件系统共享：
+OpenClaw插件采用直接访问方式，利用 本地文件系统共享：
 
 #### 数据采集
 - 直接导入 `src.data_collector` 模块
@@ -1065,7 +1065,7 @@ def tool_xxx(params):
 ### 第一阶段：OpenClaw环境集成（高优先级）
 
 1. **OpenClaw环境部署** ✅ **已完成**
-   - ✅ WSL环境：Windows 11 + WSL2 (Linux 6.6.87.2)
+   - ✅ WSL环境：WSL2 + Ubuntu (Linux 6.6.87.2)
    - ✅ OpenClaw版本：2026.2.15 (3fe22ea)
    - ✅ Gateway服务：运行中 (pid 4774, systemd enabled)
    - ✅ Dashboard：http://127.0.0.1:18789/
@@ -1074,11 +1074,11 @@ def tool_xxx(params):
    - ✅ Feishu通道：已配置并正常工作
    - ✅ 插件集成：option-trading-assistant插件已成功注册并可用
    - ✅ 工具测试：在Dashboard中成功调用工具并获取正确结果
-  - ✅ 已完成：配置OpenClaw与原系统的直接访问（利用 Windows/WSL 文件系统共享）
+- ✅ 已完成：配置OpenClaw与原系统的直接访问（利用 本地文件系统共享）
   - ✅ 已完成：全面测试所有45个工具（2026-02-20，第一阶段33个 + 第二阶段12个）
 
 2. **将迁移的插件集成到OpenClaw** ✅ **已完成**
-   - ✅ 配置Windows和WSL文件系统互访（使用符号链接）
+- ✅ 配置本地文件系统互访（使用符号链接）
    - ✅ 创建OpenClaw插件目录结构（`~/.openclaw/extensions/option-trading-assistant/`）
    - ✅ 创建TypeScript插件包装器（`index.ts`）- 注册33个工具
    - ✅ 创建Python工具调用脚本（`tool_runner.py`）
@@ -1407,7 +1407,7 @@ def tool_xxx(params):
 
 **当前状态分析**：
 - ✅ 已有数据缓存系统（Parquet格式，954个文件，7.49 MB）
-- ✅ 支持直接访问原系统模块（Windows/WSL文件系统共享）
+- ✅ 支持直接访问原系统模块（本地文件系统共享）
 - ⚠️ 部分工具需要多次数据访问（如信号生成需要指数、ETF、期权数据）
 - ⚠️ 数据源切换时可能有延迟（主数据源失败时切换到备用数据源）
 
@@ -2511,7 +2511,7 @@ python3 test_batch_fetch.py
 - **总工作量**：阶段一约160小时，阶段二约160小时，阶段三约80-160小时（可选）
 
 **技术资源**：
-- **开发环境**：Windows 11 + WSL2 + OpenClaw（已有）
+- **开发环境**：WSL2 + Ubuntu + OpenClaw（已有）
 - **测试环境**：与开发环境相同（已有）
 - **监控工具**：psutil（Python库，需要安装）
 - **缓存工具**：functools.lru_cache（Python标准库）、cachetools（可选）
@@ -2666,13 +2666,13 @@ python3 test_batch_fetch.py
 
 - ✅ 所有数据都通过直接访问原系统模块获取，确保数据一致性
 - ✅ 数据存储也通过原系统模块，保持存储格式统一
-- ✅ 利用 Windows/WSL 文件系统共享，直接导入原系统模块
+- ✅ 利用 本地文件系统共享，直接导入原系统模块
 
 ### 2. 直接访问配置
 
 - ✅ OpenClaw插件采用直接访问方式，无需HTTP API
-- ✅ 利用 Windows/WSL 文件系统共享，直接访问原系统文件
-- ✅ 确保原系统路径正确（`/mnt/d/Ubuntu应用环境配置/mcp/option_trading_assistant`）
+- ✅ 利用 本地文件系统共享，直接访问原系统文件
+- ✅ 确保原系统路径正确（`/home/xie/etf-options-ai-assistant`）
 - ✅ 确保OpenClaw环境可以导入原系统模块
 - 📖 详细配置说明：参考 [`原系统直接访问配置说明.md`](./原系统直接访问配置说明.md)
 
@@ -2732,7 +2732,7 @@ python3 test_batch_fetch.py
 2. ✅ **Agent配置**：3个Agent配置完成，可调用所有工具
 3. ✅ **工作流配置**：5个工作流配置完成并验证通过
 4. ✅ **LLM增强集成**：集成原系统llm_enhancer，使用DeepSeek配置
-5. ✅ **直接访问配置**：配置OpenClaw与原系统的直接访问（利用Windows/WSL文件系统共享）
+5. ✅ **直接访问配置**：配置OpenClaw与原系统的直接访问（利用本地文件系统共享）
 6. ✅ **工具测试**：所有33个工具测试通过（2026-02-20）
 7. ✅ **集成测试**：端到端功能测试通过（数据采集到分析流程、信号生成流程）
 8. ✅ **错误处理**：代码修复100%，错误处理测试50%
@@ -2869,8 +2869,8 @@ python3 test_batch_fetch.py
 **完成时间**：2026-02-19 11:22
 
 **完成内容**：
-1. ✅ **环境配置**：Windows 11 + WSL2 + OpenClaw 2026.2.15
-2. ✅ **文件系统互访**：配置符号链接，实现Windows和WSL文件系统互访
+1. ✅ **环境配置**：WSL2 + Ubuntu + OpenClaw 2026.2.15
+2. ✅ **文件系统互访**：配置符号链接，实现本地文件系统互访
 3. ✅ **插件开发**：
    - 创建TypeScript插件包装器（`index.ts`）- 注册33个工具
    - 创建Python工具调用脚本（`tool_runner.py`）
@@ -2904,7 +2904,7 @@ python3 test_batch_fetch.py
 - 配置文件：`openclaw.plugin.json`, `package.json`
 - 入口文件：`index.ts` (TypeScript插件包装器)
 - 工具脚本：`tool_runner.py` (Python工具调用脚本)
-- 插件代码：通过符号链接访问Windows路径
+- 插件代码：通过符号链接访问本地路径
 
 **下一步计划**：
 1. 测试更多工具（分析、通知等）
@@ -3440,7 +3440,7 @@ python3 test_batch_fetch.py
 - **通过率**：100%（有缓存数据时）
 
 **功能验证**：
-- ✅ 直接访问方式工作正常（利用Windows/WSL文件系统共享）
+- ✅ 直接访问方式工作正常（利用本地文件系统共享）
 - ✅ 数据格式正确，字段完整
 - ✅ period参数格式灵活（支持"5"和"5m"）
 - ✅ 错误处理完善（参数缺失、日期格式错误）
@@ -3556,7 +3556,7 @@ python3 test_batch_fetch.py
 
 **验证结果**：
 - ✅ **原系统模块导入** - **成功**
-  - 原系统路径：`/mnt/d/Ubuntu应用环境配置/mcp/option_trading_assistant`
+  - 原系统路径：`/home/xie/etf-options-ai-assistant`
   - 模块导入：`analyze_daily_market_after_close` 和 `analyze_market_before_open` 可以导入
 - ✅ **工具调用** - **成功**（已修复）
   - `tool_analyze_after_close`：✅ 修复成功，工具正常工作
@@ -3734,7 +3734,7 @@ python3 test_batch_fetch.py
 
 **下一步建议**：
 1. ✅ **配置原系统直接访问**：参考 [`原系统直接访问配置说明.md`](./原系统直接访问配置说明.md)
-   - 确保原系统路径正确（`/mnt/d/Ubuntu应用环境配置/mcp/option_trading_assistant`）
+   - 确保原系统路径正确（`/home/xie/etf-options-ai-assistant`）
    - 确保OpenClaw环境可以导入原系统模块
    - **无需启动API服务**（采用直接访问方式）
 2. ✅ **数据访问工具测试**：基本功能测试通过（4个工具成功，2个缓存缺失需要先获取数据）

@@ -11,7 +11,6 @@ from typing import Dict, Optional, Any
 
 from src.logger_config import get_module_logger
 from src.prediction_evaluator import evaluate_predictions
-from src.notifier import send_feishu_notification
 
 logger = get_module_logger(__name__)
 
@@ -209,7 +208,8 @@ def generate_monthly_report(
         
         # 评估本月预测
         evaluation = evaluate_predictions(start_date, end_date, prediction_type=None, source=None)
-        
+
+        report: Dict[str, Any]
         # 数据不足/无记录：仍然返回“标准报告结构”，避免上层/测试因缺字段失败
         if evaluation.get('error'):
             err = evaluation.get('error')
@@ -338,7 +338,7 @@ def format_daily_report_message(report: Dict[str, Any]) -> str:
         if calibration_eff.get('calibrated_count', 0) > 0:
             calibrated_cov = calibration_eff.get('calibrated_coverage')
             improvement = calibration_eff.get('improvement')
-            message += f"\n\n🔄 实时校准效果："
+            message += "\n\n🔄 实时校准效果："
             message += f"\n• 校准后覆盖率: {calibrated_cov*100:.1f}%" if calibrated_cov else ""
             message += f"\n• 提升幅度: {improvement*100:.1f}%" if improvement else ""
             message += f"\n• 校准次数: {calibration_eff.get('calibrated_count', 0)}"

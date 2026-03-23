@@ -4,10 +4,7 @@
 """
 
 import pandas as pd
-import numpy as np
 from typing import Dict, Optional, Any
-from datetime import datetime
-import pytz
 
 from src.logger_config import get_module_logger
 
@@ -18,8 +15,8 @@ def real_time_calibration(
     prediction: Dict[str, Any],
     current_price: float,
     intraday_data: pd.DataFrame,
-    time_of_day: str = None,  # 'morning'/'afternoon'/'near_close'
-    config: Optional[Dict] = None
+    time_of_day: Optional[str] = None,  # 'morning'/'afternoon'/'near_close'
+    config: Optional[Dict[str, Any]] = None
 ) -> Dict[str, Any]:
     """
     根据盘中实际走势实时调整预测区间

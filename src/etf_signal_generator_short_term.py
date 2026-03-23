@@ -4,7 +4,6 @@ ETF短波段信号生成模块（GROK v2.0优化方案）
 """
 
 import pandas as pd
-import numpy as np
 from typing import Dict, Any, Optional
 from datetime import datetime
 import pytz
@@ -58,7 +57,7 @@ def generate_etf_short_term_signal(
         
         short_term_config = config.get('etf_trading', {}).get('short_term', {})
         if not short_term_config.get('enabled', True):
-            logger.debug(f"ETF短波段信号未启用，跳过生成")
+            logger.debug("ETF短波段信号未启用，跳过生成")
             return None
         
         ma_long = short_term_config.get('ma_long', 20)
@@ -70,11 +69,11 @@ def generate_etf_short_term_signal(
         
         # 检查数据完整性
         if etf_daily_data is None or etf_daily_data.empty:
-            logger.warning(f"ETF日线数据缺失，无法生成短波段信号")
+            logger.warning("ETF日线数据缺失，无法生成短波段信号")
             return None
         
         if '收盘' not in etf_daily_data.columns:
-            logger.warning(f"ETF日线数据缺少'收盘'列，无法生成短波段信号")
+            logger.warning("ETF日线数据缺少'收盘'列，无法生成短波段信号")
             return None
         
         # 1. 日线定趋势：计算20日MA和10日MA
@@ -82,7 +81,7 @@ def generate_etf_short_term_signal(
         ma10 = calculate_ma(etf_daily_data, period=ma_short, close_col='收盘')
         
         if ma20 is None or ma20.empty or ma10 is None or ma10.empty:
-            logger.warning(f"无法计算MA，跳过短波段信号生成")
+            logger.warning("无法计算MA，跳过短波段信号生成")
             return None
         
         current_ma20 = float(ma20.iloc[-1])
@@ -178,7 +177,7 @@ def generate_etf_short_term_signal(
                     if (price_near_ma10 or price_above_ma10) and declined:
                         minute_confirmed = True
                         signal_strength = 0.6  # 基础强度
-                        minute_reason = f"30min反弹至MA10附近后回落"
+                        minute_reason = "30min反弹至MA10附近后回落"
                         
                         # MACD死叉加分
                         if macd_death_cross:

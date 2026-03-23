@@ -44,7 +44,8 @@ ALIASES = {
     "tool_read_option_greeks": ("tool_read_market_data", {"data_type": "option_greeks"}),
     "tool_send_feishu_message": ("tool_send_feishu_notification", {"notification_type": "message"}),
     "tool_send_signal_alert": ("tool_send_feishu_notification", {"notification_type": "signal_alert"}),
-    "tool_send_daily_report": ("tool_send_feishu_notification", {"notification_type": "daily_report"}),
+    # 市场日报也走钉钉（兼容旧工具名）：复用 tool_send_analysis_report 的 SEC 加签与关键词校验
+    "tool_send_daily_report": ("tool_send_analysis_report", {}),
     "tool_send_risk_alert": ("tool_send_feishu_notification", {"notification_type": "risk_alert"}),
     "tool_analyze_after_close": ("tool_analyze_market", {"moment": "after_close"}),
     "tool_analyze_before_open": ("tool_analyze_market", {"moment": "before_open"}),
@@ -249,6 +250,11 @@ TOOL_MAP: Dict[str, ToolSpec] = {
     "tool_send_dingtalk_message": ToolSpec(
         module_path="notification.send_dingtalk_message",
         function_name="tool_send_dingtalk_message",
+    ),
+    # 分析类报告（钉钉发送，替代 flyish 报日）
+    "tool_send_analysis_report": ToolSpec(
+        module_path="notification.send_analysis_report",
+        function_name="tool_send_analysis_report",
     ),
     # 股票行情
     "tool_fetch_stock_historical": ToolSpec(

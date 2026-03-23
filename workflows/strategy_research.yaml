@@ -17,8 +17,8 @@ steps:
       adjustment_rate: 0.1
 
   - name: send_strategy_research_report
-    tool: tool_send_daily_report
-    description: 将 strategy_research 返回的 report_data 发送到现有通知渠道（钉钉/飞书关联群）。
+    tool: tool_send_analysis_report
+    description: 将 strategy_research 返回的 report_data 发送到钉钉群。
     depends_on: [strategy_research]
     params:
       report_data: "{{strategy_research.data.report_data}}"

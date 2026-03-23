@@ -75,7 +75,7 @@ The steps below assume you are working in a WSL environment and have installed O
 ### 1. Clone the repo and install dependencies
 
 ```bash
-git clone <your-github-url>/etf-options-ai-assistant.git
+git clone https://github.com/shaoxing-xie/etf-options-ai-assistant.git
 cd etf-options-ai-assistant
 
 python3 -m venv .venv

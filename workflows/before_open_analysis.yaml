@@ -35,8 +35,8 @@ steps:
       underlying: "510300"
     
   - name: send_analysis_result
-    tool: tool_send_daily_report
-    description: 发送盘前分析报告到飞书
+    tool: tool_send_analysis_report
+    description: 发送盘前分析报告到钉钉群
     depends_on: [trend_analysis, volatility_prediction]
     params:
       report_type: "before_open"

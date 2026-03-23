@@ -137,7 +137,7 @@ def fetch_etf_data(
                         success_count += 1
                     else:
                         failed_dates.append(date)
-                except Exception as e:
+                except Exception:
                     failed_dates.append(date)
             
             return {

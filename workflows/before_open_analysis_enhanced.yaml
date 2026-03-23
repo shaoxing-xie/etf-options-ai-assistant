@@ -51,8 +51,8 @@ steps:
 
   - name: send_daily_report
     agent: notification_agent
-    tool: tool_send_daily_report
-    description: 发送盘前分析报告到飞书
+    tool: tool_send_analysis_report
+    description: 发送盘前分析报告到钉钉群
     params:
       report_type: "before_open"
       # report_data将从analyze_before_open、predict_volatility、predict_intraday_range步骤的输出中获取
@@ -72,4 +72,4 @@ structured_message: |
   
   步骤5：使用 tool_predict_intraday_range 工具预测日内波动区间，参数：symbol="510300"。
   
-  步骤6：使用 notification_agent 的 tool_send_daily_report 工具发送盘前分析报告到飞书。请使用步骤3、4、5的分析结果构建report_data，参数：report_type="before_open"。
+  步骤6：使用 notification_agent 的 tool_send_analysis_report 工具发送盘前分析报告到钉钉群。请使用步骤3、4、5的分析结果构建report_data，参数：report_type="before_open"。

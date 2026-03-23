@@ -5,7 +5,6 @@
 """
 
 import os
-import sys
 import argparse
 from pathlib import Path
 from typing import Dict, Optional, Any, List
@@ -15,7 +14,7 @@ from copy import deepcopy
 
 # 在解析 ${VAR} 或 os.getenv 之前加载项目根目录的 .env
 try:
-    from dotenv import load_dotenv
+    from dotenv import load_dotenv  # type: ignore[import-not-found]
     _project_root = Path(__file__).resolve().parents[1]
     _env_file = _project_root / ".env"
     if _env_file.exists():
@@ -88,10 +87,6 @@ def get_default_config() -> Dict[str, Any]:
             'feishu_webhook': None,
             'sms': {
                 'enabled': False,
-                'access_key_id': None,
-                'access_key_secret': None,
-                'sign_name': None,
-                'template_code': None,
                 'phone_numbers': []
             }
         },
@@ -127,7 +122,7 @@ def merge_config(default: Dict, user: Dict) -> Dict:
             # 递归合并字典
             # 特殊处理：如果合并 option_contracts，添加调试信息
             if key == 'option_contracts':
-                logger.debug(f"merge_config: 合并 option_contracts")
+                logger.debug("merge_config: 合并 option_contracts")
                 if 'underlyings' in result[key]:
                     logger.debug(f"merge_config: 默认配置 underlyings 长度: {len(result[key]['underlyings'])}")
                 if 'underlyings' in value:
@@ -176,7 +171,7 @@ def load_system_config(config_path: str = "config.yaml", use_cache: bool = True)
         default_config = get_default_config()
         
         # 从配置文件加载（如果存在）
-        user_config = {}
+        user_config: Dict[str, Any] = {}
         config_file = Path(config_path)
         
         # 如果配置文件不存在，尝试在项目根目录查找
@@ -205,7 +200,7 @@ def load_system_config(config_path: str = "config.yaml", use_cache: bool = True)
                             for i, u in enumerate(ul, 1):
                                 logger.info(f"YAML 解析后: 标的物 {i}/{len(ul)}: underlying={u.get('underlying', 'N/A')}, call={len(u.get('call_contracts', []))}, put={len(u.get('put_contracts', []))}")
                         elif isinstance(ul, list) and not ul:
-                            logger.warning(f"YAML 解析后: option_contracts.underlyings 是空列表！")
+                            logger.warning("YAML 解析后: option_contracts.underlyings 是空列表！")
             except Exception as e:
                 logger.error(f"加载配置文件失败: {config_path} | 错误: {str(e)}", exc_info=True)
                 logger.warning("使用默认配置")
@@ -225,7 +220,7 @@ def load_system_config(config_path: str = "config.yaml", use_cache: bool = True)
                     for i, u in enumerate(ul, 1):
                         logger.info(f"配置加载后: 标的物 {i}/{len(ul)}: underlying={u.get('underlying', 'N/A')}, call={len(u.get('call_contracts', []))}, put={len(u.get('put_contracts', []))}")
                 elif isinstance(ul, list) and not ul:
-                    logger.warning(f"配置加载后: option_contracts.underlyings 是空列表！检查原始配置...")
+                    logger.warning("配置加载后: option_contracts.underlyings 是空列表！检查原始配置...")
                     # 检查原始用户配置
                     if 'option_contracts' in user_config:
                         user_oc = user_config['option_contracts']
@@ -506,16 +501,18 @@ def load_contract_config(config_path: str = "config.yaml", use_cache: bool = Tru
                                 'put_contracts': put_contracts_list
                             }]
                             
-                            logger.warning(f"检测到旧格式配置，已自动转换为新格式。建议使用 underlyings 列表格式。")
+                            logger.warning("检测到旧格式配置，已自动转换为新格式。建议使用 underlyings 列表格式。")
                             logger.debug(f"从配置文件加载: Call合约数={len(call_contracts_list)}, Put合约数={len(put_contracts_list)}")
             except Exception as e:
                 logger.error(f"读取配置文件失败: {str(e)}", exc_info=True)
         
         # 2. 从环境变量加载（如果配置文件没有）
-        if not config.get('call_strike_price') and os.getenv('CALL_STRIKE_PRICE'):
-            config['call_strike_price'] = float(os.getenv('CALL_STRIKE_PRICE'))
-        if not config.get('put_strike_price') and os.getenv('PUT_STRIKE_PRICE'):
-            config['put_strike_price'] = float(os.getenv('PUT_STRIKE_PRICE'))
+        call_strike_env = os.getenv('CALL_STRIKE_PRICE')
+        if not config.get('call_strike_price') and call_strike_env:
+            config['call_strike_price'] = float(call_strike_env)
+        put_strike_env = os.getenv('PUT_STRIKE_PRICE')
+        if not config.get('put_strike_price') and put_strike_env:
+            config['put_strike_price'] = float(put_strike_env)
         
         # 3. 从命令行参数加载（如果环境变量没有）
         parser = argparse.ArgumentParser(description='期权交易助手')
@@ -942,7 +939,7 @@ def get_underlyings(config: Dict) -> List[Dict[str, Any]]:
             return underlyings_list
         elif underlyings_list == []:
             # 如果是空列表，说明配置可能有问题，记录警告但继续查找
-            logger.warning(f"get_underlyings: option_contracts 子配置中的 underlyings 是空列表，继续查找其他配置源")
+            logger.warning("get_underlyings: option_contracts 子配置中的 underlyings 是空列表，继续查找其他配置源")
     
     # 如果传入的是完整配置，从 option_contracts 中读取（新格式）
     option_contracts = config.get('option_contracts', {})
@@ -1015,6 +1012,9 @@ def get_contract_codes(config: Dict, option_type: str = "call", verify_strike: b
                 # 找到匹配的标的物后，直接返回结果
                 logger.info(f"get_contract_codes: 标的物 {underlying} 返回 {len(result)} 个{option_type}合约")
                 return result
+        # underlying 指定但未找到匹配标的物：返回空列表（保证所有分支都有 return）
+        logger.info(f"get_contract_codes: 未找到匹配标的物 {underlying}，返回空列表")
+        return result
     else:
         # 获取所有标的物的所有合约
         underlyings_list = get_underlyings(config)
@@ -1084,6 +1084,8 @@ def get_contract_code_from_config(
         has_strike_price = 'strike_price' in contract_config and contract_config['strike_price'] is not None
         
         logger.info(f"get_contract_code_from_config: {option_type}, has_contract_code={has_contract_code}, has_strike_price={has_strike_price}, contract_code_raw={contract_code_raw}, contract_config={contract_config}")
+
+        contract_code: Optional[str] = None
         
         # 优先级1：如果直接指定了合约代码，直接使用
         if has_contract_code:

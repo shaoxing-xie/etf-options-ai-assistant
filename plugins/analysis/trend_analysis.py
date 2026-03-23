@@ -97,7 +97,9 @@ def trend_analysis(
             try:
                 config = load_system_config(use_cache=True)
             except Exception as e:
-                pass  # 配置加载失败不影响主流程
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.debug(f"配置加载失败，忽略: {e}", exc_info=True)
         
         # 根据分析类型调用分析函数
         analysis_result = None

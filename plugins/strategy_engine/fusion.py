@@ -7,7 +7,7 @@ from __future__ import annotations
 import copy
 from collections import defaultdict
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 from strategy_engine.schemas import FusionResult, SignalCandidate
 

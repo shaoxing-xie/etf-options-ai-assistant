@@ -5,9 +5,8 @@
 
 import akshare as ak
 import pandas as pd
-import numpy as np
 from datetime import datetime, timedelta
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, cast
 import time
 import pytz
 import requests
@@ -341,7 +340,8 @@ def fetch_index_minute_em(
                                 date_col = col
                                 break
                         cached_count = len(cached_partial_minute_df)
-                        minute_df = merge_cached_and_fetched_data(cached_partial_minute_df, minute_df, date_col)
+                        # mypy：merge_cached_and_fetched_data 返回值类型较宽，这里明确为 DataFrame
+                        minute_df = cast(pd.DataFrame, merge_cached_and_fetched_data(cached_partial_minute_df, minute_df, date_col))
                         logger.info(f"合并缓存数据: 缓存 {cached_count} 条 + 新增 {len(minute_df) - cached_count} 条 = 总计 {len(minute_df)} 条")
                     except Exception as e:
                         logger.debug(f"合并缓存数据失败（不影响主流程）: {e}")
@@ -532,7 +532,7 @@ def fetch_index_minute_data_with_fallback(
             if source == 'eastmoney':
                 source_max_retries = eastmoney_config.get('max_retries', max_retries)
                 source_retry_delay = eastmoney_config.get('retry_delay', retry_delay)
-                logger.debug(f"尝试从东方财富获取30分钟数据: 000300")
+                logger.debug("尝试从东方财富获取30分钟数据: 000300")
                 index_30m = fetch_index_minute_em(
                     symbol="000300",
                     period="30",
@@ -545,7 +545,7 @@ def fetch_index_minute_data_with_fallback(
             elif source == 'sina':
                 source_max_retries = sina_config.get('max_retries', max_retries)
                 source_retry_delay = sina_config.get('retry_delay', retry_delay)
-                logger.debug(f"尝试从新浪财经获取30分钟数据: 000300")
+                logger.debug("尝试从新浪财经获取30分钟数据: 000300")
                 index_30m = fetch_index_minute_sina(
                     symbol="000300",
                     period="30",
@@ -582,7 +582,7 @@ def fetch_index_minute_data_with_fallback(
             if source == 'eastmoney':
                 source_max_retries = eastmoney_config.get('max_retries', max_retries)
                 source_retry_delay = eastmoney_config.get('retry_delay', retry_delay)
-                logger.debug(f"尝试从东方财富获取15分钟数据: 000300")
+                logger.debug("尝试从东方财富获取15分钟数据: 000300")
                 index_15m = fetch_index_minute_em(
                     symbol="000300",
                     period="15",
@@ -595,7 +595,7 @@ def fetch_index_minute_data_with_fallback(
             elif source == 'sina':
                 source_max_retries = sina_config.get('max_retries', max_retries)
                 source_retry_delay = sina_config.get('retry_delay', retry_delay)
-                logger.debug(f"尝试从新浪财经获取15分钟数据: 000300")
+                logger.debug("尝试从新浪财经获取15分钟数据: 000300")
                 index_15m = fetch_index_minute_sina(
                     symbol="000300",
                     period="15",
@@ -824,7 +824,11 @@ def fetch_minute_data_with_fallback(
     """
     logger.warning("fetch_minute_data_with_fallback 已废弃，请使用独立的 fetch_index_minute_data_with_fallback 和 fetch_etf_minute_data_with_fallback")
     # 默认返回ETF数据（保持旧行为）
-    etf_30m, etf_15m = fetch_etf_minute_data_with_fallback(lookback_days, primary_max_retries, retry_delay)
+    etf_30m, etf_15m = fetch_etf_minute_data_with_fallback(
+        lookback_days=lookback_days,
+        max_retries=primary_max_retries,
+        retry_delay=retry_delay,
+    )
     if etf_30m is not None and etf_15m is not None:
         # 计算价格转换比率（用于兼容）
         from src.data_collector import get_etf_current_price, fetch_index_daily_em
@@ -1085,7 +1089,8 @@ def fetch_etf_minute_em(
                                 date_col = col
                                 break
                         cached_count = len(cached_partial_minute_df)
-                        minute_df = merge_cached_and_fetched_data(cached_partial_minute_df, minute_df, date_col)
+                        # mypy：merge_cached_and_fetched_data 返回值类型较宽，这里明确为 DataFrame
+                        minute_df = cast(pd.DataFrame, merge_cached_and_fetched_data(cached_partial_minute_df, minute_df, date_col))
                         logger.info(f"合并缓存数据: 缓存 {cached_count} 条 + 新增 {len(minute_df) - cached_count} 条 = 总计 {len(minute_df)} 条")
                     except Exception as e:
                         logger.debug(f"合并缓存数据失败（不影响主流程）: {e}")
@@ -1174,7 +1179,8 @@ def fetch_etf_minute_em(
                                 date_col = col
                                 break
                         cached_count = len(cached_partial_minute_df)
-                        minute_df = merge_cached_and_fetched_data(cached_partial_minute_df, minute_df, date_col)
+                        # mypy：merge_cached_and_fetched_data 返回值类型较宽，这里明确为 DataFrame
+                        minute_df = cast(pd.DataFrame, merge_cached_and_fetched_data(cached_partial_minute_df, minute_df, date_col))
                         logger.info(f"合并缓存数据: 缓存 {cached_count} 条 + 新增 {len(minute_df) - cached_count} 条 = 总计 {len(minute_df)} 条")
                     except Exception as e:
                         logger.debug(f"合并缓存数据失败（不影响主流程）: {e}")
@@ -1528,7 +1534,7 @@ def fetch_etf_minute_sina(
             # 解析JSON响应
             try:
                 data = response.json()
-            except ValueError as e:
+            except ValueError:
                 raise ValueError(f"JSON解析失败: {response.text[:200]}")
             
             # 检查返回数据
@@ -1614,7 +1620,8 @@ def fetch_etf_minute_sina(
                             date_col = col
                             break
                     cached_count = len(cached_partial_minute_df)
-                    df = merge_cached_and_fetched_data(cached_partial_minute_df, df, date_col)
+                    # mypy：merge_cached_and_fetched_data 返回值类型较宽，这里明确为 DataFrame
+                    df = cast(pd.DataFrame, merge_cached_and_fetched_data(cached_partial_minute_df, df, date_col))
                     logger.info(f"合并缓存数据: 缓存 {cached_count} 条 + 新增 {len(df) - cached_count} 条 = 总计 {len(df)} 条")
                 except Exception as e:
                     logger.debug(f"合并缓存数据失败（不影响主流程）: {e}")
@@ -1994,7 +2001,7 @@ def fetch_index_minute_sina(
             # 解析JSON响应
             try:
                 data = response.json()
-            except ValueError as e:
+            except ValueError:
                 raise ValueError(f"JSON解析失败: {response.text[:200]}")
             
             # 检查返回数据
@@ -2080,7 +2087,8 @@ def fetch_index_minute_sina(
                             date_col = col
                             break
                     cached_count = len(cached_partial_minute_df)
-                    df = merge_cached_and_fetched_data(cached_partial_minute_df, df, date_col)
+                    # mypy：merge_cached_and_fetched_data 返回值类型较宽，这里明确为 DataFrame
+                    df = cast(pd.DataFrame, merge_cached_and_fetched_data(cached_partial_minute_df, df, date_col))
                     logger.info(f"合并缓存数据: 缓存 {cached_count} 条 + 新增 {len(df) - cached_count} 条 = 总计 {len(df)} 条")
                 except Exception as e:
                     logger.debug(f"合并缓存数据失败（不影响主流程）: {e}")
@@ -2269,8 +2277,9 @@ def fetch_option_greeks_sina(
         today = datetime.now().strftime("%Y%m%d")
         
         # 解析日期时间参数
-        target_date = None
-        target_datetime = None
+        # 默认走“当天”逻辑，避免 target_date 被 mypy 推断成 Optional
+        target_date: str = today
+        target_datetime: Optional[datetime] = None
         if date is not None:
             # 支持两种格式：YYYYMMDD hh:mm:ss 或 YYYYMMDD
             if len(date) == 8 and date.isdigit():
@@ -2290,8 +2299,7 @@ def fetch_option_greeks_sina(
                 except ValueError:
                     # 如果解析失败，只使用日期部分
                     target_date = date[:8] if len(date) >= 8 else date
-        else:
-            target_date = today
+        # else: 使用上面的默认 target_date=today
         
         # ========== 历史数据查询：使用对应日期时间的缓存（或最接近的缓存）==========
         if target_date != today:
@@ -2533,13 +2541,12 @@ def fetch_option_minute_sina(
         today = datetime.now().strftime("%Y%m%d")
         
         # 解析日期参数
-        target_date = None
+        # 默认使用今天，避免 target_date 在 mypy 中被推断为 Optional[str]
+        target_date: str = today
         if date is not None:
             # 支持两种格式：YYYYMMDD hh:mm:ss 或 YYYYMMDD
             if len(date) >= 8:
-                target_date = date[:8] if len(date) >= 8 else date
-        else:
-            target_date = today
+                target_date = date[:8]
         
         # ========== 历史数据查询：使用对应日期的缓存 ==========
         if target_date != today:
@@ -2720,8 +2727,6 @@ def fetch_index_daily_em(
     # ========== 缓存逻辑：先检查缓存 ==========
     config_for_cache = load_system_config(use_cache=True)
     cached_partial_df = None  # 用于存储部分缓存的数据
-    original_start_date = start_date
-    original_end_date = end_date
     
     if _is_cache_enabled(config_for_cache) and period == "daily":
         try:
@@ -2784,7 +2789,8 @@ def fetch_index_daily_em(
                             date_col = col
                             break
                     cached_count = len(cached_partial_df)
-                    tushare_df = merge_cached_and_fetched_data(cached_partial_df, tushare_df, date_col)
+                    # mypy：merge_cached_and_fetched_data 返回值类型较宽，这里明确为 DataFrame
+                    tushare_df = cast(pd.DataFrame, merge_cached_and_fetched_data(cached_partial_df, tushare_df, date_col))
                     logger.info(f"合并缓存数据: 缓存 {cached_count} 条 + 新增 {len(tushare_df) - cached_count} 条 = 总计 {len(tushare_df)} 条")
                 except Exception as e:
                     logger.debug(f"合并缓存数据失败（不影响主流程）: {e}")
@@ -2808,6 +2814,7 @@ def fetch_index_daily_em(
     
     # 方法2：尝试使用 stock_zh_index_daily（备用方案1，新浪财经）或 fund_etf_hist_sina（ETF）
     try:
+        sina_symbol: Optional[str] = None
         # 如果是 ETF 代码，使用新浪 ETF 接口
         if symbol.startswith("5") or symbol.startswith("1"):
             # ETF 代码：使用 fund_etf_hist_sina
@@ -2907,7 +2914,8 @@ def fetch_index_daily_em(
                                     date_col = col
                                     break
                             cached_count = len(cached_partial_df)
-                            daily_df = merge_cached_and_fetched_data(cached_partial_df, daily_df, date_col)
+                            # mypy：merge_cached_and_fetched_data 返回值类型较宽，这里明确为 DataFrame
+                            daily_df = cast(pd.DataFrame, merge_cached_and_fetched_data(cached_partial_df, daily_df, date_col))
                             logger.info(f"合并缓存数据: 缓存 {cached_count} 条 + 新增 {len(daily_df) - cached_count} 条 = 总计 {len(daily_df)} 条")
                         except Exception as e:
                             logger.debug(f"合并缓存数据失败（不影响主流程）: {e}")
@@ -2958,7 +2966,8 @@ def fetch_index_daily_em(
                             date_col = col
                             break
                     cached_count = len(cached_partial_df)
-                    daily_df = merge_cached_and_fetched_data(cached_partial_df, daily_df, date_col)
+                    # mypy：merge_cached_and_fetched_data 返回值类型较宽，这里明确为 DataFrame
+                    daily_df = cast(pd.DataFrame, merge_cached_and_fetched_data(cached_partial_df, daily_df, date_col))
                     logger.info(f"合并缓存数据: 缓存 {cached_count} 条 + 新增 {len(daily_df) - cached_count} 条 = 总计 {len(daily_df)} 条")
                 except Exception as e:
                     logger.debug(f"合并缓存数据失败（不影响主流程）: {e}")
@@ -3014,7 +3023,7 @@ def fetch_index_daily_em(
                         'end_date': end_date,
                         'attempts': max_retries
                     },
-                    f"获取指数日线数据失败（所有数据源均失败：Tushare主数据源、stock_zh_index_daily备用1、index_zh_a_hist备用2、stock_zh_index_daily_em备用3）"
+                    "获取指数日线数据失败（所有数据源均失败：Tushare主数据源、stock_zh_index_daily备用1、index_zh_a_hist备用2、stock_zh_index_daily_em备用3）"
                 )
                 return None
         
@@ -3074,7 +3083,8 @@ def fetch_index_daily_em(
                                 date_col = col
                                 break
                         cached_count = len(cached_partial_df)
-                        daily_df = merge_cached_and_fetched_data(cached_partial_df, daily_df, date_col)
+                        # mypy：merge_cached_and_fetched_data 返回值类型较宽，这里明确为 DataFrame
+                        daily_df = cast(pd.DataFrame, merge_cached_and_fetched_data(cached_partial_df, daily_df, date_col))
                         logger.info(f"合并缓存数据: 缓存 {cached_count} 条 + 新增 {len(daily_df) - cached_count} 条 = 总计 {len(daily_df)} 条")
                     except Exception as e:
                         logger.debug(f"合并缓存数据失败（不影响主流程）: {e}")
@@ -3165,7 +3175,7 @@ def fetch_global_index_spot_em(
                             a50_data = spot_df[spot_df[code_col].astype(str) == str(a50_code)]
                             if not a50_data.empty:
                                 log_function_result(logger, "fetch_global_index_spot_em", 
-                                                  f"获取到A50期指实时数据", duration)
+                                                  "获取到A50期指实时数据", duration)
                                 return a50_data
                             else:
                                 logger.warning(f"未找到A50期指实时数据: code={a50_code}")
@@ -3301,7 +3311,7 @@ def _find_a50_futures_code() -> Optional[str]:
             row = a50_all.iloc[0]
             code = str(row[code_col])
             logger.info(f"找到A50期指代码: {code} ({row[name_col]})")
-            logger.warning(f"该合约可能暂无交易数据")
+            logger.warning("该合约可能暂无交易数据")
             return code
         
         logger.warning(f"未找到A50期指代码，搜索关键词: {search_keywords}")
@@ -3549,7 +3559,7 @@ def fetch_a50_daily_sina(
             # 解析JSON响应
             try:
                 data = response.json()
-            except ValueError as e:
+            except ValueError:
                 logger.debug(f"JSON解析失败，原始响应: {response.text[:500]}")
                 raise ValueError(f"JSON解析失败: {response.text[:200]}")
             
@@ -3655,7 +3665,7 @@ def fetch_a50_daily_sina(
                     'attempt': attempt + 1,
                     'max_retries': max_retries
                 },
-                f"获取A50期指日线数据失败（新浪）"
+                "获取A50期指日线数据失败（新浪）"
             )
             if attempt < max_retries - 1:
                 continue
@@ -3800,7 +3810,7 @@ def fetch_a50_minute_sina(
             # 解析JSON响应
             try:
                 data = response.json()
-            except ValueError as e:
+            except ValueError:
                 logger.debug(f"JSON解析失败，原始响应: {response.text[:500]}")
                 raise ValueError(f"JSON解析失败: {response.text[:200]}")
             
@@ -3912,7 +3922,7 @@ def fetch_a50_minute_sina(
                     'attempt': attempt + 1,
                     'max_retries': max_retries
                 },
-                f"获取A50期指分钟数据失败（新浪）"
+                "获取A50期指分钟数据失败（新浪）"
             )
             if attempt < max_retries - 1:
                 continue
@@ -3959,7 +3969,7 @@ def fetch_a50_daily_sina_hist(
         start_date = start.strftime("%Y%m%d")
     
     try:
-        logger.info(f"使用AKShare接口获取A50期指历史数据: symbol=CHA50CFD")
+        logger.info("使用AKShare接口获取A50期指历史数据: symbol=CHA50CFD")
         start_time = time.time()
         
         # 使用线程池执行器添加超时机制（30秒超时），防止AKShare调用卡住
@@ -4153,8 +4163,6 @@ def fetch_etf_daily_em(
     # ========== 缓存逻辑：先检查缓存 ==========
     config_for_cache = load_system_config(use_cache=True)
     cached_partial_df = None  # 用于存储部分缓存的数据
-    original_start_date = start_date
-    original_end_date = end_date
     
     if _is_cache_enabled(config_for_cache) and period == "daily":
         try:
@@ -4214,7 +4222,8 @@ def fetch_etf_daily_em(
                             date_col = col
                             break
                     cached_count = len(cached_partial_df)
-                    etf_df = merge_cached_and_fetched_data(cached_partial_df, etf_df, date_col)
+                    # mypy：merge_cached_and_fetched_data 返回值类型较宽，这里明确为 DataFrame
+                    etf_df = cast(pd.DataFrame, merge_cached_and_fetched_data(cached_partial_df, etf_df, date_col))
                     logger.info(f"合并缓存数据: 缓存 {cached_count} 条 + 新增 {len(etf_df) - cached_count} 条 = 总计 {len(etf_df)} 条")
                 except Exception as e:
                     logger.debug(f"合并缓存数据失败（不影响主流程）: {e}")
@@ -4323,7 +4332,8 @@ def fetch_etf_daily_em(
                                     date_col = col
                                     break
                             cached_count = len(cached_partial_df)
-                            etf_df = merge_cached_and_fetched_data(cached_partial_df, etf_df, date_col)
+                            # mypy：merge_cached_and_fetched_data 返回值类型较宽，这里明确为 DataFrame
+                            etf_df = cast(pd.DataFrame, merge_cached_and_fetched_data(cached_partial_df, etf_df, date_col))
                             logger.info(f"合并缓存数据: 缓存 {cached_count} 条 + 新增 {len(etf_df) - cached_count} 条 = 总计 {len(etf_df)} 条")
                         except Exception as e:
                             logger.debug(f"合并缓存数据失败（不影响主流程）: {e}")
@@ -4352,7 +4362,7 @@ def fetch_etf_daily_em(
                 continue
             else:
                 logger.warning(f"新浪接口所有重试均失败（{max_retries}次），将尝试备用方案2")
-                logger.info(f"数据源回退顺序: 1) Tushare (已失败) -> 2) fund_etf_hist_sina (已失败) -> 3) fund_etf_hist_em")
+                logger.info("数据源回退顺序: 1) Tushare (已失败) -> 2) fund_etf_hist_sina (已失败) -> 3) fund_etf_hist_em")
                 log_error_with_context(
                     logger, e,
                     {
@@ -4404,7 +4414,8 @@ def fetch_etf_daily_em(
                                         date_col = col
                                         break
                                 cached_count = len(cached_partial_df)
-                                etf_df = merge_cached_and_fetched_data(cached_partial_df, etf_df, date_col)
+                                # mypy：merge_cached_and_fetched_data 返回值类型较宽，这里明确为 DataFrame
+                                etf_df = cast(pd.DataFrame, merge_cached_and_fetched_data(cached_partial_df, etf_df, date_col))
                                 logger.info(f"合并缓存数据: 缓存 {cached_count} 条 + 新增 {len(etf_df) - cached_count} 条 = 总计 {len(etf_df)} 条")
                             except Exception as e:
                                 logger.debug(f"合并缓存数据失败（不影响主流程）: {e}")
@@ -4533,13 +4544,22 @@ def get_index_current_price(symbol: str = "000300") -> Optional[float]:
         try:
             symbols_to_try = ["沪深重要指数", "上证系列指数", "深证系列指数", "中证系列指数"]
             all_df = None
-            for sym in symbols_to_try:
+            # 将“异常抓取”封装到函数里，避免 try/except 里直接 continue/pass
+            # Bandit 会对 try/except/pass/continue 给出较高噪声，这里做结构性规避。
+            def _safe_fetch_em(symbol_name: str) -> Optional[pd.DataFrame]:
                 try:
-                    df = ak.stock_zh_index_spot_em(symbol=sym)
-                    if df is not None and not df.empty:
-                        all_df = df if all_df is None else pd.concat([all_df, df], ignore_index=True)
-                except Exception:
-                    continue
+                    return ak.stock_zh_index_spot_em(symbol=symbol_name)
+                except Exception as e:
+                    logger.debug(
+                        f"东方财富指数现货获取失败: {symbol_name}, 错误: {e}",
+                        exc_info=True,
+                    )
+                    return None
+
+            for sym in symbols_to_try:
+                df = _safe_fetch_em(sym)
+                if df is not None and not df.empty:
+                    all_df = df if all_df is None else pd.concat([all_df, df], ignore_index=True)
 
             if all_df is not None and not all_df.empty:
                 code_col = None
@@ -4572,8 +4592,8 @@ def get_index_current_price(symbol: str = "000300") -> Optional[float]:
                                         return v
                                 except (ValueError, TypeError):
                                     continue
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"获取指数当前价格（东方财富）失败: {symbol}, 错误: {e}", exc_info=True)
 
         # 方法2：新浪指数现货（备用）
         try:
@@ -4618,8 +4638,8 @@ def get_index_current_price(symbol: str = "000300") -> Optional[float]:
                                         return v
                                 except (ValueError, TypeError):
                                     continue
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"获取指数当前价格（新浪）失败: {symbol}, 错误: {e}", exc_info=True)
 
         logger.warning(f"无法获取指数实时价格: {symbol}")
         return None
@@ -4821,7 +4841,6 @@ def fetch_index_opening_data(
             
         except Exception as e:
             last_error = str(e)
-            error_type = type(e).__name__
             logger.warning(f"获取指数开盘数据失败: 尝试{attempt+1}/{max_retries}, 错误: {last_error}")
             if attempt < max_retries - 1:
                 continue
@@ -5002,6 +5021,6 @@ def fetch_index_opening_history(
                 'index_code': index_code,
                 'lookback_days': lookback_days
             },
-            f"获取指数历史开盘数据失败"
+            "获取指数历史开盘数据失败"
         )
         return None

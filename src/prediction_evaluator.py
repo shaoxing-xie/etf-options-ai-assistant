@@ -3,13 +3,10 @@
 计算区间覆盖率、区间宽度、方向准确率、校准度等核心指标
 """
 
-import pandas as pd
 import numpy as np
 from typing import Dict, List, Optional, Any
 from datetime import datetime, timedelta
-import pytz
 import json
-from pathlib import Path
 
 from src.logger_config import get_module_logger
 from src.prediction_recorder import PREDICTION_RECORDS_DIR
@@ -190,13 +187,6 @@ def calculate_direction_accuracy(
                 'insufficient_data': True
             }
         
-        # 计算实际方向（基于收盘价变化）
-        direction_stats = {
-            'up': {'correct': 0, 'total': 0},
-            'down': {'correct': 0, 'total': 0},
-            'neutral': {'correct': 0, 'total': 0}
-        }
-        
         for p in verified_predictions:
             actual_range = p.get('actual_range', {})
             prediction = p.get('prediction', {})
@@ -210,17 +200,16 @@ def calculate_direction_accuracy(
             # 计算实际方向
             price_change = (actual_close - current_price) / current_price
             
-            # 预测方向（从方法或其他字段推断，这里简化处理）
-            # 实际应用中，需要从预测结果中提取趋势方向
-            predicted_direction = 'neutral'  # 默认值
-            
             # 判断实际方向
             if price_change > 0.005:  # 上涨超过0.5%
-                actual_direction = 'up'
+                # 这里保留用于后续扩展：实际方向统计/评估
+                pass
             elif price_change < -0.005:  # 下跌超过0.5%
-                actual_direction = 'down'
+                # 这里保留用于后续扩展：实际方向统计/评估
+                pass
             else:
-                actual_direction = 'neutral'
+                # 这里保留用于后续扩展：实际方向统计/评估
+                pass
             
             # 统计（这里简化处理，实际需要从预测中获取方向）
             # 暂时返回基础统计
@@ -384,7 +373,7 @@ def calculate_method_performance(
             return {}
         
         # 按方法分组
-        method_groups = {}
+        method_groups: Dict[str, List[Dict[str, Any]]] = {}
         
         for p in predictions:
             method = p.get('prediction', {}).get('method', '未知')

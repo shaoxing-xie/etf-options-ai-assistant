@@ -5,8 +5,7 @@
 
 import pandas as pd
 import numpy as np
-from typing import Dict, Optional, Any
-from datetime import datetime
+from typing import Dict, Any
 import warnings
 
 try:
@@ -58,10 +57,11 @@ class IndexGARCHPredictor:
         self.arima_order = arima_order
         self.distribution = distribution
         self.confidence_level = confidence_level
-        self.garch_model = None
-        self.garch_fit = None
-        self.arima_model = None
-        self.arima_fit = None
+        # arch/statsmodels 的返回类型在类型标注里较宽，这里用 Any 收敛 mypy
+        self.garch_model: Any = None
+        self.garch_fit: Any = None
+        self.arima_model: Any = None
+        self.arima_fit: Any = None
         self.fitted = False
     
     def prepare_price_data(self, price_series: pd.Series) -> pd.Series:
@@ -111,10 +111,10 @@ class IndexGARCHPredictor:
             scaled_returns = returns * 1000  # 转换为千分比形式，改善缩放
             self.garch_model = arch_model(
                 scaled_returns,
-                vol='Garch',
+                vol='GARCH',
                 p=self.garch_p,
                 q=self.garch_q,
-                dist=self.distribution,
+                dist=self.distribution,  # type: ignore[arg-type]
                 rescale=False  # 我们已经手动缩放了
             )
             self.garch_fit = self.garch_model.fit(disp='off', show_warning=False)

@@ -4,13 +4,12 @@ ETF缺口策略模块
 """
 
 import pandas as pd
-import numpy as np
 from typing import Dict, Any, Optional, List
-from datetime import datetime, timedelta
+from datetime import datetime
 import pytz
 
 from src.logger_config import get_module_logger
-from src.data_collector import fetch_etf_daily_em, get_etf_current_price, fetch_etf_minute_data_with_fallback
+from src.data_collector import fetch_etf_daily_em, get_etf_current_price
 from src.config_loader import load_system_config
 
 logger = get_module_logger(__name__)
@@ -234,7 +233,7 @@ def detect_etf_gaps_at_opening(
         if etf_symbols is None:
             etf_symbols = etf_config.get('enabled_etfs', ['510300', '510050', '510500'])
         
-        results = {}
+        results: Dict[str, Dict[str, Any]] = {}
         
         for etf_symbol in etf_symbols:
             try:
@@ -376,7 +375,7 @@ def check_all_gaps_fillback(
         fillback_threshold = gap_config.get('fillback_threshold', 0.003)  # 默认0.3%
         min_signal_strength = gap_config.get('min_signal_strength', 0.6)  # 最低信号强度
         
-        results = {}
+        results: Dict[str, Dict[str, Any]] = {}
         
         for etf_symbol, gap_data in gap_results.items():
             if not gap_data.get("has_gap", False):

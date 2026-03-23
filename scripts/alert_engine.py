@@ -7,7 +7,6 @@ A股价格预警引擎 (Alert Engine)
 """
 
 import json
-import os
 import sys
 import time
 from datetime import datetime, timezone, timedelta
@@ -194,7 +193,6 @@ def fetch_realtime(codes: list[str]) -> dict:
     返回 {code: {current, change_pct, ...}}
     """
     # 通过命令行调用 mootdx 获取数据（与现有工具保持一致）
-    import subprocess
     result = {}
     code_str = ",".join(codes)
     try:

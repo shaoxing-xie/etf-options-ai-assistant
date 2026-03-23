@@ -4,12 +4,10 @@
 """
 
 import os
-import sys
 import yaml
 from typing import Optional, Set, Dict, Any
 from datetime import datetime
 import pytz
-from pathlib import Path
 
 
 def load_config_holidays(config_path: Optional[str] = None) -> Set[str]:
@@ -64,7 +62,7 @@ def load_config_holidays(config_path: Optional[str] = None) -> Set[str]:
                 if isinstance(date, str) and len(date) == 8 and date.isdigit():
                     holidays_set.add(date)
         
-    except Exception as e:
+    except Exception:
         # 读取失败，返回空集合
         pass
     

@@ -5,7 +5,7 @@
 
 import pandas as pd
 import numpy as np
-from typing import Dict, List, Optional, Any, Tuple
+from typing import Dict, List, Any, Tuple, Optional
 from src.logger_config import get_module_logger
 from src.volatility_engine.index_garch_predictor import IndexGARCHPredictor
 
@@ -20,15 +20,18 @@ DEFAULT_GARCH_MODELS = [
     (1, 2, (1, 1, 1)),  # GARCH(1,2) + ARIMA(1,1,1)
 ]
 
+# typing helpers
+GARCHModelSpec = Tuple[int, int, Tuple[int, int, int]]
+
 
 def ensemble_garch_predictions(
     price_series: pd.Series,
     current_price: float,
     remaining_ratio: float = 1.0,
-    models: List[Tuple[int, int, Tuple[int, int, int]]] = None,
-    weights: List[float] = None,
+    models: Optional[List[GARCHModelSpec]] = None,
+    weights: Optional[List[float]] = None,
     confidence_level: float = 0.95
-) -> Dict[str, Any]:
+) -> Optional[Dict[str, Any]]:
     """
     多个GARCH模型的集成预测
     
@@ -46,7 +49,7 @@ def ensemble_garch_predictions(
     try:
         if models is None:
             models = DEFAULT_GARCH_MODELS
-        
+
         if weights is None:
             # 使用等权重
             weights = [1.0 / len(models)] * len(models)
@@ -58,8 +61,8 @@ def ensemble_garch_predictions(
             else:
                 weights = [1.0 / len(models)] * len(models)
         
-        predictions = []
-        successful_models = []
+        predictions: List[Dict[str, Any]] = []
+        successful_models: List[int] = []
         
         for i, (p, q, arima_order) in enumerate(models):
             try:
@@ -80,12 +83,23 @@ def ensemble_garch_predictions(
                 )
                 
                 if garch_result.get('success', False):
+                    upper = garch_result.get('upper')
+                    lower = garch_result.get('lower')
+                    predicted_price = garch_result.get('predicted_price')
+                    volatility = garch_result.get('volatility')
+                    # 严格过滤掉 None，避免后续做乘法时类型落到 Any|None
+                    if upper is None or lower is None or predicted_price is None or volatility is None:
+                        logger.debug(
+                            f"GARCH模型 ({p},{q},{arima_order}) 预测结果缺少必要字段，跳过"
+                        )
+                        continue
+
                     predictions.append({
-                        'upper': garch_result.get('upper'),
-                        'lower': garch_result.get('lower'),
-                        'predicted_price': garch_result.get('predicted_price'),
-                        'volatility': garch_result.get('volatility'),
-                        'model_params': (p, q, arima_order)
+                        'upper': float(upper),
+                        'lower': float(lower),
+                        'predicted_price': float(predicted_price),
+                        'volatility': float(volatility),
+                        'model_params': (p, q, arima_order),
                     })
                     successful_models.append(i)
                 else:
@@ -111,32 +125,18 @@ def ensemble_garch_predictions(
             successful_weights = weights[:len(predictions)]
         
         # 加权平均
-        ensemble_upper = sum(
-            p['upper'] * w 
-            for p, w in zip(predictions, successful_weights)
-        )
-        
-        ensemble_lower = sum(
-            p['lower'] * w 
-            for p, w in zip(predictions, successful_weights)
-        )
-        
-        ensemble_predicted_price = sum(
-            p['predicted_price'] * w 
-            for p, w in zip(predictions, successful_weights)
-        )
-        
-        ensemble_volatility = sum(
-            p['volatility'] * w 
-            for p, w in zip(predictions, successful_weights)
-        )
+        ensemble_upper = sum(float(p['upper']) * w for p, w in zip(predictions, successful_weights))
+        ensemble_lower = sum(float(p['lower']) * w for p, w in zip(predictions, successful_weights))
+        ensemble_predicted_price = sum(float(p['predicted_price']) * w for p, w in zip(predictions, successful_weights))
+        ensemble_volatility = sum(float(p['volatility']) * w for p, w in zip(predictions, successful_weights))
         
         # 计算置信度（基于模型一致性）
-        upper_values = [p['upper'] for p in predictions]
-        lower_values = [p['lower'] for p in predictions]
+        upper_values = [float(p['upper']) for p in predictions]
+        lower_values = [float(p['lower']) for p in predictions]
         
-        upper_std = np.std(upper_values)
-        lower_std = np.std(lower_values)
+        # mypy 对 numpy 返回类型推断较宽，这里强制转 float
+        upper_std = float(np.std(upper_values))
+        lower_std = float(np.std(lower_values))
         range_width = ensemble_upper - ensemble_lower
         
         if range_width > 0:
@@ -170,7 +170,7 @@ def ensemble_garch_predictions(
 
 
 def get_ensemble_model_weights(
-    model_performances: Dict[Tuple, Dict[str, Any]] = None,
+    model_performances: Optional[Dict[Tuple[Any, ...], Dict[str, Any]]] = None,
     default_equal: bool = True
 ) -> List[float]:
     """
@@ -187,9 +187,9 @@ def get_ensemble_model_weights(
         list: 各模型的权重列表
     """
     try:
+        # 使用等权重
         if not model_performances or default_equal:
-            # 使用等权重
-            return None
+            return [1.0 / len(DEFAULT_GARCH_MODELS)] * len(DEFAULT_GARCH_MODELS)
         
         # 计算综合得分
         scores = {}
@@ -209,10 +209,10 @@ def get_ensemble_model_weights(
         if total_score > 0:
             weights = [scores.get(model, 0.2) / total_score for model in DEFAULT_GARCH_MODELS]
         else:
-            weights = None
+            weights = [1.0 / len(DEFAULT_GARCH_MODELS)] * len(DEFAULT_GARCH_MODELS)
         
         return weights
         
     except Exception as e:
         logger.warning(f"计算模型权重失败: {e}，使用等权重")
-        return None
+        return [1.0 / len(DEFAULT_GARCH_MODELS)] * len(DEFAULT_GARCH_MODELS)

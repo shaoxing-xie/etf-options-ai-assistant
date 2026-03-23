@@ -47,7 +47,7 @@
 ### 7. 通知工具 (4个)
 - ✅ `tool_send_feishu_message` - 发送飞书消息
 - ✅ `tool_send_signal_alert` - 发送交易信号提醒
-- ✅ `tool_send_daily_report` - 发送市场日报
+- ✅ `tool_send_daily_report` - 发送市场日报（钉钉）
 - ✅ `tool_send_risk_alert` - 发送风险预警
 
 ### 8. 数据访问工具 (6个)

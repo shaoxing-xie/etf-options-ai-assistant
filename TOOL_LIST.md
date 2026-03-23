@@ -87,7 +87,7 @@
 ## 通知工具
 - tool_send_feishu_message: 发送到飞书
 - tool_send_signal_alert: 发送交易信号提醒
-- tool_send_daily_report: 发送每日市场分析报告
+- tool_send_daily_report: 发送每日市场分析报告（钉钉）
 - tool_send_risk_alert: 发送风险预警通知
 - tool_send_feishu_card_webhook: 发送飞书交互卡片（interactive）到 webhook
 

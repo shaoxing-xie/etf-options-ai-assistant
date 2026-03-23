@@ -5,10 +5,8 @@ OpenClaw 插件工具
 改进版本：支持缓存、多指数、自动计算成交额/涨跌幅、完善字段映射
 """
 
-import requests
 import pandas as pd
-import numpy as np
-from typing import Optional, Dict, Any, List, Tuple
+from typing import Optional, Dict, Any, Tuple
 from datetime import datetime, timedelta
 from pathlib import Path
 import pytz
@@ -18,7 +16,7 @@ import json
 import time
 from urllib.request import Request, urlopen
 from urllib.parse import urlencode
-from urllib.error import URLError, HTTPError
+from urllib.error import HTTPError
 import logging
 
 # 导入交易日判断工具
@@ -602,7 +600,7 @@ def fetch_single_index_minute(
             if time_col:
                 df = merge_cached_and_fetched_data(cached_partial_df, df, time_col)
                 source = f"{source}+cache" if source else "cache"
-        except Exception as e:
+        except Exception:
             pass
     # ========== 缓存合并结束 ==========
     

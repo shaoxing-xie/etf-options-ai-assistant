@@ -89,12 +89,12 @@
 
 十、Cron 任务步骤速查（message 仅写「执行XXX，遵循本节对应小节」）
 
-- **开盘行情分析**：1) tool_fetch_index_opening；2) tool_analyze_opening_market；3) tool_send_daily_report（report_data 为对象，含 report_type/analysis/llm_summary；llm_summary 为可直接展示的正文）。
+- **开盘行情分析**：1) tool_fetch_index_opening；2) tool_analyze_opening_market；3) tool_send_daily_report（report_data 为对象，含 report_type/analysis/llm_summary；llm_summary 为可直接展示的正文；市场日报走钉钉）。
 - **早盘数据采集**：从 symbols.json 读 groups；对 priority=high 依次 tool_fetch_index_historical(000300 最近5日)、tool_fetch_etf_historical(510300 最近5日)。
 - **盘中数据采集(5分钟)**：读 symbols.json 按 priority 分类；priority=high 必采：tool_fetch_index_minute(period='5,15,30')、tool_fetch_etf_minute(period='5,15,30')；medium 在每小时 1 或 31 分执行一轮。
-- **盘后完整分析**：0) 可选补采 priority=low；1) tool_fetch_etf_realtime(510300,510050,510500)；2) tool_fetch_index_realtime(000300,000016,000905)；3) tool_analyze_after_close；4) tool_calculate_historical_volatility(510300,etf_daily,60)；5) tool_generate_signals(510300)；6) 可选 tool_record_signal_effect；7) tool_send_daily_report(report_data 对象，含 analysis/historical_vol/signals/llm_summary)。
-- **盘前完整分析**：0) 可选补采 priority=low；1) tool_fetch_index_opening；2) tool_fetch_global_index_spot；3) tool_analyze_before_open；4) tool_predict_volatility(510300)；5) tool_predict_intraday_range(510300)；6) tool_send_daily_report(report_data 含 analysis/volatility/intraday_range/llm_summary)。输出须含「评估口径与可达性假设」三段式时间线+口径A/B。
-- **每日市场分析报告**：可选补采 priority=low；tool_analyze_after_close → tool_send_daily_report(report_data 对象，report_type=daily，含 llm_summary)。
+- **盘后完整分析**：0) 可选补采 priority=low；1) tool_fetch_etf_realtime(510300,510050,510500)；2) tool_fetch_index_realtime(000300,000016,000905)；3) tool_analyze_after_close；4) tool_calculate_historical_volatility(510300,etf_daily,60)；5) tool_generate_signals(510300)；6) 可选 tool_record_signal_effect；7) tool_send_daily_report(report_data 对象，含 analysis/historical_vol/signals/llm_summary；市场日报走钉钉)。
+- **盘前完整分析**：0) 可选补采 priority=low；1) tool_fetch_index_opening；2) tool_fetch_global_index_spot；3) tool_analyze_before_open；4) tool_predict_volatility(510300)；5) tool_predict_intraday_range(510300)；6) tool_send_daily_report(report_data 含 analysis/volatility/intraday_range/llm_summary；市场日报走钉钉)。输出须含「评估口径与可达性假设」三段式时间线+口径A/B。
+- **每日市场分析报告**：可选补采 priority=low；tool_analyze_after_close → tool_send_daily_report(report_data 对象，report_type=daily，含 llm_summary；市场日报走钉钉）。
 - **ETF 轮动研究**：tool_etf_rotation_research(etf_pool 建议 510300,510500,159915,512100,512880,512690) → tool_send_daily_report(步骤1 的 report_data)；标注研究级+免责声明。
 - **策略研究与回放**：tool_strategy_research(lookback_days=120, strategies=trend_following,mean_reversion,breakout) → tool_send_daily_report(步骤1 的 report_data)；研究级+免责声明。
 - **涨停回马枪盘后**：按第七节五技能顺序：1) tool_dragon_tiger_list；2) tool_limit_up_daily_flow(write_json,write_report,send_feishu)；3) tool_capital_flow(龙头代码,3)；4) tool_fetch_northbound_flow(lookback_days=5)；5) 可选 tool_quantitative_screening。输出含三段式时间线+口径A/B+高密度要点。

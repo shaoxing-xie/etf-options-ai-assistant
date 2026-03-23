@@ -5,16 +5,14 @@
 
 import pandas as pd
 import numpy as np
-from datetime import datetime
-from typing import Dict, Optional, Any, List
-import pytz
+from typing import Dict, Optional, Any
 
 from src.logger_config import get_module_logger, log_error_with_context
 from src.indicator_calculator import (
-    calculate_atr, calculate_historical_volatility, calculate_bollinger_bands
+    calculate_atr, calculate_historical_volatility
 )
 from src.volatility_range import (
-    get_remaining_trading_time, extract_greeks_from_data, calculate_option_volatility_range
+    get_remaining_trading_time, calculate_option_volatility_range
 )
 from src.config_loader import load_system_config
 
@@ -71,7 +69,6 @@ def calculate_volatility_ranges_fallback(
         
         # 计算剩余交易时间
         remaining_minutes = get_remaining_trading_time(config)
-        remaining_ratio = remaining_minutes / 240.0 if remaining_minutes > 0 else 0
         
         # 1. 计算指数波动区间（基于日线数据）
         index_range = calculate_index_volatility_range_fallback(
@@ -124,7 +121,6 @@ def calculate_volatility_ranges_fallback(
                 
                 # 提取行权价（如果Greeks中有）
                 if strike_price is None and call_option_greeks is not None:
-                    greeks = extract_greeks_from_data(call_option_greeks)
                     # 尝试从Greeks数据中提取行权价
                     for idx, row in call_option_greeks.iterrows():
                         field = str(row.get('字段', ''))
@@ -568,10 +564,6 @@ def calculate_option_volatility_range_fallback(
             "计算期权波动区间失败"
         )
         # 返回基于ETF区间的简单估算
-        etf_current = etf_range.get('current_price', 4.8)
-        etf_upper = etf_range.get('upper', etf_current * 1.02)
-        etf_lower = etf_range.get('lower', etf_current * 0.98)
-        
         # 简单估算：期权波动区间约为ETF波动区间的1.5-2倍（考虑杠杆）
         leverage = 1.8
         option_range_pct = etf_range.get('range_pct', 2.0) * leverage

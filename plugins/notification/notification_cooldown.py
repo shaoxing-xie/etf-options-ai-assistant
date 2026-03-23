@@ -15,7 +15,7 @@ import json
 import os
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 
 STATE_PATH = os.path.expanduser("~/.openclaw/workspace/notification_cooldown_state.json")

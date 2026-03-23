@@ -5,7 +5,7 @@ SignalCandidate / FusionResult — 全仓统一信号契约（v1.0）。
 from __future__ import annotations
 
 from dataclasses import dataclass, field, asdict
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 
 @dataclass

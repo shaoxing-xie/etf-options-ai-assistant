@@ -10,8 +10,6 @@ import hashlib
 import base64
 import time
 from typing import Dict, Optional, Any, Callable
-from datetime import datetime
-import pytz
 
 from src.logger_config import get_module_logger, log_error_with_context
 from src.config_loader import load_system_config
@@ -102,7 +100,7 @@ class FeishuAppBot:
         receive_id: str,
         receive_id_type: str = "chat_id",
         message_type: str = "text",
-        content: Dict[str, Any] = None,
+        content: Optional[Dict[str, Any]] = None,
         title: Optional[str] = None
     ) -> bool:
         """
@@ -465,7 +463,6 @@ class FeishuAppBot:
             reply = "📋 最新交易信号\n\n"
             
             for i, signal in enumerate(reversed(recent_signals), 1):
-                signal_type = signal.get('signal_type', '未知').upper()
                 action = signal.get('action', '未知')
                 timestamp = signal.get('timestamp', 'N/A')
                 expected_return = signal.get('expected_return_pct', 'N/A')
@@ -509,7 +506,7 @@ class FeishuAppBot:
                     range_pct = volatility_range.get('range_pct')
                     
                     if current is not None or upper is not None or lower is not None:
-                        reply += f"   📊 波动区间: "
+                        reply += "   📊 波动区间: "
                         parts = []
                         if current is not None:
                             parts.append(f"当前: {current:.4f}")
@@ -552,7 +549,7 @@ class FeishuAppBot:
             reply = "📈 最新波动区间\n\n"
             
             if index_range:
-                reply += f"指数 (000300):\n"
+                reply += "指数 (000300):\n"
                 reply += f"  当前: {index_range.get('current_price', 'N/A')}\n"
                 reply += f"  上轨: {index_range.get('upper', 'N/A')}\n"
                 reply += f"  下轨: {index_range.get('lower', 'N/A')}\n"
@@ -609,7 +606,7 @@ class FeishuAppBot:
                 
                 
                 if etf_range:
-                    reply += f"ETF (510300):\n"
+                    reply += "ETF (510300):\n"
                     reply += f"  当前: {etf_range.get('current_price', 'N/A')}\n"
                     reply += f"  上轨: {etf_range.get('upper', 'N/A')}\n"
                     reply += f"  下轨: {etf_range.get('lower', 'N/A')}\n\n"
@@ -735,7 +732,7 @@ Put建议: {'✅' if opening_strategy.get('suggest_put', False) else '❌'}"""
             
             # 获取scheduler实例（从全局注册表）
             try:
-                from src.scheduler_registry import get_scheduler, is_scheduler_available
+                from src.scheduler_registry import get_scheduler
                 
                 scheduler = get_scheduler()
                 
@@ -927,7 +924,7 @@ Put建议: {'✅' if opening_strategy.get('suggest_put', False) else '❌'}"""
             
             # 7. 格式化输出
             reply = "💡 间接指导建议\n\n"
-            reply += f"📊 市场概况\n"
+            reply += "📊 市场概况\n"
             reply += f"指数趋势: {guidance.get('index_trend', '未知')} (强度: {guidance.get('trend_strength', 0):.2f})\n"
             
             index_range_info = guidance.get('index_range', {})
@@ -935,15 +932,14 @@ Put建议: {'✅' if opening_strategy.get('suggest_put', False) else '❌'}"""
             reply += f"当前价格: {index_range_info.get('current', 'N/A')}\n"
             reply += f"区间位置: {index_range_info.get('position', 0.5):.1%}\n\n"
             
-            reply += f"💭 建议摘要\n"
+            reply += "💭 建议摘要\n"
             reply += f"{guidance.get('summary', '暂无建议')}\n\n"
             
             # 显示详细建议
             suggestions = guidance.get('suggestions', [])
             if suggestions:
-                reply += f"📝 详细建议\n"
+                reply += "📝 详细建议\n"
                 for i, suggestion in enumerate(suggestions[:5], 1):  # 最多显示5条
-                    suggestion_type = suggestion.get('type', 'unknown')
                     message = suggestion.get('message', '')
                     action = suggestion.get('action', '')
                     
@@ -979,7 +975,7 @@ Put建议: {'✅' if opening_strategy.get('suggest_put', False) else '❌'}"""
             # 基础信息
             current_month = contract_config.get('current_month', '未配置')
             underlying = contract_config.get('underlying', '510300')
-            reply += f"📊 基础信息\n"
+            reply += "📊 基础信息\n"
             reply += f"交易月份: {current_month}\n"
             reply += f"标的物: {underlying}\n"
             
@@ -988,8 +984,8 @@ Put建议: {'✅' if opening_strategy.get('suggest_put', False) else '❌'}"""
                 etf_price = get_etf_current_price()
                 if etf_price:
                     reply += f"ETF当前价格: {etf_price:.3f}\n"
-            except:
-                pass
+            except Exception as e:
+                logger.debug(f"获取ETF当前价格失败，忽略: {e}", exc_info=True)
             
             reply += "\n"
             
@@ -1032,12 +1028,12 @@ Put建议: {'✅' if opening_strategy.get('suggest_put', False) else '❌'}"""
                 if len(call_contracts_config) > 1:
                     reply += f"\n【{call_name}】\n"
                 else:
-                    reply += f"\n"
+                    reply += "\n"
                 
                 if call_contract_code:
                     reply += f"合约代码: {call_contract_code}\n"
                 else:
-                    reply += f"合约代码: 未配置\n"
+                    reply += "合约代码: 未配置\n"
                 
                 if call_strike:
                     reply += f"行权价: {call_strike}\n"
@@ -1045,12 +1041,12 @@ Put建议: {'✅' if opening_strategy.get('suggest_put', False) else '❌'}"""
                         moneyness = "实值" if etf_price > call_strike else ("平值" if abs(etf_price - call_strike) < 0.01 else "虚值")
                         reply += f"虚实状态: {moneyness}\n"
                 else:
-                    reply += f"行权价: 未配置\n"
+                    reply += "行权价: 未配置\n"
                 
                 if call_expiry:
                     reply += f"到期日: {call_expiry}\n"
                 else:
-                    reply += f"到期日: 未配置\n"
+                    reply += "到期日: 未配置\n"
             
             reply += "\n"
             
@@ -1065,12 +1061,12 @@ Put建议: {'✅' if opening_strategy.get('suggest_put', False) else '❌'}"""
                 if len(put_contracts_config) > 1:
                     reply += f"\n【{put_name}】\n"
                 else:
-                    reply += f"\n"
+                    reply += "\n"
                 
                 if put_contract_code:
                     reply += f"合约代码: {put_contract_code}\n"
                 else:
-                    reply += f"合约代码: 未配置\n"
+                    reply += "合约代码: 未配置\n"
                 
                 if put_strike:
                     reply += f"行权价: {put_strike}\n"
@@ -1078,12 +1074,12 @@ Put建议: {'✅' if opening_strategy.get('suggest_put', False) else '❌'}"""
                         moneyness = "实值" if etf_price < put_strike else ("平值" if abs(etf_price - put_strike) < 0.01 else "虚值")
                         reply += f"虚实状态: {moneyness}\n"
                 else:
-                    reply += f"行权价: 未配置\n"
+                    reply += "行权价: 未配置\n"
                 
                 if put_expiry:
                     reply += f"到期日: {put_expiry}\n"
                 else:
-                    reply += f"到期日: 未配置\n"
+                    reply += "到期日: 未配置\n"
             
             reply += "\n"
             reply += "💡 提示: 可通过配置文件或WEB界面修改合约配置"

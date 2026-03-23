@@ -44,7 +44,7 @@ flowchart TD
   - 分策略调用 `tool_get_strategy_performance` 获取表现；
   - 调用 `tool_calculate_strategy_score` 统一评分；
   - 调用 `tool_adjust_strategy_weights` 生成**权重调整建议**（作为建议写入报告，不自动改配置）；
-  - 最终调用 `tool_send_daily_report`，设置 `report_type="strategy_research"`。
+  - 最终调用 `tool_send_analysis_report`，设置 `report_type="strategy_research"`（将研究/分析类报告推送到钉钉）。
 
 ## 4. 回放评估与统一口径
 
@@ -74,7 +74,7 @@ flowchart TD
 
 ## 5. 研究报告结构与输出规范
 
-- 通过 `etf_notification_agent` + `tool_send_daily_report` 输出时，建议采用如下结构（兼容研究模式一）：\n
+- 通过 `etf_notification_agent` + `tool_send_analysis_report` 输出时，建议采用如下结构（兼容研究模式一）：\n
   - **📊 策略表现概览**：按策略列出关键指标（收益率/回撤/胜率等）的表格；\n
   - **📈 Regime × 策略表现矩阵**：展示不同 Regime 下各策略的相对优劣；\n
   - **🧮 权重调整建议**：结合评分结果与历史表现，给出建议的权重增减区间（不直接生效）；\n

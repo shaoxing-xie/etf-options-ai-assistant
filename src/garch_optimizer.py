@@ -5,10 +5,10 @@ GARCH参数自动优化模块
 
 import pandas as pd
 import numpy as np
-from typing import Dict, Optional, Any, Tuple
+from typing import Dict, Optional, Any
 from pathlib import Path
 import json
-from datetime import datetime, timedelta
+from datetime import datetime
 import pytz
 import warnings
 
@@ -87,7 +87,6 @@ def optimize_garch_parameters(
         returns_series = pd.Series(returns, index=price_series.index[1:])
         
         best_aic = float('inf')
-        best_bic = float('inf')
         best_params = {
             'garch_p': 1,
             'garch_q': 1,
@@ -137,7 +136,6 @@ def optimize_garch_parameters(
                     # 使用AIC作为主要准则，BIC作为辅助
                     if aic < best_aic:
                         best_aic = aic
-                        best_bic = bic
                         best_params = {
                             'garch_p': p,
                             'garch_q': q,

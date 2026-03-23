@@ -6,7 +6,6 @@ OpenClaw 插件工具
 """
 
 import sys
-import os
 from pathlib import Path
 from typing import Dict, Any, Optional
 
@@ -23,7 +22,6 @@ try:
     # 导入原系统的仓位管理模块
     from src.etf_position_manager import (
         calculate_position_size as original_calculate_position_size,
-        generate_position_adjustment_signal
     )
     from src.config_loader import load_system_config
     ORIGINAL_SYSTEM_AVAILABLE = True
@@ -69,7 +67,7 @@ def apply_hard_position_limit(
         
         return recommended_size
     
-    except Exception as e:
+    except Exception:
         # 如果计算失败，返回0（最保守）
         return 0.0
 

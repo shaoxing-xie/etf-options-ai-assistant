@@ -4,10 +4,8 @@ IV百分位动态调整器
 """
 
 import pandas as pd
-import numpy as np
 from typing import Dict, Optional, Any, List
 from datetime import datetime, timedelta
-import akshare as ak
 
 from src.logger_config import get_module_logger, log_error_with_context
 from src.data_collector import fetch_option_greeks_sina

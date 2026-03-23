@@ -417,12 +417,12 @@ def tool_send_daily_report(
     **kwargs: Any,
 ) -> Dict[str, Any]:
     """
-    工具：发送盘前/盘后日报到飞书。
+    工具：发送盘前/盘后“市场日报”到钉钉自定义机器人（支持 SEC 加签）。
 
     Args:
-        report_data: 报告数据（建议包含 report_type: before_open/after_close）
+        report_data: 报告数据（建议包含 report_type: before_open/after_close/daily 等）
         report_date: 报告日期（可选）
-        webhook_url: 覆盖配置中的 notification.feishu_webhook（可选）
+        webhook_url: 覆盖配置中的钉钉 webhook（可选；包含 access_token）
         mode: "prod" 真实发送；"test" 不发送（dry-run）
     """
     title, structured_message = _format_daily_report(report_data=report_data, report_date=report_date)
@@ -441,17 +441,15 @@ def tool_send_daily_report(
             },
         }
 
-    try:
-        from merged.send_feishu_notification import tool_send_feishu_notification
-    except ImportError:
-        from plugins.merged.send_feishu_notification import tool_send_feishu_notification  # type: ignore
+    # 发送：复用钉钉自定义机器人发送工具（它会根据 secret 进行 SEC 加签）
+    from .send_dingtalk_message import tool_send_dingtalk_message
 
-    # 透传 kwargs 以便上层拓展（例如 structured_message / message 覆盖等）
-    return tool_send_feishu_notification(
-        notification_type="daily_report",
+    return tool_send_dingtalk_message(
+        message=structured_message,
         title=title,
-        structured_message=structured_message,
         webhook_url=webhook_url,
-        **kwargs,
+        secret=kwargs.get("secret"),
+        keyword=kwargs.get("keyword"),
+        mode=mode,
     )
 

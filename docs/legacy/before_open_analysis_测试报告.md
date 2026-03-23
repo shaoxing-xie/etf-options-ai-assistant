@@ -17,7 +17,7 @@
 | 4 | tool_fetch_index_opening | ✅ 成功 | 获取 6 条指数开盘数据 |
 | 5 | tool_analyze_before_open | ✅ 成功 | 盘前趋势分析完成（弱势，强度 0.76） |
 | 6 | tool_predict_volatility | ✅ 成功 | ETF波动区间预测完成 |
-| 7 | tool_send_daily_report | ✅ 成功 | 盘前分析报告已发送到飞书 |
+| 7 | tool_send_daily_report | ✅ 成功 | 盘前分析报告已发送到钉钉 |
 
 ## 日志分析
 

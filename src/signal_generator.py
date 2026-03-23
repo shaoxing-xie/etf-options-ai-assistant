@@ -93,7 +93,6 @@ def generate_signals(
         rsi_oversold = signal_params.get('rsi_oversold', 40)
         rsi_overbought = signal_params.get('rsi_overbought', 60)
         price_change_threshold = signal_params.get('price_change_threshold', 1.5)
-        iv_multiplier = signal_params.get('iv_multiplier', 1.2)
         deduplication_time = signal_params.get('signal_deduplication_time', 1800)
 
         # 从配置中读取高级参数（有默认值，未配置时保持当前行为）
@@ -104,7 +103,7 @@ def generate_signals(
         boundary_conf_min = signal_params.get('boundary_confidence_min', 0.6)
         boundary_base_strength = signal_params.get('boundary_base_strength', 0.45)
         
-        signals = []
+        signals: List[Dict[str, Any]] = []
         
         if index_minute is None or index_minute.empty:
             logger.warning("指数分钟数据为空，无法生成信号")
@@ -123,8 +122,7 @@ def generate_signals(
         
         # ========== 恢复到 20260123 行为：本轮排查默认不使用期权分钟技术指标 ==========
         # 为避免“期权分钟RSI/趋势”导致信号过少，本轮直接忽略 call_option_minute / put_option_minute。
-        call_option_minute = None
-        put_option_minute = None
+        # call_option_minute / put_option_minute 本轮不使用（保留注释即可）
         
         # 2. 获取整体趋势和开盘策略（从开盘策略）
         overall_trend = opening_strategy.get('final_trend', '震荡') if opening_strategy else '震荡'
@@ -132,7 +130,7 @@ def generate_signals(
         opening_strategy_detail = opening_strategy.get('opening_strategy', {}) if opening_strategy else {}
         strategy_direction = opening_strategy_detail.get('direction', '谨慎')  # "偏多"、"偏空"、"谨慎"
         position_size = opening_strategy_detail.get('position_size', '较小')
-        signal_threshold = opening_strategy_detail.get('signal_threshold', '正常')
+        # signal_threshold 本轮未使用（保留用于后续规则扩展）
         
         # 调试日志：记录信号生成的关键参数
         logger.info(f"信号生成参数: 趋势={overall_trend}, 强度={trend_strength:.2f}, 方向={strategy_direction}, "
@@ -858,8 +856,6 @@ def detect_rsi_divergence(
         # 找到价格和RSI的极值点
         price_min_idx = np.argmin(recent_prices)
         price_max_idx = np.argmax(recent_prices)
-        rsi_min_idx = np.argmin(recent_rsi)
-        rsi_max_idx = np.argmax(recent_rsi)
         
         # 检测看涨背离：价格新低但RSI更高
         if price_min_idx > 0:  # 价格最低点不在第一个位置
@@ -938,8 +934,6 @@ def detect_macd_histogram_turnover(
         recent_hist = histogram.tail(lookback_periods).values
         
         # 找到最近的极值点
-        hist_min_idx = np.argmin(recent_hist)
-        hist_max_idx = np.argmax(recent_hist)
         latest_idx = len(recent_hist) - 1
         latest_hist = recent_hist[latest_idx]
         prev_hist = recent_hist[latest_idx - 1] if latest_idx > 0 else latest_hist
@@ -1687,7 +1681,7 @@ def _generate_signals_optimized_v1(
                 logger.warning(f"ETF-期权联动检查失败: {e}，继续正常生成期权信号")
         
         # 根据ETF信号方向调整期权信号生成阈值
-        adjusted_min_signal_strength = None  # 将在后面设置
+        # adjusted_min_signal_strength 本轮未使用（保留注释即可）
         
         # 读取优化方案参数（GROK v2.0权重分配）
         # 新权重：边界反弹40% + RSI背离15% + MACD转折15% + Greeks 20% + 日线趋势10% = 100%
@@ -1696,9 +1690,7 @@ def _generate_signals_optimized_v1(
         macd_turnover_weight = signal_params.get('macd_turnover_weight', 0.15)
         greeks_iv_weight = signal_params.get('greeks_iv_weight', 0.20)
         daily_trend_weight = signal_params.get('daily_trend_weight', 0.10)
-        # 保留旧权重字段以兼容（逐步废弃）
-        etf_turnover_weight = signal_params.get('etf_turnover_weight', 0.65)  # 兼容字段
-        macro_weight = signal_params.get('macro_weight', 0.10)  # 兼容字段
+        # 保留旧权重字段以兼容（逐步废弃）：本轮未使用对应变量
         rsi_divergence_threshold = signal_params.get('rsi_divergence_threshold', 5.0)
         macd_hist_turnover_pct = signal_params.get('macd_hist_turnover_pct', 20.0)
         boundary_position_call = signal_params.get('boundary_position_call', 0.25)
@@ -1734,7 +1726,7 @@ def _generate_signals_optimized_v1(
             min_signal_strength_call = base_min_signal_strength
             min_signal_strength_put = base_min_signal_strength
         
-        signals = []
+        signals: List[Dict[str, Any]] = []
         
         if index_minute is None or index_minute.empty:
             logger.warning("指数分钟数据为空，无法生成信号")
@@ -1796,8 +1788,8 @@ def _generate_signals_optimized_v1(
             if underlyings_list and isinstance(underlyings_list, list) and len(underlyings_list) > 0:
                 # 使用第一个标的物（如果系统支持多标的物，这里可以进一步优化）
                 etf_symbol = str(underlyings_list[0].get('underlying', '510300'))
-        except Exception:
-            pass  # 使用默认值
+        except Exception as e:
+            logger.debug(f"计算日线趋势分数时提取 etf_symbol 失败，使用默认值: {e}", exc_info=True)
         
         daily_trend_result = calculate_daily_trend_score(
             etf_symbol=etf_symbol,
@@ -1895,6 +1887,15 @@ def _generate_signals_optimized_v1(
         
         # 5. 计算总强度并生成信号（GROK v2.0：边界反弹40% + RSI 15% + MACD 15% + Greeks 20% + 日线趋势10% = 100%）
         # Call信号
+        overall_trend = (
+            "强势"
+            if daily_trend_result.get("direction") == "bullish"
+            else "弱势"
+            if daily_trend_result.get("direction") == "bearish"
+            else "震荡"
+        )
+        # 本版未接入额外“大盘辅助”因子；保留接口字段以避免未定义变量报错。
+        macro_factors: List[str] = []
         if etf_turnover_score > 0 and (rsi_divergence.get('divergence_type') == 'bullish' or 
                                        macd_turnover.get('turnover_type') == 'bullish' or
                                        boundary_rebound.get('rebound_type') == 'call'):
@@ -1934,12 +1935,12 @@ def _generate_signals_optimized_v1(
                 signal = create_signal_with_volatility_range(
                     signal_type='call',
                     reason=reason,
-                    rsi=rsi.iloc[-1] if not rsi.empty else None,
-                    price_change=price_change.iloc[-1] if not price_change.empty else None,
+                    rsi=float(rsi.iloc[-1]) if not rsi.empty else 50.0,
+                    price_change=float(price_change.iloc[-1]) if not price_change.empty else 0.0,
                     trend=overall_trend,
                     strength=total_strength_call,
                     signal_type_label=signal_type_label,
-                    volatility_ranges=volatility_ranges,
+                    volatility_ranges=volatility_ranges or {},
                     etf_current_price=etf_current_price,
                     call_option_price=call_option_price or call_range.get('current_price'),
                     deduplication_time=deduplication_time
@@ -2000,12 +2001,12 @@ def _generate_signals_optimized_v1(
                 signal = create_signal_with_volatility_range(
                     signal_type='put',
                     reason=reason,
-                    rsi=rsi.iloc[-1] if not rsi.empty else None,
-                    price_change=price_change.iloc[-1] if not price_change.empty else None,
+                    rsi=float(rsi.iloc[-1]) if not rsi.empty else 50.0,
+                    price_change=float(price_change.iloc[-1]) if not price_change.empty else 0.0,
                     trend=overall_trend,
                     strength=total_strength_put,
                     signal_type_label=signal_type_label,
-                    volatility_ranges=volatility_ranges,
+                    volatility_ranges=volatility_ranges or {},
                     etf_current_price=etf_current_price,
                     put_option_price=put_option_price or put_range.get('current_price'),
                     deduplication_time=deduplication_time
@@ -2067,8 +2068,8 @@ def _generate_signals_optimized_v1(
                     if underlyings_list and isinstance(underlyings_list, list) and len(underlyings_list) > 0:
                         # 使用第一个标的物（如果系统支持多标的物，这里可以进一步优化）
                         underlying = str(underlyings_list[0].get('underlying', '510300'))
-                except Exception:
-                    pass  # 使用默认值
+                except Exception as e:
+                    logger.debug(f"LLM watch 提取 underlying 失败，使用默认值: {e}", exc_info=True)
                 
                 # 对每个信号进行LLM增强
                 enhanced_signals = []

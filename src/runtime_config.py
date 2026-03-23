@@ -82,8 +82,8 @@ def reload_runtime_config_and_reschedule() -> Dict[str, Any]:
             # 注册线程，便于 Web/API 查询时诊断 scheduler 是否仍在运行
             try:
                 register_scheduler_thread(t)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"注册 scheduler 线程失败，忽略: {e}", exc_info=True)
 
             # 关闭旧 scheduler（如果存在）
             if old_scheduler is not None and getattr(old_scheduler, "running", False):

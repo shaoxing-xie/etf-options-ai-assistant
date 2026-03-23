@@ -6,19 +6,21 @@ OpenClaw 插件工具
 """
 
 import sys
-import os
 import json
 import sqlite3
+import logging
 from pathlib import Path
-from typing import Dict, List, Optional, Any
+from typing import Dict, Optional, Any
 from datetime import datetime, timedelta
 import pytz
+
+logger = logging.getLogger(__name__)
 
 # journal（追加写入，不影响原有 JSON/SQLite）
 try:
     from src.trading_journal import append_journal_event
     JOURNAL_AVAILABLE = True
-except Exception:
+except Exception as _:
     JOURNAL_AVAILABLE = False
 
     def append_journal_event(*args, **kwargs):  # type: ignore[no-redef]
@@ -33,16 +35,7 @@ for parent in Path(__file__).resolve().parents:
 if selected_root is not None and str(selected_root) not in sys.path:
     sys.path.insert(0, str(selected_root))
 
-try:
-    # 导入原系统的预测记录模块
-    from src.prediction_recorder import (
-        record_prediction,
-        get_method_performance
-    )
-    ORIGINAL_SYSTEM_AVAILABLE = True
-except ImportError as e:
-    ORIGINAL_SYSTEM_AVAILABLE = False
-    IMPORT_ERROR = str(e)
+# 兼容：原系统模块可能不存在；当前插件只依赖本地实现
 
 # 信号记录存储路径（使用绝对路径）
 BASE_DIR = Path(__file__).parent.parent.parent
@@ -182,12 +175,12 @@ def record_signal_effect(
                     actor="tool_record_signal_effect",
                     base_dir=BASE_DIR,
                 )
-            except Exception:
-                pass
+            except Exception as _:
+                logger.debug("JOURNAL append failed", exc_info=True)
         
         return True
         
-    except Exception as e:
+    except Exception as _:
         return False
 
 
@@ -246,8 +239,8 @@ def _save_to_database(record: dict):
         conn.commit()
         conn.close()
         
-    except Exception as e:
-        pass  # 数据库保存失败不影响主流程
+    except Exception as _:
+        logger.debug("SQLite save failed, ignore", exc_info=True)
 
 
 def get_strategy_performance(
@@ -353,8 +346,8 @@ def tool_record_signal_effect(
                 columns = [desc[0] for desc in cursor.description]
                 existing_record = dict(zip(columns, row))
             conn.close()
-        except:
-            pass
+        except Exception as e:
+            logger.debug(f"Failed to load existing record, ignore: {e}", exc_info=True)
         
         # 如果存在现有记录，使用现有值填充缺失字段
         if existing_record:

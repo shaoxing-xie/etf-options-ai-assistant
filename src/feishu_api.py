@@ -50,7 +50,6 @@ class FeishuAPI:
             # 尝试强制使用 IPv4（解决 DNS 解析但连接失败的问题）
             import socket
             import urllib3
-            from requests.adapters import HTTPAdapter
             from urllib3.util.connection import create_connection
             
             # 保存原始的 create_connection
@@ -303,9 +302,10 @@ class FeishuAPI:
                 # 2. 直接返回文件内容（JSON格式）
                 try:
                     data = resp.json()
-                except:
+                except Exception as e:
                     # 如果不是JSON，可能是二进制文件，直接返回内容
-                    logger.debug(f"响应不是JSON，直接返回二进制内容")
+                    logger.debug("响应不是JSON，直接返回二进制内容")
+                    logger.debug(f"响应 JSON 解析失败: {e}", exc_info=True)
                     return resp.content
                 
                 # 检查是否是标准的飞书API响应格式（包含code字段）
@@ -330,7 +330,7 @@ class FeishuAPI:
                 else:
                     # 直接返回文件内容（JSON格式），没有code字段
                     # 将JSON内容编码为bytes返回
-                    logger.debug(f"API直接返回文件内容（JSON格式），无需重定向")
+                    logger.debug("API直接返回文件内容（JSON格式），无需重定向")
                     file_content = json.dumps(data, ensure_ascii=False).encode('utf-8')
                     return file_content
             else:
@@ -343,9 +343,9 @@ class FeishuAPI:
                     # 如果是404，可能是文件不存在或token无效
                     if resp.status_code == 404:
                         logger.error(f"文件可能不存在或token无效: file_token={file_token[:20]}...")
-                        logger.error(f"请检查：1) 文件是否已被删除 2) 文件token是否正确 3) 应用是否有访问该文件的权限")
-                except:
-                    logger.error(f"下载文件失败: HTTP {resp.status_code}, 响应文本: {resp.text[:500]}")
+                        logger.error("请检查：1) 文件是否已被删除 2) 文件token是否正确 3) 应用是否有访问该文件的权限")
+                except Exception as e:
+                    logger.error(f"下载文件失败: HTTP {resp.status_code}, 响应文本: {resp.text[:500]}; 解析错误: {e}")
                     if resp.status_code == 404:
                         logger.error(f"文件可能不存在或token无效: file_token={file_token[:20]}...")
             return None
@@ -404,7 +404,7 @@ class FeishuAPI:
                 return {"success": False, "message": f"文件大小无效: {file_size}"}
             
             # 记录请求参数（用于调试）
-            logger.info(f"上传文件参数详情:")
+            logger.info("上传文件参数详情:")
             logger.info(f"  file_name: '{filename}' (type: {type(filename).__name__})")
             logger.info(f"  parent_type: '{data['parent_type']}' (type: {type(data['parent_type']).__name__})")
             logger.info(f"  parent_node: '{folder_token}' (type: {type(folder_token).__name__}, length: {len(folder_token)})")
@@ -434,9 +434,11 @@ class FeishuAPI:
                         error_msg = error_json.get("msg", "上传失败")
                         error_code = error_json.get("code", "")
                         return {"success": False, "message": f"HTTP {resp.status_code}: {error_msg} (code={error_code})"}
-                    except:
+                    except Exception as e:
+                        logger.debug(f"响应 JSON 解析失败: {e}", exc_info=True)
                         return {"success": False, "message": f"HTTP {resp.status_code}: {error_body[:200]}"}
-                except:
+                except Exception as e:
+                    logger.debug(f"读取响应失败: {e}", exc_info=True)
                     return {"success": False, "message": f"HTTP {resp.status_code}"}
                 
         except Exception as e:

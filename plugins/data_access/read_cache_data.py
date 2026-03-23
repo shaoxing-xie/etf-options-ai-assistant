@@ -10,7 +10,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, Optional, List
+from typing import Any, Dict, Optional
 
 
 def _df_to_records(df) -> list[dict]:

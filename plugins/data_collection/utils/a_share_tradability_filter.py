@@ -12,7 +12,7 @@ A股可交易性过滤（最小可用版）。
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 from plugins.data_collection.stock.fetch_realtime import tool_fetch_stock_realtime
 

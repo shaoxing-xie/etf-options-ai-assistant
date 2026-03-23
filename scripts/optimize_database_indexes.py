@@ -3,8 +3,6 @@
 为信号记录表和预测记录表添加索引，提升查询性能
 """
 
-import sys
-import os
 import sqlite3
 from pathlib import Path
 from typing import Dict, List, Tuple, Any

@@ -30,16 +30,18 @@ python3 --version
 which python3
 ```
 
-### 2. 确认原系统 API 服务
+### 2. （可选）检查本地依赖服务
 
-确保原系统 API 服务正在运行（在 Windows 中）：
+当前主线部署通常 **不需要** 依赖旧版兼容 API。
+
+只有当你在插件配置里启用了 `apiBaseUrl` 指向某个兼容服务，才需要执行连通性测试。测试应在与该服务相同的运行环境中进行：
 
 ```bash
-# 在 WSL 中测试 API 连接
-curl http://127.0.0.1:5000/api/status
+# 将 URL 替换为你实际配置的 apiBaseUrl
+curl "<apiBaseUrl>/api/status"
 ```
 
-如果无法连接，需要在 Windows 中启动 API 服务。
+如果无法连接，请确认兼容服务已启动，并检查端口暴露/防火墙策略是否允许从当前环境访问该地址。
 
 ---
 
@@ -79,8 +81,8 @@ const plugin = {
     properties: {
       apiBaseUrl: {
         type: "string",
-        default: "http://127.0.0.1:5000",
-        description: "原系统API基础地址"
+        default: "",
+        description: "兼容字段（当前主线通常不启用；如启用请填写兼容服务地址）"
       },
       apiKey: {
         type: "string",
@@ -128,7 +130,7 @@ if symbolic_link_path.exists():
     sys.path.insert(0, str(symbolic_link_path))
     sys.path.insert(0, str(symbolic_link_path / "plugins"))
 
-# 从原系统导入工具映射
+# 从本地导入工具映射
 from tool_runner import TOOL_MAP, run_tool
 
 if __name__ == "__main__":
@@ -144,7 +146,7 @@ if __name__ == "__main__":
     print(result)
 ```
 
-**或者**，直接创建符号链接到原系统的 tool_runner.py：
+**或者**，直接创建符号链接到本项目的 tool_runner.py：
 
 ```bash
 # 在 ~/.openclaw/extensions/option-trading-assistant/ 目录下
@@ -211,8 +213,8 @@ chmod +x ~/.openclaw/extensions/option-trading-assistant/tool_runner.py
   "config": {
     "apiBaseUrl": {
       "type": "string",
-      "default": "http://127.0.0.1:5000",
-      "description": "原系统API基础地址"
+      "default": "",
+      "description": "兼容字段（当前主线通常不启用；如启用请填写兼容服务地址）"
     }
   }
 }
@@ -319,15 +321,15 @@ export PYTHONPATH="$HOME/etf-options-ai-assistant:$PYTHONPATH"
 
 ### 问题2：API 连接失败
 
-**错误**：`Connection refused` 或 `无法连接到 http://127.0.0.1:5000`
+**错误**：`Connection refused` 或 `无法连接到 <apiBaseUrl>`
 
 **解决**：
-1. 确保原系统 API 服务在 Windows 中运行
-2. 在 WSL 中测试连接：
+1. 当前主线通常不启用兼容 API，若你未启用该类接入，可直接忽略该错误。
+2. 若你确实启用了兼容 API：在与该服务相同的运行环境中测试连接：
    ```bash
-   curl http://127.0.0.1:5000/api/status
+   curl "<apiBaseUrl>/api/status"
    ```
-3. 如果失败，检查 Windows 防火墙设置
+3. 若仍失败，请确认该服务已启动，并检查防火墙/端口暴露（若跨容器/跨主机）。
 
 ### 问题3：符号链接路径问题
 
@@ -340,7 +342,7 @@ ls -la ~/etf-options-ai-assistant
 
 # 重新创建符号链接
 rm ~/etf-options-ai-assistant
-ln -s /mnt/d/Ubuntu应用环境配置/mcp/option_trading_assistant/etf-options-ai-assistant ~/etf-options-ai-assistant
+ln -s /home/xie/etf-options-ai-assistant ~/etf-options-ai-assistant
 ```
 
 ---
@@ -362,7 +364,6 @@ ln -s /mnt/d/Ubuntu应用环境配置/mcp/option_trading_assistant/etf-options-a
 - [ ] `tool_runner.py` 文件已创建或符号链接已建立
 - [ ] 符号链接 `~/etf-options-ai-assistant` 正常工作
 - [ ] Python 路径配置正确
-- [ ] 原系统 API 服务正在运行
 - [ ] OpenClaw Gateway 已重启并加载插件
 - [ ] 插件在 OpenClaw 中可见并可调用
 

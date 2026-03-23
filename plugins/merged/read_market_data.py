@@ -4,7 +4,7 @@
 data_type 枚举: index_daily | index_minute | etf_daily | etf_minute | option_minute | option_greeks
 """
 
-from typing import Dict, Any, Optional, List, Union
+from typing import Dict, Any, Optional, List
 
 def tool_read_market_data(
     data_type: Optional[str] = None,

@@ -101,12 +101,17 @@ cd "$PLUGIN_TARGET_DIR"
 
 # 复制插件入口文件（如果存在）
 if [ -f "$PLUGIN_SOURCE_DIR/index.ts" ]; then
+    # 如果目标目录已有旧文件/符号链接（含悬挂符号链接），先清理，避免 cp 失败
+    rm -f ./index.ts || true
     cp "$PLUGIN_SOURCE_DIR/index.ts" ./index.ts
     print_success "插件入口文件复制成功"
 fi
 
 # 复制工具运行脚本（如果存在）
 if [ -f "$PLUGIN_SOURCE_DIR/tool_runner.py" ]; then
+    # 如果目标目录已有旧文件/符号链接（含悬挂符号链接），先清理，避免 cp 报错：
+    #   cp: not writing through dangling symlink './tool_runner.py'
+    rm -f ./tool_runner.py || true
     cp "$PLUGIN_SOURCE_DIR/tool_runner.py" ./tool_runner.py
     chmod +x ./tool_runner.py
     print_success "工具运行脚本复制成功"

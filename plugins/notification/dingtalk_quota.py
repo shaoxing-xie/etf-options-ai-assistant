@@ -13,7 +13,7 @@ import json
 import os
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Dict, Any, Optional, Tuple
+from typing import Dict, Any, Optional
 
 
 STATE_PATH = os.path.expanduser("~/.openclaw/workspace/dingtalk_quota_state.json")

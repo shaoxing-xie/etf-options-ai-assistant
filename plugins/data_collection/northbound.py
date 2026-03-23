@@ -7,8 +7,8 @@
 import requests
 import json
 import pandas as pd
-from datetime import datetime, timedelta
-from typing import Dict, List, Optional
+from datetime import datetime
+from typing import Dict, Optional
 import logging
 
 logger = logging.getLogger(__name__)

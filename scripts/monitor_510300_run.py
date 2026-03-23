@@ -158,7 +158,6 @@ def run() -> str:
     lines.append("30分钟布林带:")
     try:
         import pandas as pd
-        import numpy as np
 
         cache_dir = ROOT / "data" / "cache" / "etf_minute" / "510300" / "30"
         if not cache_dir.exists():

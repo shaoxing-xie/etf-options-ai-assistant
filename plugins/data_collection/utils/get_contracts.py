@@ -6,9 +6,8 @@
 与 `ROADMAP.md` 附录 D 及 `option/README.md` 描述一致。
 """
 
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any
 from datetime import datetime, timedelta
-import os
 
 try:
     import akshare as ak

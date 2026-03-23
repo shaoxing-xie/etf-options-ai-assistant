@@ -7,7 +7,7 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -193,7 +193,7 @@ def tool_limit_up_daily_flow(
     sectors = payload.get("sectors") or []
     # 次日观察列表：按板块列出龙头并标记建议策略
     lines = [
-        f"# 涨停回马枪 · 次日观察列表\n",
+        "# 涨停回马枪 · 次日观察列表\n",
         f"**日期** {dt}\n",
         "",
         "## 热点板块与龙头",

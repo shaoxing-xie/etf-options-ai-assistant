@@ -8,7 +8,6 @@
 
 import json
 import sys
-import os
 from pathlib import Path
 
 # 添加父目录到 path
@@ -17,7 +16,7 @@ sys.path.insert(0, str(BASE_DIR / "scripts"))
 
 from alert_engine import (
     load_alerts, save_alerts, fetch_realtime,
-    now_str, ALERT_TYPES
+    now_str
 )
 
 DATA_DIR = BASE_DIR / "data"

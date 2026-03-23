@@ -127,8 +127,8 @@
   - `需要添加交易日判断跳过参数的工具清单.md`：需要补充交易日判断的工具清单。
 - `docs/legacy/`
   - 历史迁移说明、测试报告、讨论稿等（含早期期权导向文档），用于追溯设计与迁移过程，不作为当前权威指南。
-- `docs/original-windows/`
-  - 从 Windows 旧工程迁移过来的原始文档与说明（`docs/`, `coze/`, `feishu_src/`, `openclaw_migration/` 等快照），仅用于查阅原始设计与历史背景，不参与当前运行。
+- 原始归档快照（历史文档，仅用于查阅背景，不参与当前运行）
+  - 从历史快照迁移过来的原始文档与说明（`docs/`, `coze/`, `feishu_src/`, `openclaw_migration/` 等快照），仅用于查阅原始设计与历史背景，不参与当前运行。
 
 > 说明：新文档建议按 “overview / openclaw / architecture / reference / ops / legacy” 分类，避免混乱。
 

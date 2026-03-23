@@ -6,7 +6,6 @@
 import json
 import re
 from typing import Dict, Optional, List, Any, Tuple
-from datetime import datetime
 
 from src.logger_config import get_module_logger
 from src.config_loader import load_system_config
@@ -388,7 +387,7 @@ def delete_file_from_feishu(feishu_api: FeishuAPI, file_token: str) -> Tuple[boo
                         error_msg = result.get("msg", "未知错误")
                         logger.debug(f"方法3失败: code={error_code}, msg={error_msg}")
                 except json.JSONDecodeError:
-                    logger.debug(f"方法3响应不是JSON格式")
+                    logger.debug("方法3响应不是JSON格式")
         except Exception as e:
             logger.debug(f"方法3异常: {e}")
         
@@ -412,8 +411,9 @@ def delete_file_from_feishu(feishu_api: FeishuAPI, file_token: str) -> Tuple[boo
                         logger.warning(f"可能是权限问题，文件已处理但未删除: {file_token[:20]}...")
                 elif last_resp.status_code == 403:
                     logger.warning(f"权限不足，文件已处理但未删除: {file_token[:20]}...")
-                    logger.warning(f"建议：申请 drive:drive 权限以支持删除文件功能")
-            except:
+                    logger.warning("建议：申请 drive:drive 权限以支持删除文件功能")
+            except Exception as e:
+                logger.debug(f"删除文件失败响应解析失败: {e}", exc_info=True)
                 error_detail = f"HTTP {last_resp.status_code}, 响应文本: {last_resp.text[:200]}"
                 logger.warning(f"删除文件失败: {error_detail}")
         else:
@@ -450,19 +450,23 @@ def process_plugin_notification(notification: Dict[str, Any], config: Optional[D
         config = load_system_config()
     
     # 标准化工具名称（兼容 greek_data 和 greeks_data）
-    tool = normalize_tool_name(notification.get("tool"))
+    tool_raw = notification.get("tool")
+    tool = normalize_tool_name(tool_raw if isinstance(tool_raw, str) else "")
     timestamp = notification.get("timestamp", "")
     status = notification.get("status", "")
     files = notification.get("files", [])
     file_tokens = notification.get("file_tokens", {})  # 文件名 -> token 映射
     
-    result = {
+    errors: List[str] = []
+
+    # 显式标注，避免 mypy 将 dict 值推断成 object 导致 append/加法报错
+    result: Dict[str, Any] = {
         "success": False,
         "tool": tool,
         "files_processed": 0,
         "files_failed": 0,
         "files_deleted": 0,
-        "errors": []
+        "errors": errors
     }
     
     # 如果状态不是success，不处理
@@ -489,7 +493,7 @@ def process_plugin_notification(notification: Dict[str, Any], config: Optional[D
     
     # 对于其他工具（如非 greeks_data），如果通知消息中包含文件token，直接使用token下载文件（跳过列出/搜索步骤）
     if tool != "greeks_data" and tool not in ["index_minute_data", "etf_minute_data"] and file_tokens and files:
-        logger.info(f"通知消息中包含文件token，直接使用token下载文件（跳过列出/搜索步骤）")
+        logger.info("通知消息中包含文件token，直接使用token下载文件（跳过列出/搜索步骤）")
         for filename in files:
             file_token = file_tokens.get(filename)
             if file_token:
@@ -614,7 +618,7 @@ def process_plugin_notification(notification: Dict[str, Any], config: Optional[D
             
             # 方法2: 如果无法列出文件（权限问题）或未找到匹配文件，根据通知消息中的文件名直接搜索
             if not matched_files and files:
-                logger.info(f"无法列出文件或未找到匹配文件，尝试根据通知消息中的文件名直接搜索")
+                logger.info("无法列出文件或未找到匹配文件，尝试根据通知消息中的文件名直接搜索")
                 for filename in files:
                     # 如果文件名是描述性文本（如"GREEKS_2个合约"），根据工具类型和时间戳生成实际文件名
                     if tool == "greeks_data" and ("个合约" in filename or not filename.endswith(".json")):
@@ -631,7 +635,7 @@ def process_plugin_notification(notification: Dict[str, Any], config: Optional[D
                         logger.warning(f"无法找到文件: {filename}")
     
     if not matched_files:
-        error_msg = f"未找到匹配的文件"
+        error_msg = "未找到匹配的文件"
         if files:
             error_msg += f" (通知中的文件: {', '.join(files)})"
         if timestamp:

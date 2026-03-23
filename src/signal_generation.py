@@ -4,7 +4,7 @@
 供 OpenClaw tool_runner / 定时任务调用。
 """
 
-from typing import Optional, Dict, Any, List
+from typing import Dict, Any
 from datetime import datetime
 
 from src.data_collector import (
@@ -13,6 +13,9 @@ from src.data_collector import (
 )
 from src.signal_generator import generate_signals
 from src.config_loader import load_system_config
+from src.logger_config import get_module_logger
+
+logger = get_module_logger(__name__)
 
 
 def tool_generate_signals(
@@ -45,8 +48,8 @@ def tool_generate_signals(
         config = None
         try:
             config = load_system_config()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"加载系统配置失败，使用默认/空 config: {e}", exc_info=True)
         signals = generate_signals(
             index_minute=index_30m,
             etf_current_price=etf_price,

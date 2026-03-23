@@ -30,12 +30,10 @@ def tool_calculate_historical_volatility(
     """
     try:
         from src.logger_config import get_module_logger
-        from src.config_loader import load_system_config
         from src.data_collector import fetch_index_daily_em  # 会自动识别 ETF 并走 fetch_etf_daily_em
         from src.indicator_calculator import calculate_historical_volatility
 
         logger = get_module_logger(__name__)
-        cfg = load_system_config(use_cache=True)
 
         sym = str(symbol)
         tz_now = datetime.now()

@@ -5,8 +5,7 @@
 
 import pytz
 from datetime import datetime, time, timedelta
-from typing import Dict, Optional, List
-import calendar
+from typing import Dict, Optional, List, Any
 
 from src.logger_config import get_module_logger, log_error_with_context
 from src.config_loader import load_system_config, get_trading_hours_config
@@ -64,7 +63,7 @@ def is_trading_day(date: Optional[datetime] = None, config: Optional[Dict] = Non
         return True
 
 
-def get_current_market_status(config: Optional[Dict] = None) -> Dict[str, any]:
+def get_current_market_status(config: Optional[Dict] = None) -> Dict[str, Any]:
     """
     获取当前市场状态
     
@@ -288,7 +287,7 @@ def check_and_execute_missed_tasks(config: Optional[Dict] = None) -> List[str]:
         if config is None:
             config = load_system_config()
         
-        missed_tasks = []
+        missed_tasks: List[str] = []
         tz = pytz.timezone('Asia/Shanghai')
         now = datetime.now(tz)
         today_str = now.strftime("%Y%m%d")
@@ -314,7 +313,7 @@ def check_and_execute_missed_tasks(config: Optional[Dict] = None) -> List[str]:
                     logger.info(f"检测到错过任务: 开盘前分析 (目标时间: {target_time.strftime('%H:%M')}, 当前时间: {now.strftime('%H:%M')})")
                     missed_tasks.append('before_open_analysis')
                 else:
-                    logger.debug(f"开盘前分析任务已执行，跳过")
+                    logger.debug("开盘前分析任务已执行，跳过")
         
         # 检查9:28开盘行情分析
         opening_config = config.get('opening_analysis', {})
@@ -331,7 +330,7 @@ def check_and_execute_missed_tasks(config: Optional[Dict] = None) -> List[str]:
                     logger.info(f"检测到错过任务: 开盘行情分析 (目标时间: {target_time.strftime('%H:%M')}, 当前时间: {now.strftime('%H:%M')})")
                     missed_tasks.append('opening_market_analysis')
                 else:
-                    logger.debug(f"开盘行情分析任务已执行，跳过")
+                    logger.debug("开盘行情分析任务已执行，跳过")
         
         # 检查9:35第一次日内趋势处理
         first_intraday_config = scheduler_config.get('first_intraday_analysis', {})
@@ -347,7 +346,7 @@ def check_and_execute_missed_tasks(config: Optional[Dict] = None) -> List[str]:
                     logger.info(f"检测到错过任务: 第一次日内趋势处理 (目标时间: {target_time.strftime('%H:%M')}, 当前时间: {now.strftime('%H:%M')})")
                     missed_tasks.append('first_intraday_analysis')
                 else:
-                    logger.debug(f"第一次日内趋势处理任务已执行，跳过")
+                    logger.debug("第一次日内趋势处理任务已执行，跳过")
         
         # 检查15:30盘后分析（如果是当天）
         after_close_config = scheduler_config.get('after_close_analysis', {})
@@ -363,7 +362,7 @@ def check_and_execute_missed_tasks(config: Optional[Dict] = None) -> List[str]:
                     logger.info(f"检测到错过任务: 盘后分析 (目标时间: {target_time.strftime('%H:%M')}, 当前时间: {now.strftime('%H:%M')})")
                     missed_tasks.append('after_close_analysis')
                 else:
-                    logger.debug(f"盘后分析任务已执行，跳过")
+                    logger.debug("盘后分析任务已执行，跳过")
         
         if missed_tasks:
             logger.info(f"发现 {len(missed_tasks)} 个需要补执行的任务: {', '.join(missed_tasks)}")
@@ -381,7 +380,7 @@ def check_and_execute_missed_tasks(config: Optional[Dict] = None) -> List[str]:
         return []
 
 
-def system_startup(config: Optional[Dict] = None) -> Dict[str, any]:
+def system_startup(config: Optional[Dict] = None) -> Dict[str, Any]:
     """
     系统启动初始化逻辑
     

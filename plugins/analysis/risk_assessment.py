@@ -49,7 +49,7 @@ def assess_risk(
         if not symbol or (not symbol.startswith("51") and not symbol.startswith("159")):
             return {
                 'success': False,
-                'message': f'symbol必须是ETF代码（上海ETF: 51xxxx，深圳ETF: 159xxx）',
+                'message': 'symbol必须是ETF代码（上海ETF: 51xxxx，深圳ETF: 159xxx）',
                 'data': None
             }
         

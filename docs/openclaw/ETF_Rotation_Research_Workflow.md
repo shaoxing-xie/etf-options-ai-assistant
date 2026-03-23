@@ -62,7 +62,7 @@
    - 后续可根据需要，将此步骤下沉为专门的轮动工具或策略模块。
 
 5. **发送轮动研究报告**  
-   - 工具：`tool_send_daily_report`（通过 `etf_notification_agent`）  
+   - 工具：`tool_send_analysis_report`（通过 `etf_notification_agent`，将研究类报告推送到钉钉）
    - 报告要求：
      - 标题中明确「ETF 轮动研究（研究级，不构成交易指令）」；
      - 正文结构建议包含：

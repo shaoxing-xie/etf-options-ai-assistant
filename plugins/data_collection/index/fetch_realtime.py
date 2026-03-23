@@ -4,7 +4,6 @@
 OpenClaw 插件工具
 """
 
-import requests
 import pandas as pd
 from typing import Optional, Dict, Any, List
 from datetime import datetime

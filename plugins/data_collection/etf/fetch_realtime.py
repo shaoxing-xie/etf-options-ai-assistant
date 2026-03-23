@@ -269,7 +269,7 @@ def fetch_etf_realtime(
                         debug["attempted"].append("akshare_sina_option_underlying")
                     spot_df = _fetch_option_underlying()
                     source = "option_sse_underlying_spot_price_sina"
-                except Exception as e:
+                except Exception:
                     pass
             
             # 方法2：使用同花顺接口（备用）
@@ -290,7 +290,7 @@ def fetch_etf_realtime(
                             if not target_row.empty:
                                 spot_df = target_row.iloc[0:1]
                                 source = "fund_etf_spot_ths"
-                except Exception as e:
+                except Exception:
                     pass
             
             if spot_df is None or spot_df.empty:

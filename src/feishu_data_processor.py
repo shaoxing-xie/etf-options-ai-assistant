@@ -5,12 +5,10 @@
 
 import json
 import pandas as pd
-from pathlib import Path
-from typing import Optional, Dict, List
+from typing import Dict
 from datetime import datetime
 from src.logger_config import get_module_logger
-from src.data_cache import save_index_minute_cache, save_etf_minute_cache, save_option_greeks_cache
-from src.config_loader import load_system_config
+from src.data_cache import save_option_greeks_cache
 
 logger = get_module_logger(__name__)
 
@@ -43,16 +41,6 @@ def process_index_minute_data(content: Dict, filename: str) -> bool:
         missing_columns = [col for col in required_columns if col not in df.columns]
         if missing_columns:
             logger.warning(f"指数分钟数据缺少列: {filename}, 缺失: {missing_columns}")
-            # 尝试使用其他可能的列名
-            column_mapping = {
-                "时间": ["时间", "datetime", "date", "时间戳"],
-                "开盘": ["开盘", "open", "开盘价"],
-                "收盘": ["收盘", "close", "收盘价"],
-                "最高": ["最高", "high", "最高价"],
-                "最低": ["最低", "low", "最低价"],
-                "成交量": ["成交量", "volume", "成交额"]
-            }
-            # 这里可以添加列名映射逻辑，简化处理
             return False
         
         # 保存到缓存（根据周期保存）
@@ -223,8 +211,8 @@ def process_option_greeks_data(content: Dict, filename: str) -> bool:
                     if col in numeric_fields or any(keyword in str(col) for keyword in ["价", "率", "Delta", "Gamma", "Theta", "Vega"]):
                         try:
                             df[col] = pd.to_numeric(df[col], errors='coerce')
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            logger.debug(f"数值列转换失败: col={col}, 错误: {e}", exc_info=True)
                 
                 # 保存到缓存（追加模式，按时间戳去重）
                 try:

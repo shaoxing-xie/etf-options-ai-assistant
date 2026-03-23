@@ -5,16 +5,17 @@ OpenClaw 插件工具
 """
 
 import math
+import logging
 from typing import Dict, Any, List, Optional
-from datetime import datetime
 import os
 
 # 导入数据访问工具
 import sys
-import os
 current_dir = os.path.dirname(os.path.abspath(__file__))
 parent_dir = os.path.dirname(os.path.dirname(current_dir))
 sys.path.insert(0, parent_dir)
+
+logger = logging.getLogger(__name__)
 
 try:
     from plugins.data_access.read_cache_data import read_cache_data
@@ -305,7 +306,7 @@ def calculate_technical_indicators(
                 if 'close' not in df.columns and '收盘' in df.columns:
                     df['close'] = df['收盘']
             except Exception as e:
-                pass  # 转换失败则回退到缓存读取
+                logger.debug(f"klines_data 转换失败，回退缓存读取: {e}", exc_info=True)
         
         # 若无直接数据，从缓存读取
         if df is None or df.empty:
@@ -499,7 +500,7 @@ def _format_indicators_message(result_data: Dict[str, Any]) -> str:
         rsi_value = rsi_data.get("rsi", "N/A")
         rsi_signal = rsi_data.get("signal", "N/A")
         rsi_suggestion = rsi_data.get("suggestion", "")
-        message += f"\n✅ RSI (相对强弱指标):\n"
+        message += "\n✅ RSI (相对强弱指标):\n"
         message += f"   RSI值: {rsi_value}\n"
         message += f"   状态: {rsi_signal}"
         if rsi_suggestion:
@@ -513,7 +514,7 @@ def _format_indicators_message(result_data: Dict[str, Any]) -> str:
         dea = macd_data.get("dea", "N/A")
         macd_value = macd_data.get("macd", "N/A")
         macd_signal = macd_data.get("signal", "N/A")
-        message += f"\n✅ MACD (移动平均收敛发散):\n"
+        message += "\n✅ MACD (移动平均收敛发散):\n"
         message += f"   DIF: {dif}\n"
         message += f"   DEA: {dea}\n"
         message += f"   MACD柱: {macd_value}\n"
@@ -529,7 +530,7 @@ def _format_indicators_message(result_data: Dict[str, Any]) -> str:
         arrangement = ma_data.get("arrangement", "N/A")
         cross_signal = ma_data.get("cross_signal", "N/A")
         price_vs_ma20 = ma_data.get("price_vs_ma20", "N/A")
-        message += f"\n✅ MA (移动平均线):\n"
+        message += "\n✅ MA (移动平均线):\n"
         message += f"   MA5: {ma5}\n"
         message += f"   MA10: {ma10}\n"
         message += f"   MA20: {ma20}\n"
@@ -544,7 +545,7 @@ def _format_indicators_message(result_data: Dict[str, Any]) -> str:
     if "atr" in indicators:
         atr_data = indicators["atr"]
         atr_value = atr_data.get("atr", "N/A")
-        message += f"\n✅ ATR (平均真实波动幅度):\n"
+        message += "\n✅ ATR (平均真实波动幅度):\n"
         message += f"   ATR值: {atr_value}\n"
     
     # 布林带指标
@@ -557,7 +558,7 @@ def _format_indicators_message(result_data: Dict[str, Any]) -> str:
         percent_b = boll_data.get("percent_b", "N/A")
         boll_signal = boll_data.get("signal", "N/A")
         boll_suggestion = boll_data.get("suggestion", "")
-        message += f"\n✅ BOLL (布林带):\n"
+        message += "\n✅ BOLL (布林带):\n"
         message += f"   上轨: {upper}\n"
         message += f"   中轨: {middle}\n"
         message += f"   下轨: {lower}\n"

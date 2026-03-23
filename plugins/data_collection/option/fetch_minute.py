@@ -4,9 +4,6 @@
 OpenClaw 插件工具
 """
 
-import requests
-import pandas as pd
-import numpy as np
 from typing import Optional, Dict, Any
 from datetime import datetime
 from pathlib import Path
@@ -56,9 +53,7 @@ try:
         if str(root_for_import) not in sys.path:
             sys.path.insert(0, str(root_for_import))
         from src.data_cache import (
-            get_cache_file_path, load_cached_data, save_cached_data,
-            get_cached_option_minute, save_option_minute_cache,
-            merge_cached_and_fetched_data
+            get_cached_option_minute, save_option_minute_cache
         )
         from src.config_loader import load_system_config
         CACHE_AVAILABLE = True

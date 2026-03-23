@@ -7,7 +7,7 @@ import json
 import sqlite3
 from pathlib import Path
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Any
+from typing import Dict, Any, Optional
 import pytz
 
 from src.logger_config import get_module_logger
@@ -22,10 +22,10 @@ PREDICTION_DB_PATH = PREDICTION_RECORDS_DIR / "prediction_records.db"
 def record_prediction(
     prediction_type: str,  # 'index'/'etf'/'option'
     symbol: str,  # 标的代码（指数代码/ETF代码/期权合约代码）
-    prediction: dict,  # 包含upper, lower, timestamp, method, confidence等
+    prediction: Dict[str, Any],  # 包含upper, lower, timestamp, method, confidence等
     source: str = 'on_demand',  # 'on_demand'（用户即时预测）或 'scheduled'（定时任务预测）
-    actual_range: dict = None,  # 收盘后填入实际价格范围
-    config: dict = None
+    actual_range: Optional[Dict[str, Any]] = None,  # 收盘后填入实际价格范围
+    config: Optional[Dict[str, Any]] = None
 ) -> bool:
     """
     记录预测结果，用于后续准确性评估
@@ -62,7 +62,7 @@ def record_prediction(
         date_str = now.strftime('%Y%m%d')
         
         # 构建记录
-        record = {
+        record: Dict[str, Any] = {
             'date': date_str,
             'timestamp': now.isoformat(),
             'prediction_type': prediction_type,
@@ -287,8 +287,8 @@ def _update_database_actual_range(date: str, symbol: str, source: str, actual_ra
 
 def get_method_performance(
     lookback_days: int = 30,
-    prediction_type: str = None,
-    method: str = None
+    prediction_type: Optional[str] = None,
+    method: Optional[str] = None
 ) -> Dict[str, Any]:
     """
     获取各方法的 historical performance
@@ -322,17 +322,22 @@ def get_method_performance(
             conditions.append("method = ?")
             params.append(method)
         
-        query = f'''
-            SELECT method, 
+        # Build query by appending constant SQL fragments while keeping values parameterized.
+        # (Bandit 会对 f-string 拼接 WHERE 条件给出误报/泛化告警，这里避免 f-string + join。)
+        query = '''
+            SELECT method,
                    COUNT(*) as total,
                    SUM(CASE WHEN hit = 1 THEN 1 ELSE 0 END) as hits,
                    AVG(range_pct) as avg_range_pct,
                    AVG(confidence) as avg_confidence
             FROM predictions
-            WHERE {' AND '.join(conditions)}
-            GROUP BY method
+            WHERE verified = 1 AND date >= ? AND date <= ?
         '''
-        
+        if prediction_type:
+            query += ' AND prediction_type = ?'
+        if method:
+            query += ' AND method = ?'
+
         cursor.execute(query, params)
         results = cursor.fetchall()
         

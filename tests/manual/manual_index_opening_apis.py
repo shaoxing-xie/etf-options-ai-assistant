@@ -55,7 +55,7 @@ def test_stock_zh_index_spot_sina(ak):
                 if col in df.columns:
                     sample = df[df[col].astype(str).str.contains('000001|000300', na=False)].head(2)
                     if not sample.empty:
-                        print(f"  示例(含000001/000300):")
+                        print("  示例(含000001/000300):")
                         print(sample[[c for c in ['代码','code','symbol','名称','name','今开','昨收','涨跌幅'] if c in sample.columns]].to_string())
                     break
         else:

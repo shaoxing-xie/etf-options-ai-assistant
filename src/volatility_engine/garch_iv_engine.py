@@ -4,9 +4,8 @@ GARCH-IV引擎
 """
 
 import pandas as pd
-import numpy as np
 from typing import Dict, Optional, Any
-from datetime import datetime, timedelta
+from datetime import datetime
 import time
 import hashlib
 
@@ -77,7 +76,6 @@ class GARCHIVEngine:
             lookback_days = self.lookback_days
         
         try:
-            from src.data_collector import fetch_option_greeks_sina
             
             # 获取历史IV数据
             # 注意：这里简化处理，实际应该获取多天的历史数据
@@ -311,10 +309,11 @@ class GARCHIVEngine:
             else:
                 hash_input = str(iv_series.values.tobytes())
             
-            return hashlib.md5(hash_input.encode()).hexdigest()
+            # 使用 SHA-256：用于缓存校验，无需密码学弱哈希
+            return hashlib.sha256(hash_input.encode()).hexdigest()
         except Exception as e:
             logger.debug(f"计算IV哈希失败: {e}，使用简单哈希")
-            return hashlib.md5(str(iv_series.values).encode()).hexdigest()
+            return hashlib.sha256(str(iv_series.values).encode()).hexdigest()
     
     def preheat(self, contract_codes: list, current_ivs: Optional[Dict[str, float]] = None, min_data_points: int = 5) -> Dict[str, Any]:
         """
@@ -335,7 +334,8 @@ class GARCHIVEngine:
                 'preheated': []
             }
         
-        results = {
+        # 用更宽的类型标注 results，避免 mypy 把其中列表/字典推断成 object
+        results: Dict[str, Any] = {
             'success': True,
             'preheated': [],
             'failed': [],

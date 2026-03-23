@@ -3,7 +3,7 @@
 评估期权合约的流动性等级，判断是否可交易
 """
 
-from typing import Dict, Any, List
+from typing import Dict, Any, Optional
 from src.logger_config import get_module_logger
 
 logger = get_module_logger(__name__)
@@ -36,7 +36,7 @@ class LiquidityAssessor:
         }
     }
     
-    def __init__(self, custom_thresholds: Dict[str, Dict[str, float]] = None):
+    def __init__(self, custom_thresholds: Optional[Dict[str, Dict[str, float]]] = None):
         """
         初始化流动性评估器
         

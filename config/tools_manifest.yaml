@@ -561,12 +561,27 @@ tools:
 
   - id: tool_send_daily_report
     label: 发送市场日报
-    description: 发送每日市场分析报告。
-    description_short: 发送每日市场分析报告。
+    description: 发送每日市场分析报告到钉钉自定义机器人（支持 SEC 加签）。
+    description_short: 发送市场日报到钉钉（SEC 加签）。
     parameters:
       type: object
       properties:
         report_data: { type: object, description: "报告数据" }
+
+  - id: tool_send_analysis_report
+    label: 发送分析报告到钉钉
+    description: 发送交易时间分析类/研究类报告到钉钉自定义机器人（支持 SEC 加签）。
+    description_short: 发送分析报告到钉钉。
+    parameters:
+      type: object
+      properties:
+        report_data: { type: object, description: "报告数据" }
+        report_date: { type: string, description: "报告日期（可选）" }
+        webhook_url: { type: string, description: "可选：自定义机器人 webhook（包含 access_token）" }
+        secret: { type: string, description: "可选：安全模式 SEC 密钥（用于 sign）" }
+        keyword: { type: string, description: "可选：关键词安全校验用（如果机器人启用关键词）" }
+        mode: { type: string, description: "prod|test", default: "prod" }
+      required: [report_data]
 
   - id: tool_send_dingtalk_message
     label: 发送钉钉文本消息

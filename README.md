@@ -96,7 +96,7 @@
 ### 1. 克隆仓库并安装依赖
 
 ```bash
-git clone <your-github-url>/etf-options-ai-assistant.git
+git clone https://github.com/shaoxing-xie/etf-options-ai-assistant.git
 cd etf-options-ai-assistant
 
 python3 -m venv .venv

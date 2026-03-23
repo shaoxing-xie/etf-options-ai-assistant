@@ -3,10 +3,8 @@
 从AKShare获取期权实时盘口数据（买卖价、买卖量等）
 """
 
-import pandas as pd
 import akshare as ak
 from typing import Dict, Optional, Any
-from datetime import datetime
 
 from src.logger_config import get_module_logger, log_error_with_context
 
@@ -138,14 +136,19 @@ class OptionMarketDataFetcher:
             else:
                 quotes['is_estimated'] = False
             
-            if quotes['bid_price'] <= 0 or quotes['ask_price'] <= 0:
-                logger.warning(f"盘口价格无效: bid_price={quotes['bid_price']}, ask_price={quotes['ask_price']}")
+            bid_price = quotes.get('bid_price')
+            ask_price = quotes.get('ask_price')
+            if bid_price is None or ask_price is None:
                 return None
             
-            if quotes['ask_price'] < quotes['bid_price']:
-                logger.warning(f"盘口价格异常: 卖一价({quotes['ask_price']}) < 买一价({quotes['bid_price']})")
+            if bid_price <= 0 or ask_price <= 0:
+                logger.warning(f"盘口价格无效: bid_price={bid_price}, ask_price={ask_price}")
+                return None
+            
+            if ask_price < bid_price:
+                logger.warning(f"盘口价格异常: 卖一价({ask_price}) < 买一价({bid_price})")
                 # 修正：交换买卖价
-                quotes['bid_price'], quotes['ask_price'] = quotes['ask_price'], quotes['bid_price']
+                quotes['bid_price'], quotes['ask_price'] = ask_price, bid_price
                 quotes['bid_volume'], quotes['ask_volume'] = quotes['ask_volume'], quotes['bid_volume']
             
             logger.debug(f"获取到盘口数据: bid={quotes['bid_price']}, ask={quotes['ask_price']}, "

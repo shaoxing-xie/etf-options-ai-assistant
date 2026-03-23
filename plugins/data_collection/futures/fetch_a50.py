@@ -4,13 +4,10 @@
 OpenClaw 插件工具
 """
 
-import requests
 import pandas as pd
-import numpy as np
 from typing import Optional, Dict, Any, List, Tuple
 from datetime import datetime, timedelta
 from pathlib import Path
-import os
 import sys
 
 try:
@@ -36,7 +33,6 @@ try:
             parse_date_range, merge_cached_and_fetched_data, _is_cache_enabled
         )
         from src.config_loader import load_system_config
-        from src.system_status import is_trading_day
         CACHE_AVAILABLE = True
 except Exception:
     CACHE_AVAILABLE = False
@@ -167,7 +163,7 @@ def get_cached_a50_daily(
         
         return result_df, []
         
-    except Exception as e:
+    except Exception:
         # 异常情况下，返回所有日期
         all_dates = parse_date_range(start_date, end_date)
         return None, all_dates
@@ -219,7 +215,7 @@ def save_a50_daily_cache(
         
         return saved_count > 0
         
-    except Exception as e:
+    except Exception:
         return False
 
 
@@ -411,7 +407,7 @@ def fetch_a50_data(
                                 "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                             }
                             result["source"] = "futures_global_spot_em"
-            except Exception as e:
+            except Exception:
                 pass
         
         # 获取历史数据（使用期货接口）
@@ -440,7 +436,7 @@ def fetch_a50_data(
                             elif cached_df is not None and not cached_df.empty and missing_dates:
                                 # 部分缓存命中，保存用于后续合并
                                 cached_partial_df = cached_df
-                    except Exception as e:
+                    except Exception:
                         # 缓存失败不影响主流程
                         pass
                 # ========== 缓存逻辑结束 ==========
@@ -498,7 +494,7 @@ def fetch_a50_data(
                             result["source"] = "futures_foreign_hist+cache"
                         else:
                             result["source"] = "futures_foreign_hist"
-                    except Exception as e:
+                    except Exception:
                         pass
                 # ========== 缓存合并结束 ==========
                 
@@ -508,7 +504,7 @@ def fetch_a50_data(
                         config_for_cache = load_system_config(use_cache=True) if CACHE_AVAILABLE else None
                         if config_for_cache and _is_cache_enabled(config_for_cache):
                             save_a50_daily_cache(a50_symbol, hist_df, config=config_for_cache)
-                    except Exception as e:
+                    except Exception:
                         pass
                 # ========== 缓存保存结束 ==========
                 
@@ -541,7 +537,7 @@ def fetch_a50_data(
                         result["source"] = "futures_foreign_hist"
                     elif "cache" not in result["source"]:
                         result["source"] = "mixed"
-            except Exception as e:
+            except Exception:
                 pass
         
         # 检查是否有数据
@@ -552,7 +548,7 @@ def fetch_a50_data(
                 "source": "fallback",
                 "spot_data": None,
                 "hist_data": None,
-                "message": f"A50期指数据暂时不可用，请稍后重试",
+                "message": "A50期指数据暂时不可用，请稍后重试",
                 "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             }
         

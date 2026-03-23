@@ -5,13 +5,11 @@ OpenClaw 插件工具
 改进版本：支持缓存、多指数、自动计算成交额/涨跌幅、完善字段映射
 """
 
-import requests
 import pandas as pd
 import numpy as np
-from typing import Optional, Dict, Any, List, Tuple
+from typing import Optional, Dict, Any, Tuple
 from datetime import datetime, timedelta
 from pathlib import Path
-import os
 import sys
 
 try:
@@ -358,7 +356,7 @@ def fetch_single_index_historical(
                     # 计算缺失字段
                     df = calculate_missing_fields(df)
                     source = "tushare"
-        except Exception as e:
+        except Exception:
             pass
     
     # 方法4：直接调用新浪 HTTP 接口（money.finance.sina.com.cn）
@@ -464,7 +462,7 @@ def fetch_single_index_historical(
             date_col = '日期'
             df = merge_cached_and_fetched_data(cached_partial_df, df, date_col)
             source = f"{source}+cache" if source else "cache"
-        except Exception as e:
+        except Exception:
             pass
     # ========== 缓存合并结束 ==========
     

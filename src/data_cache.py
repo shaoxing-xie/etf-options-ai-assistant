@@ -4,13 +4,9 @@
 """
 
 import pandas as pd
-import numpy as np
 from pathlib import Path
 from datetime import datetime, timedelta
 from typing import Optional, Dict, Any, List, Tuple
-import pytz
-import json
-import hashlib
 
 from src.logger_config import get_module_logger, log_error_with_context
 from src.config_loader import load_system_config, get_data_storage_config
@@ -538,7 +534,7 @@ def save_etf_daily_cache(
                 break
         
         if not date_col:
-            logger.warning(f"无法找到日期列，无法按日期拆分保存缓存")
+            logger.warning("无法找到日期列，无法按日期拆分保存缓存")
             return False
         
         # 确保日期列为datetime类型
@@ -644,7 +640,7 @@ def save_index_daily_cache(
                 break
         
         if not date_col:
-            logger.warning(f"无法找到日期列，无法按日期拆分保存缓存")
+            logger.warning("无法找到日期列，无法按日期拆分保存缓存")
             return False
         
         # 确保日期列为datetime类型
@@ -897,7 +893,7 @@ def save_index_minute_cache(
                 break
         
         if not date_col:
-            logger.warning(f"无法找到日期列，无法按日期拆分保存缓存")
+            logger.warning("无法找到日期列，无法按日期拆分保存缓存")
             return False
         
         # 确保日期列为datetime类型
@@ -1109,7 +1105,7 @@ def save_etf_minute_cache(
                 break
         
         if not date_col:
-            logger.warning(f"无法找到日期列，无法按日期拆分保存缓存")
+            logger.warning("无法找到日期列，无法按日期拆分保存缓存")
             return False
         
         # 确保日期列为datetime类型
@@ -1211,7 +1207,7 @@ def get_cache_stats(config: Optional[Dict] = None) -> Dict[str, Any]:
     try:
         cache_dir = get_cache_dir(config)
         
-        stats = {
+        stats: Dict[str, Any] = {
             'total_size_mb': 0.0,
             'index_daily': {
                 'symbols': [],
@@ -1552,7 +1548,7 @@ def clean_cache(
         cache_dir = get_cache_dir(config)
         cutoff_date = (datetime.now() - timedelta(days=keep_days)).strftime("%Y%m%d")
         
-        result = {
+        result: Dict[str, Any] = {
             'deleted_files': 0,
             'deleted_size_mb': 0.0,
             'cutoff_date': cutoff_date
@@ -1724,7 +1720,7 @@ def validate_cache(config: Optional[Dict] = None) -> Dict[str, Any]:
     try:
         cache_dir = get_cache_dir(config)
         
-        result = {
+        result: Dict[str, Any] = {
             'total_files': 0,
             'valid_files': 0,
             'invalid_files': 0,
@@ -1968,7 +1964,7 @@ def save_option_minute_cache(
                 break
         
         if not date_col:
-            logger.warning(f"无法找到日期列，无法按日期拆分保存缓存")
+            logger.warning("无法找到日期列，无法按日期拆分保存缓存")
             return False
         
         # 确保日期列为datetime类型
@@ -2160,7 +2156,6 @@ def save_option_greeks_cache(
                     
                     if time_col:
                         # 检查新数据的时间戳是否已存在
-                        new_timestamps = set(greeks_data[time_col].astype(str))
                         existing_timestamps = set(existing_df[time_col].astype(str))
                         
                         # 只添加新的时间点数据
@@ -2481,7 +2476,7 @@ def aggregate_all_contracts_greeks_data(
         if config is None:
             config = load_system_config()
         
-        from src.config_loader import get_underlyings, get_contract_codes
+        from src.config_loader import get_underlyings
         
         option_contracts = config.get('option_contracts', {})
         underlyings_list = get_underlyings(option_contracts)

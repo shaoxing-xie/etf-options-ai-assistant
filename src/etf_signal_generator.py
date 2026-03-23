@@ -4,7 +4,6 @@ ETF信号生成模块
 """
 
 import pandas as pd
-import numpy as np
 from typing import Dict, Any, List, Optional
 from src.logger_config import get_module_logger
 from src.etf_models import (
@@ -12,10 +11,7 @@ from src.etf_models import (
     predict_etf_trend_arima,
     generate_technical_signal
 )
-from src.indicator_calculator import calculate_ma, calculate_macd, calculate_volume_ma
-from src.data_collector import fetch_etf_minute_data_with_fallback
-from datetime import datetime
-import pytz
+from src.indicator_calculator import calculate_ma
 
 logger = get_module_logger(__name__)
 
@@ -145,7 +141,7 @@ def generate_daily_etf_signals(
         
         # 如果短周期择时未确认，降低信号强度
         if timing_result and not timing_result.get('confirmed', False):
-            logger.info(f"短周期择时未确认，降低信号强度")
+            logger.info("短周期择时未确认，降低信号强度")
             voting_result['confidence'] *= 0.7  # 降低30%置信度
         
         # 确定信号类型
@@ -321,13 +317,13 @@ def _multi_model_voting(
         
         # 检查是否有高置信度单模型信号（置信度>0.7，允许1个模型同意）
         high_confidence_single_model = False
-        single_model_direction = None
+        single_model_direction: str = 'neutral'
         single_model_name = None
         single_model_confidence = 0.0
         
         # 检查Prophet模型（GROK优化：差异化阈值，买入0.7，卖出0.72，上限控制以防覆盖率降）
         prophet_threshold = 0.72 if prophet_dir == 'down' else 0.7  # 卖出信号0.72，买入信号0.7（GROK建议：0.72更平衡，减少过滤力度）
-        if prophet_conf > prophet_threshold and prophet_dir != 'neutral':
+        if prophet_conf > prophet_threshold and isinstance(prophet_dir, str) and prophet_dir != 'neutral':
             # 如果其他模型都是neutral，或者Prophet置信度最高
             if (arima_dir == 'neutral' and technical_dir == 'neutral') or \
                (prophet_conf >= arima_conf and prophet_conf >= technical_conf):
@@ -339,7 +335,7 @@ def _multi_model_voting(
         
         # 检查ARIMA模型（优化：降低阈值从0.7降至0.65，增加ARIMA参与度）
         if not high_confidence_single_model:
-            if arima_conf > 0.65 and arima_dir != 'neutral':
+            if arima_conf > 0.65 and isinstance(arima_dir, str) and arima_dir != 'neutral':
                 if (prophet_dir == 'neutral' and technical_dir == 'neutral') or \
                    (arima_conf >= prophet_conf and arima_conf >= technical_conf):
                     high_confidence_single_model = True
@@ -350,7 +346,7 @@ def _multi_model_voting(
         
         # 检查技术指标模型（优化：提高阈值从0.7至0.8，因为技术指标单模型信号胜率0%）
         if not high_confidence_single_model:
-            if technical_conf > 0.8 and technical_dir != 'neutral':  # 优化：从0.7提升至0.8，提高信号质量
+            if technical_conf > 0.8 and isinstance(technical_dir, str) and technical_dir != 'neutral':  # 优化：从0.7提升至0.8，提高信号质量
                 if (prophet_dir == 'neutral' and arima_dir == 'neutral') or \
                    (technical_conf >= prophet_conf and technical_conf >= arima_conf):
                     high_confidence_single_model = True
@@ -439,7 +435,7 @@ def _multi_model_voting(
             direction = 'neutral'
             confidence = 0.5
             signal_type = 'neutral'
-            logger.debug(f"所有模型均为中性，建议持有")
+            logger.debug("所有模型均为中性，建议持有")
         
         # 生成信号意义说明
         signal_meaning = _generate_signal_meaning(direction, model_details, weighted_score)

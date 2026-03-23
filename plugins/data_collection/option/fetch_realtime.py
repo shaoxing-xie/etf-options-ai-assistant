@@ -4,7 +4,6 @@
 OpenClaw 插件工具
 """
 
-import requests
 import pandas as pd
 from typing import Optional, Dict, Any, List
 from datetime import datetime
@@ -291,7 +290,7 @@ def _get_underlying_options(underlying: str) -> Dict[str, Any]:
                 if '期权代码' in call_codes_df.columns:
                     call_codes = call_codes_df['期权代码'].astype(str).tolist()
                     contract_codes.extend(call_codes)
-        except Exception as e:
+        except Exception:
             # 看涨期权获取失败，继续尝试看跌期权
             pass
         
@@ -306,7 +305,7 @@ def _get_underlying_options(underlying: str) -> Dict[str, Any]:
                 if '期权代码' in put_codes_df.columns:
                     put_codes = put_codes_df['期权代码'].astype(str).tolist()
                     contract_codes.extend(put_codes)
-        except Exception as e:
+        except Exception:
             # 看跌期权获取失败，继续处理已获取的看涨期权
             pass
         
@@ -352,7 +351,7 @@ def _get_underlying_options(underlying: str) -> Dict[str, Any]:
                 if single_result.get('success'):
                     options_data.append(single_result.get('data'))
                     success_count += 1
-            except Exception as e:
+            except Exception:
                 # 跳过单个合约的错误，继续处理下一个
                 continue
         

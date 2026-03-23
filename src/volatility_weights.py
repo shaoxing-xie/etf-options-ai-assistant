@@ -4,9 +4,6 @@
 """
 
 from typing import Dict, Optional, Any
-import numpy as np
-from datetime import datetime, timedelta
-import pytz
 
 from src.logger_config import get_module_logger
 from src.prediction_recorder import get_method_performance

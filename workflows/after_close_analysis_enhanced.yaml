@@ -66,8 +66,8 @@ steps:
 
   - name: send_daily_report
     agent: notification_agent
-    tool: tool_send_daily_report
-    description: 发送盘后分析报告到飞书
+    tool: tool_send_analysis_report
+    description: 发送盘后分析报告到钉钉群
     params:
       # report_data需要包含report_type、analysis和signals信息
       # 将从analyze_after_close步骤和generate_signals步骤的输出中构建
@@ -89,4 +89,4 @@ structured_message: |
   
   步骤6：使用 tool_record_signal_effect 工具记录信号效果。请使用步骤5返回的signal_id和信号信息作为参数。如果记录失败，继续执行下一步。
   
-  步骤7：使用 notification_agent 的 tool_send_daily_report 工具发送盘后分析报告到飞书。请使用步骤3的分析结果和步骤5的信号信息构建report_data字典，包含以下字段：report_type="after_close"、analysis（步骤3的结果）、signals（步骤5的结果）、date、overall_trend、trend_strength、rising_ratio、next_day_suggestion、llm_summary等。参数：report_data=构建的字典。
+  步骤7：使用 notification_agent 的 tool_send_analysis_report 工具发送盘后分析报告到钉钉群。请使用步骤3的分析结果和步骤5的信号信息构建report_data字典，包含以下字段：report_type="after_close"、analysis（步骤3的结果）、signals（步骤5的结果）、date、overall_trend、trend_strength、rising_ratio、next_day_suggestion、llm_summary等。参数：report_data=构建的字典。

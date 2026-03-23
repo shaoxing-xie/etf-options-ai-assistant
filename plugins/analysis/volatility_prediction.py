@@ -65,8 +65,8 @@ def _format_prediction_result(result: Dict[str, Any], result_type: str) -> str:
         option_type_name = '看涨' if option_type == 'call' else '看跌'
         underlying = result.get('underlying', 'N/A')
         
-        reply = f"## 📊 期权波动区间预测\n\n"
-        reply += f"**合约信息**\n"
+        reply = "## 📊 期权波动区间预测\n\n"
+        reply += "**合约信息**\n"
         reply += f"- 合约代码: `{contract_code}`\n"
         reply += f"- 标的物: `{underlying}`\n"
         reply += f"- 期权类型: {option_type_name} (Call/Put)\n"
@@ -77,8 +77,8 @@ def _format_prediction_result(result: Dict[str, Any], result_type: str) -> str:
     elif result_type == 'etf':
         symbol = result.get('symbol', 'N/A')
         symbol_name = result.get('symbol_name', symbol)
-        reply = f"## 📊 ETF波动区间预测\n\n"
-        reply += f"**标的物信息**\n"
+        reply = "## 📊 ETF波动区间预测\n\n"
+        reply += "**标的物信息**\n"
         reply += f"- ETF代码: `{symbol}`\n"
         reply += f"- ETF名称: {symbol_name}\n"
         reply += "\n"
@@ -86,8 +86,8 @@ def _format_prediction_result(result: Dict[str, Any], result_type: str) -> str:
     elif result_type == 'index':
         symbol = result.get('symbol', 'N/A')
         symbol_name = result.get('symbol_name', symbol)
-        reply = f"## 📊 指数波动区间预测\n\n"
-        reply += f"**指数信息**\n"
+        reply = "## 📊 指数波动区间预测\n\n"
+        reply += "**指数信息**\n"
         reply += f"- 指数代码: `{symbol}`\n"
         reply += f"- 指数名称: {symbol_name}\n"
         reply += "\n"
@@ -258,7 +258,7 @@ def volatility_prediction(
                         config=config
                     )
                     # 检查结果是否有效（不是None且不是错误）
-                    if prediction_result and not prediction_result.get('success') is False:
+                    if prediction_result and prediction_result.get('success') is not False:
                         prediction_results.append(('option', prediction_result))
                     elif prediction_result and prediction_result.get('success') is False:
                         # 记录错误但继续处理其他合约

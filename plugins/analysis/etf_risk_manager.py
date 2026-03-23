@@ -6,7 +6,6 @@ OpenClaw 插件工具
 """
 
 import sys
-import os
 from pathlib import Path
 from typing import Dict, Any, Optional
 
@@ -148,7 +147,7 @@ def check_stop_loss_take_profit(
                     trend_signals=trend_signals or {},
                     config=config
                 )
-            except Exception as e:
+            except Exception:
                 return None
         else:
             # 简化版检查（不依赖原系统）
@@ -229,7 +228,7 @@ def check_stop_loss_take_profit(
             
             return None
     
-    except Exception as e:
+    except Exception:
         return None
 
 

@@ -5,7 +5,7 @@ GARCH模型实现
 
 import pandas as pd
 import numpy as np
-from typing import Dict, Optional, Any, Tuple
+from typing import Dict, Any
 import warnings
 
 try:
@@ -46,8 +46,9 @@ class GARCHIVPredictor:
         self.q = q
         self.distribution = distribution
         self.lookback_days = lookback_days
-        self.model = None
-        self.fit_result = None  # 保存拟合结果，用于预测
+        # arch 的返回类型类型标注较宽，这里用 Any 收敛 mypy
+        self.model: Any = None
+        self.fit_result: Any = None  # 保存拟合结果，用于预测
         self.fitted = False
         
     def prepare_data(self, iv_series: pd.Series) -> pd.Series:
@@ -100,10 +101,10 @@ class GARCHIVPredictor:
             # 创建GARCH模型
             self.model = arch_model(
                 returns * 100,  # 转换为百分比形式
-                vol='Garch',
+                vol='GARCH',
                 p=self.p,
                 q=self.q,
-                dist=self.distribution
+                dist=self.distribution,  # type: ignore[arg-type]
             )
             
             # 拟合模型

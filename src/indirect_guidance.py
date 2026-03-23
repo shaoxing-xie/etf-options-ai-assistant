@@ -105,7 +105,7 @@ def generate_indirect_guidance(
         }
         
         # 根据趋势和区间位置生成建议
-        suggestions = []
+        suggestions: list[Dict[str, Any]] = []
         
         # 获取用于显示的价格和区间
         display_upper = display_range.get('upper') if display_range else index_upper
@@ -213,7 +213,7 @@ def generate_indirect_guidance(
                     call_greeks = None
                 else:
                     # 从 DataFrame 中提取 Greeks 值
-                    call_greeks_dict = {}
+                    call_greeks_dict: Dict[str, Any] = {}
                     for idx, row in call_greeks.iterrows():
                         field = str(row.get('字段', '')).lower()
                         value = row.get('值', '')
@@ -264,7 +264,7 @@ def generate_indirect_guidance(
                     put_greeks = None
                 else:
                     # 从 DataFrame 中提取 Greeks 值
-                    put_greeks_dict = {}
+                    put_greeks_dict: Dict[str, Any] = {}
                     for idx, row in put_greeks.iterrows():
                         field = str(row.get('字段', '')).lower()
                         value = row.get('值', '')

@@ -4,8 +4,7 @@ Prophet模型
 """
 
 import pandas as pd
-import numpy as np
-from typing import Dict, Any, Optional
+from typing import Dict, Any
 from src.logger_config import get_module_logger
 
 logger = get_module_logger(__name__)

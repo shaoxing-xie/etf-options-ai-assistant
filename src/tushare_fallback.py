@@ -9,9 +9,8 @@ Tushare 数据备份模块
 
 import os
 import pandas as pd
-import numpy as np
 from datetime import datetime, timedelta
-from typing import Optional, Dict, Any, Tuple
+from typing import Optional, Dict
 import tushare as ts
 import time
 
@@ -24,10 +23,10 @@ logger = get_module_logger(__name__)
 _tushare_pro = None
 
 # Tushare API 调用频率控制
-_last_api_call_time = {}  # 记录每个接口的最后调用时间
+_last_api_call_time: Dict[str, float] = {}  # 记录每个接口的最后调用时间
 _min_call_interval = 3.0  # 最小调用间隔（秒），确保不超过每分钟20次的限制
 # stk_mins 接口特殊限制：每分钟最多2次
-_stk_mins_call_times = []  # 记录 stk_mins 接口的调用时间
+_stk_mins_call_times: list[float] = []  # 记录 stk_mins 接口的调用时间
 _stk_mins_min_interval = 30.0  # stk_mins 接口最小调用间隔（秒），确保每分钟不超过2次
 
 
@@ -260,7 +259,7 @@ def fetch_option_codes_tushare(
         )
         
         if df is None or df.empty:
-            logger.warning(f"Tushare opt_basic 返回空数据")
+            logger.warning("Tushare opt_basic 返回空数据")
             return None
         
         # 筛选目标月份和标的
@@ -533,7 +532,7 @@ def fetch_etf_minute_tushare(
         try:
             pro = ts.pro_api(token.strip())
             use_prefer_token = True
-            logger.debug(f"使用 prefer_token 初始化 Tushare Pro API")
+            logger.debug("使用 prefer_token 初始化 Tushare Pro API")
         except Exception as e:
             logger.warning(f"使用 prefer_token 初始化 Tushare Pro API 失败: {e}")
             pro = None
@@ -545,7 +544,7 @@ def fetch_etf_minute_tushare(
             logger.error("无法初始化 Tushare Pro API（prefer_token和默认token都无效）")
             return None
         else:
-            logger.debug(f"使用默认token初始化 Tushare Pro API")
+            logger.debug("使用默认token初始化 Tushare Pro API")
     
     try:
         # 清理代码格式：sh510300 -> 510300.SH, 510300 -> 510300.SH
@@ -771,7 +770,7 @@ def fetch_etf_minute_tushare(
                                     except Exception as e2:
                                         logger.warning(f"使用默认token重试失败: {e2}")
                                 else:
-                                    logger.warning(f"获取 {date_str} {slot_start}-{slot_end} 的 ETF 分钟数据失败: {e}")
+                                    logger.warning(f"获取 {date_str} {slot_start}-{slot_end} 的 ETF 分钟数据失败: {error_msg}")
                         
                         current_date += timedelta(days=1)
                 else:
@@ -941,7 +940,7 @@ def fetch_etf_minute_tushare(
                                 except Exception as e2:
                                     logger.warning(f"使用默认token重试失败: {e2}")
                             else:
-                                logger.warning(f"[批次 {batch_num}] 获取批次 {current_date.strftime('%Y-%m-%d')} ~ {batch_end_date.strftime('%Y-%m-%d')} 的 ETF 分钟数据失败: {e}")
+                                logger.warning(f"[批次 {batch_num}] 获取批次 {current_date.strftime('%Y-%m-%d')} ~ {batch_end_date.strftime('%Y-%m-%d')} 的 ETF 分钟数据失败: {error_msg}")
                         
                         # 更新当前日期到下一批次的开始
                         old_date = current_date
@@ -1056,7 +1055,7 @@ def fetch_etf_minute_tushare(
                             logger.warning(f"使用默认token重试失败: {e2}")
                             return None
                     else:
-                        logger.warning(f"获取 ETF 分钟数据失败: {e}")
+                        logger.warning(f"获取 ETF 分钟数据失败: {error_msg}")
                         return None
         else:
             # 没有日期范围，直接获取（可能只获取最近的数据）
@@ -1160,7 +1159,7 @@ def fetch_etf_minute_tushare(
                         logger.warning(f"使用默认token重试失败: {e2}")
                         return None
                 else:
-                    logger.warning(f"获取 ETF 分钟数据失败: {e}")
+                    logger.warning(f"获取 ETF 分钟数据失败: {error_msg}")
                     return None
         
         if not all_dfs:

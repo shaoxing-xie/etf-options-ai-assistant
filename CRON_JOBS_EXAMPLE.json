@@ -25,7 +25,7 @@
       "description": "每天15:30执行盘后趋势分析",
       "schedule": "30 15 * * 1-5",
       "enabled": true,
-      "message": "执行盘后趋势分析。请使用 tool_analyze_after_close 工具分析当日交易趋势，生成盘后报告，然后使用 tool_send_daily_report 发送日报到飞书。",
+      "message": "执行盘后趋势分析。请使用 tool_analyze_after_close 工具分析当日交易趋势，生成盘后报告，然后使用 tool_send_daily_report 发送日报到钉钉。",
       "channel": "main"
     },
     {

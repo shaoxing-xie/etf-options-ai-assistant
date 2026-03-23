@@ -245,16 +245,18 @@ result = tool_send_risk_alert(
 ### 4. send_daily_report.py - 市场日报
 
 **功能说明**：
-- 发送格式化的市场日报到飞书
+- 发送格式化的市场日报到钉钉自定义机器人（SEC 加签）
 - 融合 Coze `send_daily_report.py` 的完整逻辑
 - 汇总当日市场表现、交易信号、风险状况等信息
-- 使用飞书卡片消息，展示完整的日报内容
+- 展示完整的日报内容（钉钉 Markdown/文本呈现）
+
+> 2026 版本更新：市场日报改为发送到钉钉自定义机器人（`tool_send_daily_report` 复用 SEC 加签逻辑）。
 
 **使用方法**：
 ```python
 from plugins.notification.send_daily_report import tool_send_daily_report
 
-# 发送市场日报
+# 发送市场日报（钉钉）
 result = tool_send_daily_report(
     report_data={
         "market_overview": {
@@ -275,14 +277,14 @@ result = tool_send_daily_report(
 )
 ```
 
-**输入参数**：
+ **输入参数**：
 - `report_data` (dict): 报告数据，包含：
   - `market_overview`: 市场概览（指数涨跌幅、ETF涨跌幅、成交量等）
   - `signals`: 交易信号列表
   - `risk_status`: 风险状况
   - 其他自定义字段
 - `report_date` (str, optional): 报告日期（YYYY-MM-DD），默认今天
-- `webhook_url` (str, optional): 飞书Webhook地址
+- `webhook_url` (str, optional): 可选：钉钉自定义机器人 webhook（包含 access_token；建议主要使用 `~/.openclaw/.env` 的环境变量）
 
 **输出格式**：
 ```python
@@ -297,7 +299,7 @@ result = tool_send_daily_report(
 ```
 
 **技术实现要点**：
-- 使用飞书卡片消息格式
+- 使用钉钉自定义机器人（SEC 加签）发送 Markdown/文本呈现
 - 自动格式化市场数据、信号列表等信息
 - 支持自定义报告内容
 - 包含完整的错误处理
@@ -318,7 +320,7 @@ result = tool_send_daily_report(
     ↓
 格式化消息内容
     ↓
-发送到飞书（Webhook/API）
+发送到钉钉（Webhook/API）
     ↓
 用户收到通知
 ```
@@ -327,23 +329,14 @@ result = tool_send_daily_report(
 
 ### 方式1：环境变量（推荐）
 
-- `FEISHU_WEBHOOK_URL`: 飞书机器人 Webhook URL（推荐）
-- `FEISHU_APP_ID`: 飞书应用ID（使用API时）
-- `FEISHU_APP_SECRET`: 飞书应用密钥（使用API时）
+- `OPENCLAW_DINGTALK_CUSTOM_ROBOT_WEBHOOK_URL`: 钉钉自定义机器人 webhook（包含 `access_token`）
+- `OPENCLAW_DINGTALK_CUSTOM_ROBOT_SECRET`: 钉钉“安全模式”SEC 密钥（用于 SEC 加签）
+- `DINGTALK_KEYWORD`（或 `MONITOR_DINGTALK_KEYWORD`）: 关键词安全校验用（若机器人启用）
 
-### 方式2：原系统config.yaml（回退方案）
+### 方式2：可选回退（keyword）
 
-利用直接访问方式，从原系统config.yaml读取配置：
-
-```yaml
-notification:
-  feishu_webhook: "https://open.feishu.cn/open-apis/bot/v2/hook/xxx"  # Webhook方式
-  feishu_app:  # API方式
-    app_id: "your_app_id"
-    app_secret: "your_app_secret"
-```
-
-**配置优先级**：参数传入 > 环境变量 > 原系统config.yaml
+如果你的钉钉机器人启用了「关键词安全校验」，但你没有显式传入 `keyword`：
+- 可把 `keyword` 写入 `~/.openclaw/workspaces/shared/alert_webhook.json`（tool 内部会尽量读取）
 
 ## 依赖包
 
@@ -353,7 +346,7 @@ notification:
 
 1. **Webhook vs API**：优先使用 Webhook，配置简单；API 方式需要应用凭证
 2. **消息格式**：确保消息内容格式正确，特别是富文本和卡片消息
-3. **频率限制**：注意飞书 API 的频率限制，避免频繁发送
+3. **频率限制**：注意钉钉 API 的频率限制，避免频繁发送
 4. **错误处理**：包含完整的错误处理，失败时会返回错误信息
 5. **安全性**：API Key 和 Webhook URL 应妥善保管，不要泄露
 

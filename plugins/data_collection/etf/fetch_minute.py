@@ -8,7 +8,7 @@ OpenClaw 插件工具
 import requests
 import pandas as pd
 import numpy as np
-from typing import Optional, Dict, Any, List, Tuple
+from typing import Optional, Dict, Any, Tuple
 from datetime import datetime, timedelta
 from pathlib import Path
 import pytz
@@ -57,8 +57,7 @@ try:
             sys.path.insert(0, str(selected_root))
         from src.data_cache import (
             get_cached_etf_minute, save_etf_minute_cache,
-            merge_cached_and_fetched_data, get_cache_file_path,
-            load_cached_data, save_cached_data
+            merge_cached_and_fetched_data
         )
         from src.config_loader import load_system_config
         CACHE_AVAILABLE = True
@@ -433,7 +432,7 @@ def _fetch_etf_minute_sina(
         
         return df
         
-    except Exception as e:
+    except Exception:
         return None
 
 
@@ -521,7 +520,7 @@ def fetch_single_etf_minute(
                     # 更新start_date_str和end_date_str用于后续筛选
                     start_date_str = f"{start_date_formatted[:4]}-{start_date_formatted[4:6]}-{start_date_formatted[6:8]} 09:30:00"
                     end_date_str = f"{end_date_formatted[:4]}-{end_date_formatted[4:6]}-{end_date_formatted[6:8]} 15:00:00"
-        except Exception as e:
+        except Exception:
             # 缓存失败不影响主流程
             pass
     # ========== 缓存逻辑结束 ==========
@@ -585,7 +584,7 @@ def fetch_single_etf_minute(
                 if time_col:
                     df = merge_cached_and_fetched_data(cached_partial_df, df, time_col)
                     source = f"{source}+cache" if source else "cache"
-        except Exception as e:
+        except Exception:
             pass
     # ========== 缓存合并结束 ==========
     
@@ -600,7 +599,7 @@ def fetch_single_etf_minute(
         try:
             config = load_system_config(use_cache=True)
             save_etf_minute_cache(clean_code, period, df, config=config)
-        except Exception as e:
+        except Exception:
             pass
     # ========== 缓存保存结束 ==========
     

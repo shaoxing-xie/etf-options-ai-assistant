@@ -5,7 +5,7 @@ Rule 适配器：将现有可执行工具输出转为 SignalCandidate。
 from __future__ import annotations
 
 import json
-from typing import Any, Dict, List, Optional
+from typing import Any, List, Optional
 
 from strategy_engine.schemas import SignalCandidate
 

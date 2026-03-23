@@ -11,12 +11,12 @@ import pytz
 from src.logger_config import get_module_logger, log_error_with_context
 from src.data_collector import (
     fetch_index_daily_em, fetch_global_index_spot_em, fetch_global_index_hist_em,
-    fetch_etf_spot_sina, fetch_index_opening_data, fetch_index_opening_history,
+    fetch_index_opening_history,
     fetch_a50_daily_sina_hist
     # 注意：fetch_a50_daily_sina 已移除，新浪财经CN_MarketData.getKLineData接口不支持A50期货数据（返回null）
     # 使用 fetch_a50_daily_sina_hist（通过AKShare的futures_foreign_hist接口获取新浪财经数据）
 )
-from src.indicator_calculator import calculate_macd, calculate_ma, calculate_volume_ma
+from src.indicator_calculator import calculate_macd, calculate_ma
 
 logger = get_module_logger(__name__)
 
@@ -59,6 +59,14 @@ def _fetch_market_breadth_sina(
             "Connection": "keep-alive",
         }
 
+        def _safe_float(v: Any) -> Optional[float]:
+            """安全转换为 float；失败返回 None（避免 Bandit 的 try/except + continue）。"""
+            try:
+                return float(v)
+            except Exception as e:
+                logger.debug(f"安全转 float 失败: v={v}, 错误: {e}", exc_info=True)
+                return None
+
         # ========== 0) 读取缓存（同一天内复用） ==========
         today = datetime.now().strftime("%Y%m%d")
         cache_path = os.path.join(cache_dir, f"market_breadth_{today}.json")
@@ -72,9 +80,9 @@ def _fetch_market_breadth_sina(
                         if isinstance(cached, dict) and cached.get("success"):
                             cached["source"] = str(cached.get("source") or "sina_market_center") + "+cache"
                             return cached
-            except Exception:
+            except Exception as e:
                 # 缓存读取失败不影响主流程
-                pass
+                logger.debug(f"缓存读取失败，忽略: {e}", exc_info=True)
 
         session = requests.Session()
         session.headers.update(headers)
@@ -127,9 +135,8 @@ def _fetch_market_breadth_sina(
                     continue
                 # akshare 字段：changepercent
                 cp = row.get("changepercent")
-                try:
-                    cpv = float(cp)
-                except Exception:
+                cpv = _safe_float(cp)
+                if cpv is None:
                     continue
                 if cpv > 0:
                     rising += 1
@@ -152,8 +159,8 @@ def _fetch_market_breadth_sina(
             os.makedirs(cache_dir, exist_ok=True)
             with open(cache_path, "w", encoding="utf-8") as f:
                 json.dump(result, f, ensure_ascii=False, indent=2)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"写入缓存失败，忽略: {e}", exc_info=True)
         return result
     except Exception as e:
         return {"success": False, "error": str(e)}
@@ -406,7 +413,8 @@ def analyze_daily_market_after_close(config: Optional[Dict] = None) -> Dict[str,
                     else:  # YYYY-MM-DD 或其他格式
                         try:
                             shanghai_last_date = pd.to_datetime(last_date).strftime("%Y%m%d")
-                        except:
+                        except Exception as e:
+                            logger.debug(f"日期解析失败（shanghai_last_date）: {last_date}, 错误: {e}", exc_info=True)
                             shanghai_last_date = last_date
                     
                     if shanghai_last_date != today:
@@ -422,7 +430,8 @@ def analyze_daily_market_after_close(config: Optional[Dict] = None) -> Dict[str,
                     else:  # YYYY-MM-DD 或其他格式
                         try:
                             hs300_last_date = pd.to_datetime(last_date).strftime("%Y%m%d")
-                        except:
+                        except Exception as e:
+                            logger.debug(f"日期解析失败（hs300_last_date）: {last_date}, 错误: {e}", exc_info=True)
                             hs300_last_date = last_date
                     
                     if hs300_last_date != today:
@@ -510,7 +519,7 @@ def analyze_daily_market_after_close(config: Optional[Dict] = None) -> Dict[str,
         )
         
         # 6. 总结当天日内行情整体情况
-        intraday_summary = {
+        intraday_summary: Dict[str, Any] = {
             "shanghai_change": None,
             "hs300_change": None,
             "volume_status": "正常"  # 放量/缩量/正常

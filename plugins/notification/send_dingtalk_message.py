@@ -148,7 +148,7 @@ def tool_send_dingtalk_message(
                             parsed = json.loads(body)
                         except json.JSONDecodeError:
                             parsed = {"raw": body}
-                except Exception as e_direct:  # noqa: BLE001
+                except Exception:  # noqa: BLE001
                     # Fallback: use environment proxies (some environments require it).
                     with urllib.request.urlopen(req_attempt, timeout=15) as resp:
                         body = resp.read().decode("utf-8") or "{}"

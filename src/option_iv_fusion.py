@@ -5,7 +5,7 @@
 
 import pandas as pd
 import numpy as np
-from typing import Dict, List, Optional, Any
+from typing import Dict, Optional, Any
 from src.logger_config import get_module_logger
 from src.data_collector import fetch_option_greeks_sina
 from src.config_loader import get_underlyings
@@ -100,20 +100,22 @@ def get_option_iv_data(
         # 计算统计值
         all_ivs = call_ivs + put_ivs
         avg_iv = np.mean(all_ivs) if all_ivs else None
-        call_iv = np.mean(call_ivs) if call_ivs else None
-        put_iv = np.mean(put_ivs) if put_ivs else None
         
         if avg_iv is None:
             return None
         
+        # 保证 call_iv / put_iv 始终为 float，避免 Dict[str, float] 返回类型在 mypy 下被推断出 float|None
+        call_iv: float = float(np.mean(call_ivs)) if call_ivs else float(avg_iv)
+        put_iv: float = float(np.mean(put_ivs)) if put_ivs else float(avg_iv)
+        
         logger.debug(f"获取期权IV数据成功: 标的物={underlying}, "
-                    f"平均IV={avg_iv:.4f}, Call IV={call_iv:.4f if call_iv else None}, "
-                    f"Put IV={put_iv:.4f if put_iv else None}, 合约数={len(all_ivs)}")
+                    f"平均IV={avg_iv:.4f}, Call IV={call_iv:.4f}, "
+                    f"Put IV={put_iv:.4f}, 合约数={len(all_ivs)}")
         
         return {
             'avg_iv': float(avg_iv),
-            'call_iv': float(call_iv) if call_iv else None,
-            'put_iv': float(put_iv) if put_iv else None,
+            'call_iv': float(call_iv),
+            'put_iv': float(put_iv),
             'num_contracts': len(all_ivs)
         }
         
