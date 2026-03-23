@@ -65,6 +65,7 @@ def main() -> int:
         )
     ).expanduser()
     dry_run = os.environ.get("DRY_RUN", "").lower() in {"1", "true", "yes"}
+    preserve_freeride_defaults = os.environ.get("PRESERVE_FREERIDE_DEFAULTS", "").lower() in {"1", "true", "yes"}
 
     cfg = _read_json(openclaw_json_path)
     routes = _read_json(routes_path)
@@ -83,17 +84,27 @@ def main() -> int:
             raise SystemExit(f"group '{group_name}' missing model")
         group_models[group_name] = ModelCfg.from_obj(group_obj["model"])
 
+    changed = False
+
     # Apply defaults.model = group[defaultsGroup].model
+    # Optional integration mode for FreeRide:
+    # - PRESERVE_FREERIDE_DEFAULTS=1 -> keep existing agents.defaults.model/models untouched
+    # - still apply per-agent overrides (M/S etc.) from model_routes.json
     defaults_model = group_models[defaults_group]
     agents_defaults = _ensure_dict(cfg, "agents", "defaults")
-    agents_defaults["model"] = defaults_model.to_obj()
+    if preserve_freeride_defaults:
+        print("PRESERVE_FREERIDE_DEFAULTS=1 -> keeping agents.defaults.model/models unchanged.")
+    else:
+        desired_defaults = defaults_model.to_obj()
+        if agents_defaults.get("model") != desired_defaults:
+            agents_defaults["model"] = desired_defaults
+            changed = True
 
     # Apply per-agent overrides
     agent_list = _get(cfg, "agents", "list") or []
     if not isinstance(agent_list, list):
         raise SystemExit("openclaw.json agents.list must be a list")
 
-    changed = False
     for agent in agent_list:
         if not isinstance(agent, dict):
             continue
