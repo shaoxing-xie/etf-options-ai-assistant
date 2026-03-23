@@ -56,3 +56,8 @@ workflows/logs/
 .coverage
 htmlcov/
 
+# Static-analysis / security scan outputs (local only)
+mypy_*.txt
+ruff_errors_full.txt
+bandit_report.json
+
