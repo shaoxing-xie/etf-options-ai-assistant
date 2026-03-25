@@ -55,12 +55,12 @@ steps:
   - name: record_signal_effect
     agent: analysis_agent
     tool: tool_record_signal_effect
-    description: 记录信号效果（使用上一步生成的signal_id）
+    description: 记录信号效果（动态使用上一步生成的signal_id/signal_type/strategy）
     params:
-      # signal_id将从generate_signals步骤的输出中获取
-      signal_type: "buy"  # 或从信号结果中动态获取
+      signal_id: "{{generate_signals.data.signal_id}}"
+      signal_type: "{{generate_signals.data.signal_type}}"
       etf_symbol: "510300"
-      strategy: "trend_following"
+      strategy: "{{generate_signals.data.strategy}}"
     depends_on: [generate_signals]
     continue_on_failure: true  # 如果记录失败，不影响后续步骤
 

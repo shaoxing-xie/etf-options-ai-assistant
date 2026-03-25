@@ -264,6 +264,17 @@ def calculate_index_volatility_range_fallback(
         
         # 获取当前价格（使用最新收盘价）
         current_price = float(index_daily_data[close_col].iloc[-1])
+
+        # 动态置信度需要的“日线涨跌幅”（用于极端日降权）
+        yesterday_close: Optional[float] = None
+        if len(index_daily_data) >= 2:
+            try:
+                yesterday_close = float(index_daily_data[close_col].iloc[-2])
+            except Exception:
+                yesterday_close = None
+        price_change_pct: float = 0.0
+        if yesterday_close and yesterday_close > 0:
+            price_change_pct = (current_price - yesterday_close) / yesterday_close * 100.0
         
         # 计算历史波动率（20日）
         hist_vol = calculate_historical_volatility(
@@ -304,7 +315,9 @@ def calculate_index_volatility_range_fallback(
         remaining_ratio = remaining_minutes / 240.0 if remaining_minutes > 0 else 0
         
         # 基于ATR计算波动区间
-        atr_multiplier = 2.0 * np.sqrt(remaining_ratio)  # 根据剩余时间调整
+        # P0：收敛系数下调，避免极端日区间过宽（原 2.0）
+        atr_multiplier_base = 1.5
+        atr_multiplier = atr_multiplier_base * np.sqrt(remaining_ratio)  # 根据剩余时间调整
         atr_upper = current_price + atr_value * atr_multiplier
         atr_lower = current_price - atr_value * atr_multiplier
         
@@ -318,6 +331,45 @@ def calculate_index_volatility_range_fallback(
         lower = atr_lower * 0.6 + hist_vol_lower * 0.4
         
         range_pct = (upper - lower) / current_price * 100
+
+        # P0：输出约束（clamp）+ 动态置信度（极端日降低置信度）
+        min_intraday_pct = 0.005
+        max_intraday_pct = 0.04
+        try:
+            if config:
+                vol_cfg = (
+                    config.get("signal_params", {})
+                    .get("intraday_monitor_510300", {})
+                    .get("volatility", {})
+                )
+                min_intraday_pct = vol_cfg.get("min_intraday_pct", min_intraday_pct)
+                max_intraday_pct = vol_cfg.get("max_intraday_pct", max_intraday_pct)
+        except Exception:
+            pass
+
+        def _to_pct(x: float) -> float:
+            # x<=1 视为比例；否则视为百分比
+            return float(x) * 100.0 if x <= 1.0 else float(x)
+
+        min_pct = _to_pct(min_intraday_pct)
+        max_pct = _to_pct(max_intraday_pct)
+        max_pct = max(max_pct, min_pct)
+
+        clamped_range_pct = float(min(max(range_pct, min_pct), max_pct))
+        clamp_applied = abs(clamped_range_pct - range_pct) > 1e-9
+
+        if clamp_applied and current_price > 0:
+            # clamp 后以当前价格为中心重新缩放区间（保持对称）
+            half = current_price * clamped_range_pct / 200.0
+            upper = current_price + half
+            lower = max(0.0, current_price - half)
+            range_pct = (upper - lower) / current_price * 100.0
+
+        # 置信度：大幅涨跌（例如>5%）显著降低置信度
+        move_abs = abs(price_change_pct)
+        move_factor = max(0.0, min(1.0, 1.0 - move_abs / 5.0))
+        confidence = 0.3 + 0.3 * move_factor
+        confidence = max(0.2, min(0.6, confidence))
         
         return {
             'symbol': '000300',
@@ -326,9 +378,13 @@ def calculate_index_volatility_range_fallback(
             'lower': lower,
             'range_pct': range_pct,
             'method': '降级方案（日线ATR+历史波动率）',
-            'confidence': 0.6,  # 降级方案置信度较低
+            'confidence': confidence,
             'atr': atr_value,
-            'historical_volatility': hist_vol
+            'historical_volatility': hist_vol,
+            'fallback_reason': 'minute_missing_fallback_daily',
+            'clamp_applied': clamp_applied,
+            'clamp_bounds_pct': {'min_pct': min_pct, 'max_pct': max_pct},
+            'price_change_pct': price_change_pct,
         }
         
     except Exception as e:
@@ -404,6 +460,11 @@ def calculate_etf_volatility_range_fallback(
         
         # 获取昨日收盘价
         yesterday_close = float(etf_daily_data[close_col].iloc[-1])
+
+        # 动态置信度需要的“日线涨跌幅”（用于极端日降权）
+        price_change_pct: float = 0.0
+        if yesterday_close and yesterday_close > 0:
+            price_change_pct = (etf_current_price - yesterday_close) / yesterday_close * 100.0
         
         # 计算历史波动率（20日）
         hist_vol = calculate_historical_volatility(
@@ -444,7 +505,9 @@ def calculate_etf_volatility_range_fallback(
         remaining_ratio = remaining_minutes / 240.0 if remaining_minutes > 0 else 0
         
         # 基于ATR计算波动区间
-        atr_multiplier = 2.0 * np.sqrt(remaining_ratio)
+        # P0：收敛系数下调，避免极端日区间过宽（原 2.0）
+        atr_multiplier_base = 1.5
+        atr_multiplier = atr_multiplier_base * np.sqrt(remaining_ratio)
         atr_upper = etf_current_price + atr_value * atr_multiplier
         atr_lower = etf_current_price - atr_value * atr_multiplier
         
@@ -480,6 +543,43 @@ def calculate_etf_volatility_range_fallback(
         lower = (atr_lower * 0.6 + hist_vol_lower * 0.4) * trend_adjustment * calibration_factor
         
         range_pct = (upper - lower) / etf_current_price * 100
+
+        # P0：输出约束（clamp）+ 动态置信度（极端日降低置信度）
+        min_intraday_pct = 0.005
+        max_intraday_pct = 0.04
+        try:
+            if config:
+                vol_cfg = (
+                    config.get("signal_params", {})
+                    .get("intraday_monitor_510300", {})
+                    .get("volatility", {})
+                )
+                min_intraday_pct = vol_cfg.get("min_intraday_pct", min_intraday_pct)
+                max_intraday_pct = vol_cfg.get("max_intraday_pct", max_intraday_pct)
+        except Exception:
+            pass
+
+        def _to_pct(x: float) -> float:
+            return float(x) * 100.0 if x <= 1.0 else float(x)
+
+        min_pct = _to_pct(min_intraday_pct)
+        max_pct = _to_pct(max_intraday_pct)
+        max_pct = max(max_pct, min_pct)
+
+        clamped_range_pct = float(min(max(range_pct, min_pct), max_pct))
+        clamp_applied = abs(clamped_range_pct - range_pct) > 1e-9
+
+        if clamp_applied and etf_current_price > 0:
+            # clamp 后以当前价格为中心重新缩放区间（保持对称）
+            half = etf_current_price * clamped_range_pct / 200.0
+            upper = etf_current_price + half
+            lower = max(0.0, etf_current_price - half)
+            range_pct = (upper - lower) / etf_current_price * 100.0
+
+        move_abs = abs(price_change_pct)
+        move_factor = max(0.0, min(1.0, 1.0 - move_abs / 5.0))
+        confidence = 0.3 + 0.3 * move_factor
+        confidence = max(0.2, min(0.6, confidence))
         
         return {
             'symbol': '510300',
@@ -488,11 +588,14 @@ def calculate_etf_volatility_range_fallback(
             'lower': lower,
             'range_pct': range_pct,
             'method': '降级方案（日线ATR+历史波动率+趋势调整）',
-            'confidence': 0.6,  # 降级方案置信度较低
+            'confidence': confidence,
             'atr': atr_value,
             'historical_volatility': hist_vol,
             'yesterday_close': yesterday_close,
-            'price_change_pct': (etf_current_price - yesterday_close) / yesterday_close * 100 if yesterday_close > 0 else 0
+            'price_change_pct': price_change_pct,
+            'fallback_reason': 'minute_missing_fallback_daily',
+            'clamp_applied': clamp_applied,
+            'clamp_bounds_pct': {'min_pct': min_pct, 'max_pct': max_pct},
         }
         
     except Exception as e:

@@ -54,7 +54,10 @@ steps:
 
   - name: predict_intraday_range_510300
     tool: tool_predict_intraday_range
-    description: 预测510300日内合理波动区间（用于过滤极端高/低波动环境）
+    description: >
+      预测510300日内合理波动区间（用于过滤极端高/低波动环境）；
+      该工具输出已按 `config.yaml -> signal_params -> intraday_monitor_510300 -> volatility`
+      进行 `range_pct` 夹紧与 `confidence` 收敛。
     params:
       symbol: "510300"
 
@@ -105,12 +108,19 @@ steps:
       - risk_assessment_510300
     condition: "underlying == '510300' and signal_strength >= 'medium'"
     params:
-      title: "510300 日内监控建议（研究级）"
+      title: "510300 日内监控建议（研究级 · 双向同发）"
       message: |
-        [510300 日内监控建议]
+        [510300 日内监控建议（研究级 · 双向同发）]
         时间：{{risk_assessment_510300.data.timestamp}}
 
-        信号（generate_intraday_signals）：{{generate_intraday_signals_510300.data}}
-        风险评估（risk_assessment）：{{risk_assessment_510300.data}}
+        风险等级：{{risk_assessment_510300.data.risk_level}}
+        风险比例：{{risk_assessment_510300.data.risk_ratio}}%
+        建议要点：{{risk_assessment_510300.data.recommendations}}
+
+        信号摘要（阈值判断用）：signal_type={{generate_intraday_signals_510300.data.signal_type}}；signal_strength={{generate_intraday_signals_510300.data.signal_strength}}
+
+        双向信号明细（可能同时包含 call/put；内含权重/贡献拆解字段如 etf_turnover_score / greeks_score / daily_trend_score）：{{generate_intraday_signals_510300.data.signals}}
+
+        说明：系统仅作为交易助手的研究与辅助决策参考，允许一定噪声；遇到高风险等级以观望/严格止损为主。
       mode: "prod"
 

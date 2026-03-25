@@ -46,6 +46,16 @@ cd /path/to/etf-options-ai-assistant
 
 ---
 
+## 波动区间预测评估与回填（宽基ETF巡检快报闭环）
+
+| 脚本 | 用途 | 示例 |
+|------|------|------|
+| `update_intraday_range_actuals.py` | 收盘后回填 `predictions_{date}.json` 的 `actual_range`，并计算 `hit` | `python3 scripts/update_intraday_range_actuals.py --date 20260325` |
+| `generate_intraday_range_weekly_report.py` | 生成覆盖率/区间宽度等周报，落盘到 `data/prediction_reports/` | `python3 scripts/generate_intraday_range_weekly_report.py --week-start 20260324` |
+| `monitor_intraday_range_method_metrics.py` | 监控方法分组占比与已验证样本的 `coverage_rate/average_width_pct` | `python3 scripts/monitor_intraday_range_method_metrics.py --days 14` |
+
+---
+
 ## 监控与预警（独立小系统）
 
 与 `data/alerts.json`、`data/pending_notifications.json` 等配合，可由 cron 周期性调用：

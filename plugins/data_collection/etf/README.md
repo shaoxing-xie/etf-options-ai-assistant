@@ -154,6 +154,7 @@ result = tool_fetch_etf_minute(
 
 **技术实现要点**：
 - 优先使用新浪财经接口（`stock_zh_a_hist_min_em`）
+- （日内波动预测链路）当新浪 `CN_MarketData.getKLineData` 返回空时，会追加使用 `ak.stock_zh_a_minute(period=15/30/60, adjust="qfq")` 作为兜底，并映射为「时间/开盘/最高/最低/收盘/成交量/成交额」列
 - 降级使用东方财富接口
 - 支持缓存机制：自动检查缓存，只获取缺失数据
 - 支持部分缓存命中：自动合并缓存和新获取的数据

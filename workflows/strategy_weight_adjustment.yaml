@@ -1,7 +1,7 @@
 name: strategy_weight_adjustment
 description: 策略权重调整定期任务（每周执行，在策略评分之后）
 schedule:
-  cron: "0 18 * * 5"  # 每周五18:00执行（策略评分之后）
+  cron: "15 18 * * 5"  # 每周五18:15执行（与18:00评分任务错峰）
   timezone: "Asia/Shanghai"
 steps:
   - name: get_current_weights

@@ -1,0 +1,48 @@
+# 信号参数配置 - etf_510300_intraday_monitor 优化
+# 创建时间: 2026-03-25
+# 用途: 定义信号阈值、日线过滤规则、cooldown 机制
+
+signal_params:
+  # 510300 日内监控信号参数
+  intraday_monitor_510300:
+    # 信号强度阈值（从 0.6 降低至 0.5）
+    min_signal_strength: 0.5
+    
+    # 风险等级阈值
+    max_risk_level: "high"
+    
+    # 日线趋势过滤
+    trend_filter:
+      # 放宽日线过滤：允许日线非主趋势下的研究级反向/转折信号进入（允许一定噪声）
+      require_uptrend_for_long: false
+      
+      # 新增：允许超卖反弹信号
+      allow_oversold_rebound: true
+      oversold_threshold:
+        rsi_30min: 30          # 30分钟 RSI < 30 视为超卖
+        price_position: "lower_band"  # 价格位于波动区间下轨
+    
+    # 午休静默机制
+    quiet_hours:
+      - start: "11:30"
+        end: "13:00"
+        action: "skip_notification"
+    
+    # 发送 cooldown 机制
+    notification:
+      cooldown_minutes: 30     # 30分钟内不重复发送
+      max_per_day: 5           # 每天最多发送5次
+      channels:
+        - "dingtalk"
+        # - "feishu"  # 禁用飞书，仅钉钉
+
+# 其他标的可复用类似结构
+intraday_monitor_default:
+  min_signal_strength: 0.5
+  max_risk_level: "high"
+  trend_filter:
+    require_uptrend_for_long: false
+    allow_oversold_rebound: true
+  notification:
+    cooldown_minutes: 30
+    max_per_day: 5

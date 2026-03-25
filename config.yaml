@@ -58,6 +58,11 @@ logging:
   file_path: logs/option_trading_{date}.log
   max_file_size_mb: 10
   backup_count: 7
+realtime_full_fetch_cache:
+  # 是否对“全量拉取 -> 筛选”的实时行情做进程内短缓存
+  # 缺省：开启；TTL 秒数建议 30-60，平衡实时性与成本
+  enabled: true
+  ttl_seconds: 45
 signal_params:
   # 原有参数（保留兼容）
   rsi_oversold: 40
@@ -135,9 +140,10 @@ signal_params:
       enabled: true
       ma_short: 20                   # 日线短期均线
       ma_long: 60                    # 日线长期均线
-      require_uptrend_for_long: true # 仅在日线趋势向上时启用做多方向建议
+      # 放宽日线过滤：允许日线非主趋势下的 call/put 研究级反向/转折信号同发（允许一定噪声）
+      require_uptrend_for_long: false
     signal_thresholds:
-      min_strength_for_alert: 0.6    # 触发告警的最小综合信号强度（0-1）
+      min_strength_for_alert: 0.5    # 触发告警的最小综合信号强度（0-1）
       min_trend_score: 0.3           # 趋势信号最低得分
     notification:
       enabled: true

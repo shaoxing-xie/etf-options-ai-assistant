@@ -4,7 +4,7 @@
 供 OpenClaw tool_runner / 定时任务调用。
 """
 
-from typing import Dict, Any
+from typing import Dict, Any, List
 from datetime import datetime
 
 from src.data_collector import (
@@ -68,7 +68,41 @@ def tool_generate_signals(
                     "signals": [],
                 },
             }
-        first = signals[0]
+        # 同一次可能同时产出 call/put；为了避免工作流条件只看第一条而漏掉另一方向，
+        # 这里把返回的 signal_strength 提升为“全部信号中的最大强度”。
+        strengths: List[float] = []
+        for s in signals:
+            if not isinstance(s, dict):
+                continue
+            v = s.get("signal_strength", None)
+            try:
+                if v is not None:
+                    strengths.append(float(v))
+            except (TypeError, ValueError):
+                continue
+
+        max_strength = max(strengths) if strengths else None
+
+        max_signal = None
+        if max_strength is not None:
+            for s in signals:
+                if isinstance(s, dict) and s.get("signal_strength", None) == max_strength:
+                    max_signal = s
+                    break
+
+        # 代表信号如果拿不到，就退化使用第一条
+        rep = max_signal if isinstance(max_signal, dict) else signals[0]
+
+        # 同一次同时有 call/put：用更明确的类型标签，便于消息侧呈现
+        signal_types = sorted(
+            set(str(s.get("signal_type")) for s in signals if isinstance(s, dict) and s.get("signal_type"))
+        )
+        if len(signal_types) >= 2:
+            signal_type_out = "both"
+        else:
+            signal_type_out = signal_types[0] if signal_types else None
+
+        first = rep
         signal_id = (
             first.get("timestamp", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
             .replace("-", "")
@@ -80,10 +114,13 @@ def tool_generate_signals(
             "message": f"已生成 {len(signals)} 个信号",
             "data": {
                 "signal_id": signal_id,
-                "signal_type": first.get("signal_type"),
-                "signal_strength": first.get("signal_strength"),
-                "trend_strength": first.get("trend_strength"),
-                "signal_confidence": first.get("signal_confidence", first.get("signal_strength")),
+                "signal_type": signal_type_out,
+                "signal_strength": max_strength if max_strength is not None else first.get("signal_strength"),
+                "trend_strength": first.get("trend_strength", first.get("signal_strength")),
+                "signal_confidence": first.get(
+                    "signal_confidence",
+                    max_strength if max_strength is not None else first.get("signal_strength"),
+                ),
                 "signals": signals,
             },
         }

@@ -966,6 +966,56 @@ def calculate_etf_volatility_range_multi_period(
         except Exception as e:
             logger.debug(f"期权IV融合失败（双周期）: {e}，使用原始预测")
         
+        # P0/P2：统一收敛策略（与 tool_predict_intraday_range 同口径）
+        # 目标：避免极端日“区间过宽 + 置信度偏乐观”在 volatility_ranges 缓存中持续失控。
+        try:
+            if config is None:
+                config = load_system_config(use_cache=True)
+
+            vol_cfg = (
+                config.get("signal_params", {})
+                .get("intraday_monitor_510300", {})
+                .get("volatility", {})
+            )
+            # 配置口径：通常是比例（如 0.04 = 4%）
+            min_intraday_pct = vol_cfg.get("min_intraday_pct", 0.005)
+            max_intraday_pct = vol_cfg.get("max_intraday_pct", 0.04)
+
+            def _to_pct(x: float) -> float:
+                # x<=1 视为比例；否则视为百分比
+                return float(x) * 100.0 if x <= 1.0 else float(x)
+
+            min_pct = _to_pct(min_intraday_pct)
+            max_pct = _to_pct(max_intraday_pct)
+            max_pct = max(max_pct, min_pct)
+
+            current_price = float(result.get("current_price") or etf_current_price)
+            pre_range_pct = float(result.get("range_pct") or 0.0)
+
+            # clamp range_pct 并以当前价格为中心重新缩放 upper/lower（对称）
+            clamped_range_pct = float(min(max(pre_range_pct, min_pct), max_pct))
+            clamp_applied = abs(clamped_range_pct - pre_range_pct) > 1e-9
+
+            if current_price > 0 and clamp_applied:
+                half = current_price * clamped_range_pct / 200.0
+                result["upper"] = round(current_price + half, 4)
+                result["lower"] = round(max(0.0, current_price - half), 4)
+                result["range_pct"] = round((result["upper"] - result["lower"]) / current_price * 100.0, 3)
+
+            # 置信度硬收敛：避免高置信度与高区间并存
+            # 若预先区间已超过上限，则进一步降权（按压缩比例缩放）
+            conf = float(result.get("confidence") or 0.3)
+            conf = min(conf, 0.6)
+            if pre_range_pct > 0 and pre_range_pct > max_pct:
+                conf *= (max_pct / pre_range_pct)
+                conf = float(max(0.2, min(0.6, conf)))
+            result["confidence"] = round(conf, 2)
+
+            result["clamp_applied"] = clamp_applied
+            result["clamp_bounds_pct"] = {"min_pct": min_pct, "max_pct": max_pct}
+        except Exception as e:
+            logger.debug(f"双周期区间收敛处理失败: {e}，使用原始预测")
+
         # GROK优化：添加突破概率计算
         breakthrough_prob = calculate_breakthrough_probability(
             current_price=etf_current_price,
@@ -1921,6 +1971,66 @@ def calculate_volatility_ranges(
             from src.config_loader import load_system_config
             config = load_system_config()
         
+        # P0/P2：统一收敛策略（与 tool_predict_intraday_range 同口径）
+        # 目的：避免极端日“区间过宽 + 置信度偏乐观”在 volatility_ranges 缓存中持续失控。
+        try:
+            vol_cfg = (
+                config.get("signal_params", {})
+                .get("intraday_monitor_510300", {})
+                .get("volatility", {})
+            )
+            min_intraday_pct = vol_cfg.get("min_intraday_pct", 0.005)
+            max_intraday_pct = vol_cfg.get("max_intraday_pct", 0.04)
+
+            def _to_pct(x: float) -> float:
+                # x<=1 视为比例；否则视为百分比
+                return float(x) * 100.0 if x <= 1.0 else float(x)
+
+            min_pct = _to_pct(min_intraday_pct)
+            max_pct = _to_pct(max_intraday_pct)
+            max_pct = max(max_pct, min_pct)
+
+            def _clamp_range_and_conf(_range: Dict[str, Any], _current_price: float) -> Dict[str, Any]:
+                try:
+                    if not _range or _current_price <= 0:
+                        return _range
+                    pre_range_pct = float(_range.get("range_pct") or 0.0)
+                    current_price = float(_current_price)
+
+                    clamped_range_pct = float(min(max(pre_range_pct, min_pct), max_pct))
+                    clamp_applied = abs(clamped_range_pct - pre_range_pct) > 1e-9
+
+                    if clamp_applied:
+                        half = current_price * clamped_range_pct / 200.0
+                        _range["upper"] = round(current_price + half, 4)
+                        _range["lower"] = round(max(0.0, current_price - half), 4)
+                        _range["range_pct"] = round(
+                            (_range["upper"] - _range["lower"]) / current_price * 100.0, 3
+                        )
+
+                    # 置信度硬收敛
+                    conf = float(_range.get("confidence") or 0.3)
+                    conf = min(conf, 0.6)
+                    if pre_range_pct > max_pct and pre_range_pct > 0:
+                        conf *= (max_pct / pre_range_pct)
+                        conf = float(max(0.2, min(0.6, conf)))
+                    _range["confidence"] = round(conf, 2)
+
+                    _range["clamp_applied"] = clamp_applied
+                    _range["clamp_bounds_pct"] = {"min_pct": min_pct, "max_pct": max_pct}
+                except Exception:
+                    pass
+                return _range
+
+            # Index
+            idx_cp = float(index_range.get("current_price") or index_current_price or 0.0)
+            index_range = _clamp_range_and_conf(index_range, idx_cp)
+            # ETF
+            etf_cp = float(etf_range.get("current_price") or etf_current_price or 0.0)
+            etf_range = _clamp_range_and_conf(etf_range, etf_cp)
+        except Exception as e:
+            logger.debug(f"双周期收敛策略应用失败: {e}")
+
         from src.config_loader import get_contract_codes
         call_contracts_config = get_contract_codes(config, 'call', verify_strike=False) if call_contract_code is None else None
         put_contracts_config = get_contract_codes(config, 'put', verify_strike=False) if put_contract_code is None else None

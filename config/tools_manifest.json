@@ -1319,8 +1319,7 @@
           },
           "title": {
             "type": "string",
-            "description": "消息标题",
-            "required": false
+            "description": "消息标题"
           },
           "webhook_url": {
             "type": "string",

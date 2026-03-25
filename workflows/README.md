@@ -16,7 +16,7 @@
 | `after_close_analysis_enhanced.yaml` | 工作日 15:30 | **唯一**盘后工作流：实时行情、盘后分析、历史波动率、信号、效果记录、日报（已替代原精简版 `after_close_analysis.yaml`） |
 | `signal_generation.yaml` | 工作日 9–15 点每 30 分钟 | 读 **ETF 日线缓存** + 指标/波动/区间/信号/风控/告警 |
 | `signal_generation_on_demand.yaml` | `schedule: null`（仅手动） | 按需信号：实时 ETF、指标、信号、风控、仓位、告警 |
-| `etf_510300_intraday_monitor.yaml` | 工作日 9–15 点每 5 分钟（错开采集） | **仅读本地缓存** 510300/000300 分钟线，指标与建议级告警（含钉钉） |
+| `etf_510300_intraday_monitor.yaml` | 工作日 9–15 点每 5 分钟（错开采集） | **仅读本地缓存** 510300/000300 分钟线；建议级提醒支持 **call/put 双向同发（研究级）**，阈值与日线过滤见 `config.yaml` |
 | `etf_rotation_research.yaml` | 工作日 18:00 | ETF 轮动研究 + 日报 |
 | `strategy_research.yaml` | 周五 19:00 | 策略研究/回放报告 + 日报 |
 | `strategy_evaluation.yaml` | 周五 18:00（`schedule.cron` + `timezone`） | 多策略 `tool_calculate_strategy_score` |

@@ -99,7 +99,7 @@
   - `signal_records/`：信号记录数据库与 JSON。
   - `prediction_records/`：预测记录数据库与 JSON。
   - `trend_analysis/`：趋势分析结果。
-  - `volatility_ranges/`：波动区间预测结果。
+  - `volatility_ranges/`：波动区间预测结果（已在生成源头统一收敛：`range_pct` 夹紧、`confidence` 上限等）。
   - `cache/`：LLM 上下文、市场广度缓存等。
 - `logs/`：统一日志目录
   - `option_trading_{date}.log`：主交易助手运行日志。

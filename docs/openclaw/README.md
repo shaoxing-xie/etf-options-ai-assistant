@@ -13,6 +13,8 @@
   - `Strategy_Research_Loop.md`：策略研究闭环设计与相关工作流说明。
   - `ETF_Rotation_Research_Workflow.md`：ETF 轮动研究工作流的设计与调度建议。
   - `信号与风控巡检工作流.md`：巡检工作流与风控检查流程。
+  - `宽基ETF巡检快报-日内波动区间收敛说明.md`：缓存口径收敛、字段含义与验证方式。
+  - `OpenClaw与Cursor协作代码维护执行通道CMEC实施方案.md`：OpenClaw 与 Cursor 的代码维护执行通道（CMEC）共享目录协作实施方案文档。
 
 - **优化与成本控制**  
   - `OpenClaw工具与Token优化建议.md`：如何通过精简工具暴露、调整 Agent 工具权限来减少 token 消耗与运行成本。
@@ -24,3 +26,5 @@
   - `docs/archive/openclaw/README_WSL_ACCESS.md`
 
 如需对 Gateway / Cron / Agent 配置进行较大调整，建议先完整阅读本目录下的文档，再在测试环境中演练。
+
+CMEC P2 audit probe 2026-03-25

@@ -117,6 +117,19 @@ if [ -f "$PLUGIN_SOURCE_DIR/tool_runner.py" ]; then
     print_success "工具运行脚本复制成功"
 fi
 
+# 复制 OpenClaw 工具清单（网关加载插件时必需；仅 symlink plugins/ 不会带上此文件）
+mkdir -p "$PLUGIN_TARGET_DIR/config"
+if [ -f "$PLUGIN_SOURCE_DIR/config/tools_manifest.json" ]; then
+    cp -f "$PLUGIN_SOURCE_DIR/config/tools_manifest.json" "$PLUGIN_TARGET_DIR/config/tools_manifest.json"
+    print_success "config/tools_manifest.json 复制成功"
+else
+    print_warning "源目录缺少 config/tools_manifest.json，插件可能无法在网关注册"
+fi
+if [ -f "$PLUGIN_SOURCE_DIR/config/tools_manifest.yaml" ]; then
+    cp -f "$PLUGIN_SOURCE_DIR/config/tools_manifest.yaml" "$PLUGIN_TARGET_DIR/config/tools_manifest.yaml"
+    print_success "config/tools_manifest.yaml 复制成功"
+fi
+
 # 创建package.json（如果不存在）
 if [ ! -f "package.json" ]; then
     cat > package.json <<EOF
@@ -179,7 +192,7 @@ done
 print_info "步骤6: 验证安装..."
 
 # 检查关键文件
-KEY_FILES=("plugins/data_collection" "plugins/analysis" "plugins/notification" "plugins/data_access" "plugins/utils")
+KEY_FILES=("plugins/data_collection" "plugins/analysis" "plugins/notification" "plugins/data_access" "plugins/utils" "config/tools_manifest.json")
 ALL_EXIST=true
 
 for key_file in "${KEY_FILES[@]}"; do
@@ -202,7 +215,9 @@ print_success "插件安装完成！"
 echo ""
 print_info "下一步操作："
 echo "  1. 重启OpenClaw Gateway:"
-echo "     sudo systemctl restart openclaw-gateway"
+echo "     （若使用 user systemd） systemctl --user restart openclaw-gateway.service"
+echo "     或执行: ~/scripts/restart-openclaw-services.sh"
+echo "     （若使用系统级服务） sudo systemctl restart openclaw-gateway"
 echo ""
 echo "  2. 检查插件注册状态:"
 echo "     openclaw status"

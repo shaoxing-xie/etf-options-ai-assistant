@@ -1689,6 +1689,104 @@ def fetch_etf_minute_sina(
                 )
     
     # ========== 所有重试失败后的处理 ==========
+    # ===== 新浪兜底：分时 stock_zh_a_minute =====
+    # 当 CN_MarketData.getKLineData 返回空（或过滤后为空）且重试失败时，
+    # 使用 stock_zh_a_minute 拉取同周期的分钟数据并映射到“ETF分钟数据”统一列格式。
+    def _try_stock_zh_a_minute_fallback() -> Optional[pd.DataFrame]:
+        try:
+            minute_df = ak.stock_zh_a_minute(
+                symbol=sina_symbol,
+                period=str(period),
+                adjust="qfq",
+            )
+            if minute_df is None or getattr(minute_df, "empty", True):
+                return None
+
+            df = minute_df.copy()
+            # stock_zh_a_minute 输出列：
+            # day, open, high, low, close, volume
+            column_mapping = {
+                "day": "时间",
+                "open": "开盘",
+                "high": "最高",
+                "low": "最低",
+                "close": "收盘",
+                "volume": "成交量",
+            }
+            # 只映射存在的列，避免接口返回字段名变化
+            for src_col, dst_col in list(column_mapping.items()):
+                if src_col not in df.columns:
+                    df[dst_col] = 0.0
+
+            df = df.rename(columns=column_mapping)
+
+            # 确保必需列存在
+            required_cols = ["时间", "开盘", "最高", "最低", "收盘", "成交量"]
+            for c in required_cols:
+                if c not in df.columns:
+                    df[c] = 0.0
+
+            # 添加成交额（新浪 stock_zh_a_minute 不提供）
+            if "成交额" not in df.columns:
+                df["成交额"] = 0.0
+
+            # 类型转换 + 时间字符串化
+            df["时间"] = pd.to_datetime(df["时间"], errors="coerce")
+            df = df[df["时间"].notna()].copy()
+            df["时间"] = df["时间"].dt.strftime("%Y-%m-%d %H:%M:%S")
+
+            for col in ["开盘", "最高", "最低", "收盘", "成交量", "成交额"]:
+                df[col] = pd.to_numeric(df[col], errors="coerce")
+
+            # 排序
+            df = df.sort_values("时间").reset_index(drop=True)
+
+            # 日期范围过滤（尽量对齐 CN_MarketData 的 start/end）
+            if start_date_str and end_date_str:
+                try:
+                    sdt = datetime.strptime(start_date_str[:19], "%Y-%m-%d %H:%M:%S")
+                    edt = datetime.strptime(end_date_str[:19], "%Y-%m-%d %H:%M:%S")
+                    df_time = pd.to_datetime(df["时间"], errors="coerce")
+                    df = df[(df_time >= sdt) & (df_time <= edt)].copy()
+                except Exception:
+                    pass
+
+            if df.empty:
+                return None
+            return df
+        except Exception:
+            return None
+
+    stock_fallback_df = _try_stock_zh_a_minute_fallback()
+
+    if stock_fallback_df is not None and not stock_fallback_df.empty:
+        # 如果缓存部分存在，做合并与落缓存
+        try:
+            if _is_cache_enabled(config_for_cache) and cached_partial_minute_df is not None:
+                try:
+                    from src.data_cache import merge_cached_and_fetched_data
+                    date_col = None
+                    for col in ["时间", "日期", "date", "日期时间", "datetime"]:
+                        if col in stock_fallback_df.columns:
+                            date_col = col
+                            break
+                    if date_col is not None:
+                        stock_fallback_df = cast(
+                            pd.DataFrame,
+                            merge_cached_and_fetched_data(cached_partial_minute_df, stock_fallback_df, date_col),
+                        )
+                except Exception:
+                    pass
+
+            if _is_cache_enabled(config_for_cache):
+                from src.data_cache import save_etf_minute_cache
+
+                save_etf_minute_cache(symbol, period, stock_fallback_df, config=config_for_cache)
+        except Exception:
+            pass
+
+        return stock_fallback_df
+
     # 先检查是否有缓存数据，区分降级处理和完全失败
     if cached_partial_minute_df is not None and not cached_partial_minute_df.empty:
         # 有缓存数据：降级处理，记录WARNING
@@ -4462,72 +4560,126 @@ def get_etf_current_price(symbol: str = "510300") -> Optional[float]:
         float: ETF当前价格，如果失败返回None
     """
     try:
-        spot_df = fetch_etf_spot_sina(symbol)
-        if spot_df is None or spot_df.empty:
-            logger.warning(f"无法获取ETF实时数据: {symbol}")
+        clean_code = str(symbol).strip()
+        if not clean_code:
             return None
-        
-        # 从DataFrame中提取当前价格
-        # AKShare返回格式：字段/值
-        # 实际字段名：最近成交价、今日开盘价、昨日收盘价、买入价、卖出价等
-        if '字段' in spot_df.columns and '值' in spot_df.columns:
-            # 优先级1: 最近成交价（最准确的当前价格）
-            for idx, row in spot_df.iterrows():
-                field = str(row.get('字段', '')).strip()
-                value = row.get('值', '')
-                
-                # 优先查找"最近成交价"
-                if field == '最近成交价':
-                    try:
-                        price = float(value)
-                        if price > 0:
-                            logger.debug(f"获取ETF当前价格（最近成交价）: {symbol} -> {price}")
-                            return price
-                    except (ValueError, TypeError):
-                        pass
-            
-            # 优先级2: 其他价格相关字段（最新价、当前价、现价等）
-            for idx, row in spot_df.iterrows():
-                field = str(row.get('字段', '')).strip()
-                value = row.get('值', '')
-                
-                # 查找价格相关字段
-                if any(keyword in field for keyword in ['最新价', '当前价', '现价', '成交价', 'last_price', 'current_price', 'price']):
-                    try:
-                        price = float(value)
-                        if price > 0:
-                            logger.debug(f"获取ETF当前价格: {symbol} -> {price} (字段: {field})")
-                            return price
-                    except (ValueError, TypeError):
-                        continue
-            
-            # 优先级3: 如果找不到成交价，使用买入价和卖出价的平均值
-            bid_price = None
-            ask_price = None
-            for idx, row in spot_df.iterrows():
-                field = str(row.get('字段', '')).strip()
-                value = row.get('值', '')
-                
-                if field == '买入价':
-                    try:
-                        bid_price = float(value)
-                    except (ValueError, TypeError):
-                        pass
-                elif field == '卖出价':
-                    try:
-                        ask_price = float(value)
-                    except (ValueError, TypeError):
-                        pass
-            
-            if bid_price and ask_price and bid_price > 0 and ask_price > 0:
-                mid_price = (bid_price + ask_price) / 2.0
-                logger.debug(f"获取ETF当前价格（买卖均价）: {symbol} -> {mid_price}")
-                return mid_price
-        
-        # 如果找不到价格字段，尝试从值列获取（某些接口可能直接返回价格）
-        logger.warning(f"无法从ETF数据中提取价格: {symbol}")
+        # 统一转成不带交易所前缀的 6 位数字（用于向下游取数）
+        if clean_code.upper().endswith((".SH", ".SZ")):
+            clean_code = clean_code.split(".")[0]
+        if clean_code.lower().startswith(("sh", "sz")) and len(clean_code) > 2:
+            clean_code = clean_code[2:]
+
+        # 0) 优先实时通道：mootdx/TDX -> fetch_stock_realtime
+        try:
+            from plugins.data_collection.stock.fetch_realtime import fetch_stock_realtime
+
+            rt = fetch_stock_realtime(stock_code=clean_code, mode="production", include_depth=False)
+            if isinstance(rt, dict) and rt.get("success") and rt.get("data"):
+                d = rt["data"][0] if isinstance(rt["data"], list) else rt["data"]
+                cp = d.get("current_price") or 0.0
+                cp = float(cp) if cp is not None else 0.0
+                if cp > 0:
+                    return cp
+        except Exception:
+            pass
+
+        # 1) ETF 基金实时行情（同花顺）：fund_etf_spot_ths
+        try:
+            try:
+                from src.realtime_full_fetch_cache import get_or_fetch
+            except Exception:
+                get_or_fetch = None
+
+            if get_or_fetch is None:
+                all_etf_df = ak.fund_etf_spot_ths(date="")
+            else:
+                all_etf_df = get_or_fetch("fund_etf_spot_ths:date=", lambda: ak.fund_etf_spot_ths(date=""))
+            if all_etf_df is not None and not all_etf_df.empty:
+                code_col = None
+                for col in ["基金代码", "代码", "code", "symbol"]:
+                    if col in all_etf_df.columns:
+                        code_col = col
+                        break
+
+                if code_col:
+                    target = all_etf_df[all_etf_df[code_col].astype(str) == str(clean_code)]
+                    if not target.empty:
+                        row = target.iloc[0]
+
+                        def _try_get_price(*cols: str) -> float:
+                            for c in cols:
+                                if c in row.index:
+                                    try:
+                                        v = float(row[c])
+                                        if v > 0:
+                                            return v
+                                    except (TypeError, ValueError):
+                                        continue
+                            return 0.0
+
+                        price_value = _try_get_price(
+                            "最新价", "最新", "现价", "当前价", "current_price", "close", "price"
+                        )
+                        if price_value > 0:
+                            return price_value
+        except Exception:
+            pass
+
+        # 1.5) ETF 基金实时行情（新浪全量分类列表）：fund_etf_category_sina
+        try:
+            try:
+                from src.realtime_full_fetch_cache import get_or_fetch
+            except Exception:
+                get_or_fetch = None
+
+            if get_or_fetch is None:
+                cat_df = ak.fund_etf_category_sina(symbol="ETF基金")
+            else:
+                cat_df = get_or_fetch(
+                    "fund_etf_category_sina:ETF基金",
+                    lambda: ak.fund_etf_category_sina(symbol="ETF基金"),
+                )
+
+            if cat_df is not None and not cat_df.empty:
+                code_col = None
+                for col in ["代码", "code", "symbol"]:
+                    if col in cat_df.columns:
+                        code_col = col
+                        break
+                if code_col:
+                    codes_norm = cat_df[code_col].astype(str).str.replace(r"^(sh|sz)", "", regex=True).str.strip()
+                    target = cat_df[codes_norm == str(clean_code)]
+                    if not target.empty:
+                        row = target.iloc[0]
+                        price_value = 0.0
+                        for c in ["最新价", "最新", "current_price", "close", "price"]:
+                            if c in target.columns:
+                                try:
+                                    v = float(row[c])
+                                    if v > 0:
+                                        price_value = v
+                                        break
+                                except Exception:
+                                    continue
+                        if price_value > 0:
+                            return price_value
+        except Exception:
+            pass
+
+        # 2) 分时数据（新浪）：stock_zh_a_minute，period=1 取最后 close
+        try:
+            etf_symbol = f"sz{clean_code}" if str(clean_code).startswith("159") else f"sh{clean_code}"
+            minute_df = ak.stock_zh_a_minute(symbol=etf_symbol, period="1", adjust="qfq")
+            if minute_df is not None and not minute_df.empty and "close" in minute_df.columns:
+                minute_df = minute_df.reset_index(drop=True)
+                cp = float(minute_df["close"].iloc[-1])
+                if cp > 0:
+                    return cp
+        except Exception:
+            pass
+
+        logger.warning(f"无法获取ETF当前价格: {symbol}")
         return None
-        
     except Exception as e:
         logger.warning(f"获取ETF当前价格失败: {symbol}, 错误: {e}")
         return None

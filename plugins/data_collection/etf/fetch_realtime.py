@@ -10,6 +10,8 @@ from datetime import datetime
 from contextlib import nullcontext
 import os
 import sys
+import time
+from threading import Lock
 
 # 导入重试工具
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -17,6 +19,8 @@ parent_dir = os.path.dirname(os.path.dirname(os.path.dirname(current_dir)))
 utils_path = os.path.join(parent_dir, 'utils')
 if utils_path not in sys.path:
     sys.path.insert(0, utils_path)
+if parent_dir not in sys.path:
+    sys.path.insert(0, parent_dir)
 
 try:
     from plugins.utils.retry import retry_on_failure, create_requests_retry_config
@@ -44,6 +48,36 @@ try:
     AKSHARE_AVAILABLE = True
 except ImportError:
     AKSHARE_AVAILABLE = False
+
+try:
+    from src.realtime_full_fetch_cache import get_or_fetch
+except Exception:  # 保险：即使导入失败，也保底返回 None
+    get_or_fetch = None  # type: ignore[assignment]
+
+
+def _get_fund_etf_category_sina_cached(category_symbol: str = "ETF基金") -> Optional[pd.DataFrame]:
+    """
+    fund_etf_category_sina：拉全量分类列表后筛选目标 ETF
+    使用统一的进程内短缓存（配置见 config.yaml: realtime_full_fetch_cache）
+    """
+    if not AKSHARE_AVAILABLE:
+        return None
+    if get_or_fetch is None:
+        try:
+            return ak.fund_etf_category_sina(symbol=category_symbol)
+        except Exception:
+            return None
+
+    cache_key = f"fund_etf_category_sina:{category_symbol}"
+
+    def _fetch():
+        with without_proxy_env() if PROXY_ENV_AVAILABLE else nullcontext():  # type: ignore[name-defined]
+            return ak.fund_etf_category_sina(symbol=category_symbol)
+
+    try:
+        return get_or_fetch(cache_key, _fetch)
+    except Exception:
+        return None
 
 try:
     # 复用股票实时行情的主数据源（mootdx / TDX）
@@ -132,13 +166,8 @@ def fetch_etf_realtime(
             "159901": {"name": "深证100ETF", "market": "sz"},
         }
         
-        option_underlying_etfs = {
-            "510050": {"name": "华夏上证50ETF", "market": "sh"},
-            "510300": {"name": "沪深300ETF", "market": "sh"},
-            "510500": {"name": "南方中证500ETF", "market": "sh"},
-            "588000": {"name": "科创50ETF", "market": "sh"},
-            "588080": {"name": "科创板50ETF", "market": "sh"},
-        }
+        # 取 ETF 当前价的逻辑统一走：mootdx/TDX -> 同花顺 spot -> 新浪分时(1min close)。
+        # 不再优先使用期权底层 ETF 的 sina 通道（option_sse_underlying_spot_price_sina），因为其覆盖范围有限。
         
         results: List[Dict[str, Any]] = []
 
@@ -238,7 +267,6 @@ def fetch_etf_realtime(
                 else:
                     etf_symbol = f"sh{clean_code}"
             
-            is_option_underlying = clean_code in option_underlying_etfs
             spot_df = None
             source = None
             
@@ -248,31 +276,20 @@ def fetch_etf_realtime(
             else:
                 retry_config = None
             
-            # 包装akshare调用以支持重试
-            def _fetch_option_underlying():
-                with without_proxy_env():
-                    return ak.option_sse_underlying_spot_price_sina(symbol=etf_symbol)
-            
             def _fetch_etf_spot_ths():
-                with without_proxy_env():
-                    return ak.fund_etf_spot_ths(date="")
+                def _fetch():
+                    with without_proxy_env():
+                        return ak.fund_etf_spot_ths(date="")
+
+                if get_or_fetch is None:
+                    return _fetch()
+                return get_or_fetch("fund_etf_spot_ths:date=", _fetch)
             
             # 应用重试装饰器（如果可用）
             if RETRY_AVAILABLE and retry_config:
-                _fetch_option_underlying = retry_on_failure(config=retry_config)(_fetch_option_underlying)
                 _fetch_etf_spot_ths = retry_on_failure(config=retry_config)(_fetch_etf_spot_ths)
-            
-            # 方法1：如果是期权标的物ETF，使用新浪期权标的物接口
-            if is_option_underlying:
-                try:
-                    if mode == "test":
-                        debug["attempted"].append("akshare_sina_option_underlying")
-                    spot_df = _fetch_option_underlying()
-                    source = "option_sse_underlying_spot_price_sina"
-                except Exception:
-                    pass
-            
-            # 方法2：使用同花顺接口（备用）
+
+            # 方法1（备用）：同花顺接口
             if spot_df is None or spot_df.empty:
                 try:
                     if mode == "test":
@@ -294,6 +311,111 @@ def fetch_etf_realtime(
                     pass
             
             if spot_df is None or spot_df.empty:
+                # 方法2（推荐兜底）：新浪基金实时全量列表 -> 筛选目标 ETF
+                try:
+                    if mode == "test":
+                        debug["attempted"].append("fund_etf_category_sina(symbol=ETF基金)")
+                    cat_df = _get_fund_etf_category_sina_cached(category_symbol="ETF基金")
+                    if cat_df is not None and not cat_df.empty:
+                        # 统一比较：把 shXXXX / szXXXX 转成 XXXX
+                        code_col = None
+                        for col in ["代码", "code", "symbol"]:
+                            if col in cat_df.columns:
+                                code_col = col
+                                break
+                        if code_col:
+                            codes_norm = cat_df[code_col].astype(str).str.replace(r"^(sh|sz)", "", regex=True).str.strip()
+                            target = cat_df[codes_norm == str(clean_code)]
+                            if not target.empty:
+                                row = target.iloc[0]
+
+                                def _try_float(col_name: str, default: float = 0.0, positive_only: bool = False) -> float:
+                                    try:
+                                        v = row[col_name] if col_name in target.columns else default
+                                        v = float(v)
+                                        if positive_only:
+                                            return v if v > 0 else default
+                                        return v
+                                    except Exception:
+                                        return default
+
+                                current_price = _try_float("最新价", default=0.0, positive_only=True)
+                                if current_price <= 0:
+                                    # fallback：有些数据源可能列名不同
+                                    current_price = _try_float("最新", default=0.0, positive_only=True)
+                                if current_price > 0:
+                                    change = _try_float("涨跌额", default=0.0)
+                                    change_percent = _try_float("涨跌幅", default=0.0)
+                                    open_p = _try_float("今开", default=current_price, positive_only=True)
+                                    high_p = _try_float("最高", default=current_price, positive_only=True)
+                                    low_p = _try_float("最低", default=current_price, positive_only=True)
+                                    prev_close = _try_float("昨收", default=current_price, positive_only=True)
+                                    volume_p = _try_float("成交量", default=0.0, positive_only=True)
+                                    amount_p = _try_float("成交额", default=0.0, positive_only=True)
+                                    name = str(row["名称"]) if "名称" in target.columns else etf_info.get("name", "未知ETF")
+
+                                    etf_data = {
+                                        "code": etf_code_item,
+                                        "name": name,
+                                        "current_price": current_price,
+                                        "change": change,
+                                        "change_percent": change_percent,
+                                        "open": open_p,
+                                        "high": high_p,
+                                        "low": low_p,
+                                        "prev_close": prev_close,
+                                        "volume": volume_p,
+                                        "amount": amount_p,
+                                        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                                    }
+                                    source = "fund_etf_category_sina"
+                                    results.append(etf_data)
+                                    continue
+                except Exception:
+                    pass
+
+                # 方法3（最后兜底）：新浪分时 1min close
+                try:
+                    if mode == "test":
+                        debug["attempted"].append("stock_zh_a_minute(period=1)")
+                    with without_proxy_env():
+                        minute_df = ak.stock_zh_a_minute(symbol=etf_symbol, period='1', adjust="qfq")
+                    if minute_df is not None and not minute_df.empty:
+                        minute_df = minute_df.reset_index(drop=True)
+                        last = minute_df.iloc[-1]
+                        prev_close = float(minute_df['close'].iloc[-2]) if len(minute_df) >= 2 else 0.0
+                        current_price = float(last.get('close', 0) or 0)
+                        if current_price <= 0:
+                            raise ValueError("minute close not available")
+
+                        change = current_price - prev_close if prev_close else 0.0
+                        change_percent = (change / prev_close * 100.0) if prev_close else 0.0
+                        open_p = float(minute_df['open'].iloc[0]) if 'open' in minute_df.columns else current_price
+                        high_p = float(minute_df['high'].max()) if 'high' in minute_df.columns else current_price
+                        low_p = float(minute_df['low'].min()) if 'low' in minute_df.columns else current_price
+                        volume_p = float(last.get('volume', 0) or 0)
+                        amount_p = 0.0
+
+                        etf_data = {
+                            "code": etf_code_item,
+                            "name": etf_info.get('name', '未知ETF'),
+                            "current_price": current_price,
+                            "change": change,
+                            "change_percent": change_percent,
+                            "open": open_p,
+                            "high": high_p,
+                            "low": low_p,
+                            "prev_close": prev_close,
+                            "volume": volume_p,
+                            "amount": amount_p,
+                            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                        }
+                        source = "stock_zh_a_minute(period=1)"
+                        results.append(etf_data)
+                        continue
+                except Exception:
+                    pass
+
                 results.append(_get_fallback_data(etf_code_item, etf_mapping)["data"])
                 continue
             
@@ -386,12 +508,14 @@ def fetch_etf_realtime(
                         except:
                             pass
                 
-                # 同花顺接口返回的字段：当前-单位净值、增长值、增长率、前一日-单位净值等
-                # 统一转换为标准格式
+                # 同花顺接口返回的字段可能包含：单位净值/涨跌/成交等（不同版本字段名可能略有差异）
                 current_nav = safe_get(row, '当前-单位净值', '最新-单位净值', '单位净值', 'nav', default=0)
                 prev_nav = safe_get(row, '前一日-单位净值', '昨收', 'pre_close', default=0)
                 change_value = safe_get(row, '增长值', '涨跌额', 'change', default=0)
                 change_percent_value = safe_get(row, '增长率', '涨跌幅', 'pct_chg', default=0)
+
+                # 优先用价格列（最新价/现价等）；若不存在再退化到单位净值
+                price_value = safe_get(row, '最新价', '最新', '现价', '当前价', 'current_price', 'close', 'price', default=0)
                 
                 # 如果增长值或涨跌幅为0，尝试计算
                 if change_value == 0 and current_nav > 0 and prev_nav > 0:
@@ -399,17 +523,22 @@ def fetch_etf_realtime(
                 
                 if change_percent_value == 0 and prev_nav > 0:
                     change_percent_value = (change_value / prev_nav) * 100
+
+                prev_close_value = prev_nav if prev_nav > 0 else safe_get(row, '昨收', 'pre_close', '前一日收盘', default=0)
+                if (change_value == 0 or change_percent_value == 0) and price_value > 0 and prev_close_value > 0:
+                    change_value = price_value - prev_close_value
+                    change_percent_value = (change_value / prev_close_value) * 100
                 
                 etf_data = {
                     "code": etf_code_item,
                     "name": name,
-                    "current_price": current_nav if current_nav > 0 else safe_get(row, '最新价', 'close', 'price', default=0),
+                    "current_price": price_value if price_value > 0 else current_nav,
                     "change": change_value,
                     "change_percent": change_percent_value,
                     "open": safe_get(row, '今开', 'open', '开盘价', default=0),
                     "high": safe_get(row, '最高', 'high', '最高价', default=0),
                     "low": safe_get(row, '最低', 'low', '最低价', default=0),
-                    "prev_close": prev_nav if prev_nav > 0 else safe_get(row, '昨收', 'pre_close', default=0),
+                    "prev_close": prev_close_value if prev_close_value > 0 else prev_nav,
                     "volume": safe_get(row, '成交量', 'volume', default=0),
                     "amount": safe_get(row, '成交额', 'amount', default=0),
                     "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
