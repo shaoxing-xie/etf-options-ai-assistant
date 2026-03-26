@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "skills": {
+    "github": {
+      "version": "1.0.0",
+      "installedAt": 1774515056690
+    },
+    "agent-team-orchestration": {
+      "version": "1.0.0",
+      "installedAt": 1774515118916
+    },
+    "capability-evolver": {
+      "version": "1.27.2",
+      "installedAt": 1772806843932
+    }
+  }
+}

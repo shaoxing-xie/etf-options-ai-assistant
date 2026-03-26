@@ -306,6 +306,54 @@ DRY_RUN=1 python3 ~/.openclaw/workspaces/etf-options-ai-assistant/scripts/sync_o
 - **动作**：同 provider 允许 **一次短重试**（指数退避 1 次即可），仍失败则换到同档备选
 - **原因**：短暂网络抖动重试收益高；持续失败再切换 provider
 
+### B-1. OpenRouter free 模型 429 自动切换（冷却绕过修复）
+当使用 OpenRouter `:free` 模型时，可能出现 `429 Rate limit exceeded`，但如果 OpenClaw 对 `openrouter` provider **绕过 cooldown**，则“同一 provider 的 profile 仍保持热状态”，进而导致 fallback 链路不触发或触发不稳定。
+
+本项目采用的修复要点是：让 OpenClaw 对 `openrouter` provider 也进入 cooldown。具体实现为在 OpenClaw 打包后的 `dist` 代码中，把 `isAuthCooldownBypassedForProvider(provider)` 改为 **永不 bypass**（返回 `false`），使得 429 后该 provider/profile 进入 cooldown，fallback models 才会按配置自动切换。
+
+验证方式（建议复用到排障）：
+- 日志中应先看到 `429 Rate limit exceeded ... free-models-per-day`（或 OpenRouter 的限流提示）
+- 随后出现 `model fallback decision` / `failoverReason=rate_limit`，并切到 `nextCandidateModel`（来自当前 agent 的 `fallbacks`）
+- 最终应能看到钉钉/飞书投递工具成功返回（如 `tool_send_dingtalk_message` 的 `errcode: 0`）
+
+关于 OpenClaw 升级是否会冲掉：
+- 这类修复是直接改动 OpenClaw 打包产物 `dist`（而非仅改 `openclaw.json` 配置）。
+- 因此在 `openclaw update` / 重装时，可能被覆盖回原始 `dist` 行为；升级后需要重新对新的 `dist` 应用同样的修改，或重新走“同步/应用到全局 openclaw”的步骤。
+- 建议升级后快速自检：确认新版本 `dist` 里 `isAuthCooldownBypassedForProvider` 的实现仍为 `return false;`（即不再对 openrouter bypass cooldown）。
+
+### B-1-1. 升级后重应用操作（你当前用 `openclaw update`）
+当你通过 `openclaw update` 升级后，建议执行以下步骤把“openrouter 不绕过 cooldown”的 dist 修复再打一次（全程只改本地 dist 产物，不改你的 `openclaw.json` 路由配置）。
+
+1）确认全局 dist 路径（默认）：
+- 全局 OpenClaw：`/home/xie/.npm-global/lib/node_modules/openclaw/dist`
+
+2）让 Cursor 在 `/home/xie/scripts/` 下新增脚本：
+- 文件名：`reapply-openclaw-openrouter-cooldown-fix.mjs`
+- 脚本用途：扫描 `dist` 里 `isAuthCooldownBypassedForProvider(provider)` 的函数块，并强制把 `return ...;` 替换为 `return false;`
+
+3）执行 apply + verify + 重启（按顺序）：
+```bash
+node /home/xie/scripts/reapply-openclaw-openrouter-cooldown-fix.mjs "/home/xie/.npm-global/lib/node_modules/openclaw/dist" apply
+node /home/xie/scripts/reapply-openclaw-openrouter-cooldown-fix.mjs "/home/xie/.npm-global/lib/node_modules/openclaw/dist" verify
+~/scripts/restart-openclaw-services.sh
+```
+
+4）验证点（verify 通过后基本就 OK）：
+- `verify` 阶段不应报 “VERIFY FAIL”
+- 日志里后续出现 `429 ... free-models-per-day` 后，能观察到 fallback/cooldown 相关的切换（如 `model fallback decision`、`failoverReason=rate_limit`）
+
+可直接复制给 Cursor 的提示词（让它生成脚本并跑通）：
+```text
+在 /home/xie/scripts/ 下新增文件 reapply-openclaw-openrouter-cooldown-fix.mjs，
+作用是：遍历传入的 distRoot 下所有 .js 文件，定位函数 isAuthCooldownBypassedForProvider(provider) 的函数块，
+把该函数内部第一个 return 语句强制改为 return false;；apply 模式会修改并创建 .bak 备份，verify 模式不修改而是检查是否包含 return false;。
+命令依次执行：
+1) node /home/xie/scripts/reapply-openclaw-openrouter-cooldown-fix.mjs "/home/xie/.npm-global/lib/node_modules/openclaw/dist" apply
+2) node /home/xie/scripts/reapply-openclaw-openrouter-cooldown-fix.mjs "/home/xie/.npm-global/lib/node_modules/openclaw/dist" verify
+3) ~/scripts/restart-openclaw-services.sh
+把 verify 的输出贴回我。
+```
+
 ### C. 输出格式违规（模板任务多输出/漏字段/表格错）
 - **动作**：优先在同档模型内重试 1 次（强约束模板再强调），仍失败则升一档（M→S）
 - **原因**：这类错误与“指令遵循能力”高度相关；升级档位通常有效

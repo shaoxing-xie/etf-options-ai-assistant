@@ -2,17 +2,14 @@
 """
 对比 mootdx 对「指数」的实时接口 quotes 与 K 线 bars（含 1 分钟 / 当前 fetch_index 使用的 frequency）。
 
-用法（在项目根或任意目录，需能 import mootdx）：
-  cd /home/xie/etf-options-ai-assistant
+用法（在项目根目录执行）：
   python3 scripts/test_mootdx_index_realtime.py
   python3 scripts/test_mootdx_index_realtime.py --codes 000300,000001,399006
 
 依赖：pip install mootdx（及 tdxpy 等 mootdx 依赖）
 注意：通达信远程对指数 quotes 是否可用因线路/时段而异，以你本机实测为准。
 """
-
-from __future__ import annotations
-
+import os
 import argparse
 import sys
 from typing import Any
@@ -69,7 +66,6 @@ def main() -> int:
     # 与股票实时通道一致：尝试绕过 tdx 交易时间限制（部分环境需要）
     try:
         import tdxpy.hq as _tdx_hq  # type: ignore
-
         _tdx_hq.time_frame = lambda: True  # type: ignore[attr-defined]
     except Exception:
         pass
@@ -77,7 +73,6 @@ def main() -> int:
     print("指数代码:", codes)
     client = Quotes.factory(market="std")
 
-    # ---------- 1) quotes：通达信「实时行情」接口（与 plugins/.../stock/fetch_realtime 同源思路） ----------
     for variant_name, sym_arg in [
         ("quotes(symbol=list)", codes),
         ("quotes(symbol=单码)", codes[0] if len(codes) == 1 else None),
@@ -92,7 +87,6 @@ def main() -> int:
             continue
         _print_df(variant_name, qdf)
 
-    # ---------- 2) bars：1 分钟最后一根（盘中更接近「当前」）----------
     for code in codes:
         try:
             df_1m = client.bars(symbol=code, frequency=7, offset=8)
@@ -100,7 +94,6 @@ def main() -> int:
         except Exception as e:
             print(f"\n[bars 1m {code}] 异常: {e!r}")
 
-    # ---------- 3) bars：旧版指数曾用 frequency=9 日 K 近似（业务代码已弃用，仅作对照） ----------
     for code in codes:
         try:
             df_d = client.bars(symbol=code, frequency=9, offset=2)

@@ -4,12 +4,12 @@
     "F": {
       "description": "Fast / low-cost: tool orchestration, data collection, ops log scanning.",
       "model": {
-        "primary": "custom-openrouter-alpha-free/nvidia/nemotron-3-super-120b-a12b:free",
+        "primary": "custom-openrouter-alpha-free/stepfun/step-3.5-flash:free",
         "fallbacks": [
+          "custom-openrouter-alpha-free/qwen/qwen3-coder:free",
           "custom-openrouter-alpha-free/qwen/qwen3-next-80b-a3b-instruct:free",
           "custom-openrouter-alpha-free/nvidia/nemotron-3-nano-30b-a3b:free",
-          "custom-openrouter-alpha-free/stepfun/step-3.5-flash:free",
-          "custom-openrouter-alpha-free/qwen/qwen3-coder:free",
+          "custom-openrouter-alpha-free/nvidia/nemotron-3-super-120b-a12b:free",
           "z-ai-glm5-nvidia-com-sxxiefg/z-ai/glm5",
           "glm5-api-nvidia-com/z-ai/glm5"
         ]
@@ -21,11 +21,9 @@
         "primary": "z-ai-glm5-nvidia-com-sxxiefg/z-ai/glm5",
         "fallbacks": [
           "glm5-api-nvidia-com/z-ai/glm5",
-          "custom-openrouter-alpha-free/nvidia/nemotron-3-super-120b-a12b:free",
-          "custom-openrouter-alpha-free/qwen/qwen3-next-80b-a3b-instruct:free",
-          "custom-openrouter-alpha-free/nvidia/nemotron-3-nano-30b-a3b:free",
           "custom-openrouter-alpha-free/stepfun/step-3.5-flash:free",
           "custom-openrouter-alpha-free/qwen/qwen3-coder:free",
+          "custom-openrouter-alpha-free/nvidia/nemotron-3-nano-30b-a3b:free",
           "custom-qianfan-baidubce-com/ernie-4.5-21b-a3b",
           "custom-api-deepseek-com/deepseek-chat"
         ]
@@ -37,11 +35,9 @@
         "primary": "glm5-api-nvidia-com/z-ai/glm5",
         "fallbacks": [
           "z-ai-glm5-nvidia-com-sxxiefg/z-ai/glm5",
-          "custom-openrouter-alpha-free/nvidia/nemotron-3-super-120b-a12b:free",
           "custom-openrouter-alpha-free/qwen/qwen3-next-80b-a3b-instruct:free",
-          "custom-openrouter-alpha-free/nvidia/nemotron-3-nano-30b-a3b:free",
+          "custom-openrouter-alpha-free/nvidia/nemotron-3-super-120b-a12b:free",
           "custom-openrouter-alpha-free/stepfun/step-3.5-flash:free",
-          "custom-openrouter-alpha-free/qwen/qwen3-coder:free",
           "custom-qianfan-baidubce-com/ernie-4.5-21b-a3b",
           "custom-api-deepseek-com/deepseek-chat"
         ]
