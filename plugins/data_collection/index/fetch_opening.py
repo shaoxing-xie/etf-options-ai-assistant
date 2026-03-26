@@ -31,22 +31,22 @@ try:
 except ImportError:
     AKSHARE_AVAILABLE = False
 
+# mootdx 可选兜底（akshare 未安装时仍可返回快照/开盘近似）
+try:
+    from mootdx.quotes import Quotes
+    MOOTDX_AVAILABLE = True
+except Exception:  # noqa: BLE001
+    MOOTDX_AVAILABLE = False
+
+# 统一指数代码规则（与日线/分钟线一致）
+from plugins.data_collection.index.index_code_utils import (
+    index_display_name,
+    index_sina_symbol,
+    normalize_index_code_for_minute,
+)
+
 # 默认指数代码（与原系统一致，逗号分隔）
 DEFAULT_INDEX_CODES = "000001,399006,399001,000688,000300,899050"
-
-# 指数代码与名称映射（用于匹配与兜底名称）
-INDEX_MAPPING = {
-    "000001": "上证指数",
-    "399006": "创业板指",
-    "399001": "深证成指",
-    "000688": "科创50",
-    "000300": "沪深300",
-    "899050": "北证50",
-    "000016": "上证50",
-    "000905": "中证500",
-    "000852": "中证1000",
-}
-
 
 def _safe_get(row: pd.Series, *keys: str, default: float = 0) -> float:
     """从 Series 中按多种列名安全取数"""
@@ -89,6 +89,83 @@ def _fetch_em() -> Optional[pd.DataFrame]:
     return all_df
 
 
+def _mootdx_bypass_time_frame_limit() -> None:
+    """尽量绕过 tdxpy 交易时间限制（部分环境在非交易时段返回空）。"""
+    try:
+        import tdxpy.hq as _tdx_hq  # type: ignore
+
+        _tdx_hq.time_frame = lambda: True  # type: ignore[attr-defined]
+    except Exception:
+        pass
+
+
+def _mootdx_fetch_opening_items(index_codes: List[str]) -> List[Dict[str, Any]]:
+    """
+    akshare 不可用时，用 mootdx quotes 兜底。
+    注意：这是一种“开盘近似/快照”，依赖 quotes 返回的 open/last_close 字段是否可用。
+    """
+    if not MOOTDX_AVAILABLE or not index_codes:
+        return []
+    _mootdx_bypass_time_frame_limit()
+    try:
+        client = Quotes.factory(market="std")
+    except Exception:
+        return []
+    try:
+        df = client.quotes(symbol=index_codes)
+    except Exception:
+        return []
+    finally:
+        try:
+            client.close()
+        except Exception:
+            pass
+    if df is None or df.empty:
+        return []
+
+    results: List[Dict[str, Any]] = []
+    for code in index_codes:
+        try:
+            match = df[df.get("code").astype(str).str.contains(code, na=False, regex=False)]
+            if match.empty:
+                continue
+            row = match.iloc[0]
+        except Exception:
+            continue
+
+        open_price = _safe_get(row, "open", "开盘", "今开")
+        pre_close = _safe_get(row, "last_close", "pre_close", "昨收", "close")
+        price = _safe_get(row, "price", "last", "最新", "现价")
+        high = _safe_get(row, "high", "最高")
+        low = _safe_get(row, "low", "最低")
+        volume = _safe_get(row, "vol", "volume", "成交量")
+        amount = _safe_get(row, "amount", "成交额")
+
+        # 开盘工具主关注 opening_price；若 open 为空，用 price 兜底一个“可用值”
+        opening_price = open_price if open_price != 0 else price
+        change = (opening_price - pre_close) if (pre_close and opening_price) else 0.0
+        change_pct = (change / pre_close * 100.0) if pre_close else 0.0
+
+        results.append(
+            {
+                "index_code": code,
+                "code": code,
+                "name": index_display_name(code),
+                "opening_price": opening_price,
+                "pre_close": pre_close,
+                "change": change,
+                "change_pct": change_pct,
+                "volume": volume,
+                "amount": amount,
+                "high": high,
+                "low": low,
+                "timestamp": datetime.now().strftime("%Y-%m-%d 09:28:00"),
+                "note": "akshare unavailable; returned via mootdx quotes (opening is an approximation)",
+            }
+        )
+    return results
+
+
 def _build_opening_item(
     code: str,
     row: pd.Series,
@@ -100,7 +177,7 @@ def _build_opening_item(
     change_pct = _safe_get(row, '涨跌幅', 'pct_chg', 'change_pct', '涨跌%')
     change = _safe_get(row, '涨跌额', 'change', '涨跌')
     volume = _safe_get(row, '成交量', 'volume', 'vol', '成交')
-    name = INDEX_MAPPING.get(code, "未知指数")
+    name = index_display_name(code)
     for name_col in ['名称', 'name', '指数名称']:
         if name_col in row.index:
             try:
@@ -139,13 +216,9 @@ def _extract_results(df: pd.DataFrame, index_codes: List[str]) -> List[Dict[str,
 
     results = []
     for code in index_codes:
-        # 新浪返回 sh000001 / sz399006，东财可能为 000001 / 399006
-        if code.startswith("000") or code.startswith("899"):
-            possible = [f"sh{code}", code]
-        elif code.startswith("399"):
-            possible = [f"sz{code}", code]
-        else:
-            possible = [code]
+        # 新浪/东财不同表可能返回：sh000001 / sz399006 / 000001 / 399001
+        sina_sym = index_sina_symbol(code)  # 39xxxx -> sz，否则 -> sh
+        possible = [sina_sym, code]
 
         row = None
         for p in possible:
@@ -182,48 +255,56 @@ def fetch_index_opening(
             if trading_day_check:
                 return trading_day_check
 
-        if not AKSHARE_AVAILABLE:
-            return {
-                "success": False,
-                "message": "akshare not installed. Please install: pip install akshare",
-                "data": None,
-            }
-
         codes_str = index_codes if index_codes else DEFAULT_INDEX_CODES
-        index_codes_list = [c.strip() for c in codes_str.split(",") if c.strip()]
-        if not index_codes_list:
+        raw_codes_list = [c.strip() for c in codes_str.split(",") if c.strip()]
+        if not raw_codes_list:
             return {
                 "success": False,
                 "message": "未提供有效的指数代码",
                 "data": None,
             }
 
+        # 统一解析：输入可为 000300 / sh000300 / sz399001 / 000300.SH / 000300.SZ
+        index_codes_list: List[str] = []
+        for rc in raw_codes_list:
+            n = normalize_index_code_for_minute(rc)
+            if n is None:
+                return {
+                    "success": False,
+                    "message": f"无法解析指数代码: {rc}（需 6 位数字或 sh/sz 前缀）",
+                    "data": None,
+                }
+            index_codes_list.append(n)
+
         df = None
         source = None
 
-        # 优先新浪
-        df = _fetch_sina()
-        if df is not None and not df.empty:
-            source = "stock_zh_index_spot_sina"
+        results: List[Dict[str, Any]] = []
 
-        # 备用东财
-        if df is None or df.empty:
-            df = _fetch_em()
+        if AKSHARE_AVAILABLE:
+            # 优先新浪
+            df = _fetch_sina()
             if df is not None and not df.empty:
-                source = "stock_zh_index_spot_em"
+                source = "stock_zh_index_spot_sina"
 
-        if df is None or df.empty:
-            return {
-                "success": False,
-                "message": "新浪与东财接口均未返回数据，请稍后重试",
-                "data": None,
-            }
+            # 备用东财
+            if df is None or df.empty:
+                df = _fetch_em()
+                if df is not None and not df.empty:
+                    source = "stock_zh_index_spot_em"
 
-        results = _extract_results(df, index_codes_list)
+            if df is not None and not df.empty:
+                results = _extract_results(df, index_codes_list)
+        else:
+            # akshare 不可用时，使用 mootdx 兜底（快照/开盘近似）
+            results = _mootdx_fetch_opening_items(index_codes_list)
+            if results:
+                source = "mootdx"
+
         if not results:
             return {
                 "success": False,
-                "message": "未匹配到任何目标指数数据",
+                "message": "未获取到指数开盘数据（akshare 与 mootdx 均不可用或无数据）",
                 "data": None,
             }
 

@@ -108,6 +108,12 @@ data_collection/
 
 ### 指数数据采集
 
+#### 指数代码约定（`index/index_code_utils.py`）
+
+- **无白名单**：任意 **6 位数字**指数代码（及 `sh`/`sz` 前缀、`.SH`/`.SZ` 后缀）均可进入查询；能否取到数据取决于各数据源是否收录该指数。
+- **新浪 / 东财 等 symbol**：以 **39** 开头 → `sz` + 代码（深证）；否则 → `sh` + 代码（上证及北证等按同一规则映射，实际可用性因源而异）。
+- **ETF**：代码以 **5** 或 **1** 开头的 6 位在 `fetch_realtime` / `fetch_historical` / `fetch_minute` 中会**自动改调 ETF 专用模块**，不走路径内的「纯指数」逻辑。
+
 #### 1. index/fetch_realtime.py - 指数实时数据
 
 **功能说明**：
@@ -128,8 +134,7 @@ result = tool_fetch_index_realtime(index_code="000300,000001,399001")
 ```
 
 **输入参数**：
-- `index_code` (str): 指数代码，支持单个或多个（用逗号分隔）
-  - 支持的指数：000001(上证指数), 399001(深证成指), 399006(创业板指), 000300(沪深300), 000016(上证50), 000905(中证500), 000852(中证1000)
+- `index_code` (str): 指数代码，支持单个或多个（用逗号分隔）；规则见本节「指数代码约定」
 
 **输出格式**：
 ```python
@@ -156,11 +161,10 @@ result = tool_fetch_index_realtime(index_code="000300,000001,399001")
 ```
 
 **技术实现要点**：
-- 优先使用新浪接口（`stock_zh_index_spot_sina`）
-- 失败时自动切换到东方财富接口（`stock_zh_index_spot_em`）
-- 支持多指数批量查询，提高效率
-- 自动匹配指数代码格式（sh000001, sz399001等）
-- 包含降级数据机制，确保接口失败时也能返回基本信息
+- 顺序：**mootdx quotes（批量）** → AkShare 全量指数快照（新浪/东财，短缓存）→ **mootdx 1 分钟 K** 兜底
+- 无指数白名单；名称展示用 `index_display_name`（常见代码有中文名）
+- 支持多指数批量查询；代码统一规范为 6 位数字
+- 包含降级数据机制，单代码全失败时返回占位信息
 
 **使用场景**：
 - 实时监控：交易时间内实时获取指数行情
@@ -189,8 +193,8 @@ result = tool_fetch_index_opening(index_codes="000001,000300,399001")
 ```
 
 **输入参数**：
-- `index_codes` (str, optional): 指数代码字符串，用逗号分隔，如 "000001,000300"
-  - 如果不提供，使用默认配置：000001(上证指数), 000016(上证50), 399001(深证成指), 399006(创业板指), 000688(科创综指), 000300(沪深300)
+- `index_codes` (str, optional): 指数代码字符串，用逗号分隔，如 "000001,000300"；支持 6 位代码或 `sh/sz` 前缀（与 `index_code_utils` 一致）
+  - 如果不提供，使用默认配置：`000001,399006,399001,000688,000300,899050`
 
 **输出格式**：
 ```python
@@ -214,7 +218,8 @@ result = tool_fetch_index_opening(index_codes="000001,000300,399001")
 
 **技术实现要点**：
 - 在9:28集合竞价时间调用，获取开盘价和开盘涨跌幅
-- 支持新浪和东方财富接口，自动切换
+- 优先新浪/东财（akshare），自动切换
+- 若 akshare 不可用，则降级用 mootdx quotes 返回开盘近似/快照
 - 返回列表格式，包含多个指数的开盘数据
 - 注意：非9:28时调用，涨跌幅和成交量为实时值
 
@@ -307,8 +312,7 @@ result = tool_fetch_index_historical(
 ```
 
 **输入参数**：
-- `index_code` (str): 指数代码，支持单个或多个（用逗号分隔）
-  - 支持的指数：000001(上证指数), 399001(深证成指), 399006(创业板指), 000300(沪深300), 000016(上证50), 000905(中证500), 000852(中证1000)
+- `index_code` (str): 指数代码，支持单个或多个（用逗号分隔）；规则见「指数代码约定」
 - `start_date` (str, optional): 开始日期（YYYYMMDD 或 YYYY-MM-DD），默认回看30天
 - `end_date` (str, optional): 结束日期（YYYYMMDD 或 YYYY-MM-DD），默认当前日期
 - `use_cache` (bool): 是否使用缓存，默认 True
@@ -372,10 +376,10 @@ result = tool_fetch_index_historical(
 #### 5. index/fetch_minute.py - 指数分钟数据
 
 **功能说明**：
-- 获取主要指数的分钟K线数据
+- 获取指数分钟 K 线数据
 - 融合 Coze `get_index_minute.py` 的核心逻辑
-- 支持多种周期：5分钟、15分钟、30分钟、60分钟
-- 支持缓存机制
+- 支持多种周期：1/5/15/30/60 分钟；数据源：缓存 → mootdx → 新浪 HTTP → 东财（akshare 可选），**不强制安装 akshare**
+- 支持缓存机制；指数代码规则见「指数代码约定」
 
 **使用方法**：
 ```python
@@ -392,7 +396,7 @@ result = tool_fetch_index_minute(
 ```
 
 **输入参数**：
-- `index_code` (str): 指数代码，如 "000300"
+- `index_code` (str): 指数代码（6 位或 sh/sz），支持逗号多代码
 - `period` (str): 分钟周期，可选 "1", "5", "15", "30", "60"，默认 "30"
 - `lookback_days` (int): 回看天数，默认 5
 - `start_date` (str, optional): 开始日期（YYYYMMDD 或 YYYY-MM-DD）
@@ -428,8 +432,7 @@ result = tool_fetch_index_minute(
 ```
 
 **技术实现要点**：
-- 优先使用新浪财经接口（`stock_zh_index_min_em`）
-- 降级使用东方财富接口
+- 优先 **mootdx** 与 **新浪 HTTP** `CN_MarketData.getKLineData`；再可选 **akshare** `index_zh_a_hist_min_em`
 - 支持缓存机制：自动检查缓存，只获取缺失数据
 - 支持部分缓存命中：自动合并缓存和新获取的数据
 - 自动处理非交易日，确保数据连续性

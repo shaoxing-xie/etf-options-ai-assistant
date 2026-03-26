@@ -39,9 +39,13 @@ tools:
 
   - id: tool_fetch_index_opening
     label: 获取指数开盘数据
-    description: 获取主要指数的开盘数据（9:28集合竞价）。
-    description_short: 获取主要指数的开盘数据（9:28集合竞价）。
-    parameters: { type: object, properties: {} }
+    description: 获取指数开盘数据（9:28 集合竞价）。不维护指数白名单；支持 6 位代码或 sh/sz 前缀、逗号多代码；39 开头深证，其余上证映射（见 index_code_utils）。优先 akshare（新浪/东财），akshare 不可用时降级 mootdx quotes（开盘为近似）。
+    description_short: 指数开盘数据（9:28），无白名单。
+    parameters:
+      type: object
+      properties:
+        index_codes: { type: string, description: "6 位指数代码或 sh/sz 前缀，逗号多代码，如 000001,sh000300,sz399001" }
+      required: []
 
   - id: tool_fetch_global_index_spot
     label: 获取全球指数实时数据

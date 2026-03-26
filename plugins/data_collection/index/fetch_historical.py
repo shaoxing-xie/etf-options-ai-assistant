@@ -5,20 +5,34 @@ OpenClaw 插件工具
 改进版本：支持缓存、多指数、自动计算成交额/涨跌幅、完善字段映射
 """
 
+import json
+import logging
 import pandas as pd
 import numpy as np
-from typing import Optional, Dict, Any, Tuple
+from typing import Optional, Dict, Any, Tuple, List
 from datetime import datetime, timedelta
 from pathlib import Path
 import sys
 
+from plugins.data_collection.index.index_code_utils import (
+    index_display_name,
+    index_sina_symbol,
+    normalize_index_code_for_minute,
+    tushare_index_ts_code,
+)
+
+logger = logging.getLogger(__name__)
+
 try:
     import akshare as ak
-    import tushare as ts
     AKSHARE_AVAILABLE = True
-    TUSHARE_AVAILABLE = True
 except ImportError:
     AKSHARE_AVAILABLE = False
+
+try:
+    import tushare as ts
+    TUSHARE_AVAILABLE = True
+except ImportError:
     TUSHARE_AVAILABLE = False
 
 try:
@@ -231,25 +245,19 @@ def fetch_single_index_historical(
     """
     获取单个指数的历史数据
     
-    优先顺序：
-    1. 原系统缓存
-    2. 直接调用新浪 HTTP 接口 (money.finance.sina.com.cn)
-    3. akshare / 东财等备用数据源
+    优先顺序（日线 daily，与实现一致）；不校验指数白名单，symbol 规则与分钟线共用 index_sina_symbol（39xxxx→sz，其余→sh）：
+    1. 原系统缓存（全命中）
+    2. mootdx 日线
+    3. Tushare 封装 / 直连（若配置）
+    4. 新浪 HTTP
+    5. akshare index_zh_a_hist（需安装 akshare）
+    6. 东财 index_zh_a_hist_min_em（需安装 akshare）
     """
-    # 指数代码映射
-    index_mapping = {
-        "000001": {"name": "上证指数", "symbol": "sh000001"},
-        "399001": {"name": "深证成指", "symbol": "sz399001"},
-        "399006": {"name": "创业板指", "symbol": "sz399006"},
-        "000300": {"name": "沪深300", "symbol": "sh000300"},
-        "000016": {"name": "上证50", "symbol": "sh000016"},
-        "000905": {"name": "中证500", "symbol": "sh000905"},
-    }
-    
-    index_info = index_mapping.get(index_code)
-    if not index_info:
+    clean = normalize_index_code_for_minute(index_code)
+    if not clean:
         return None, None
-    
+    index_code = clean
+
     # 处理日期
     if end_date:
         end_date = normalize_date(end_date)
@@ -268,16 +276,7 @@ def fetch_single_index_historical(
     start_date_formatted = start_date.replace("-", "")
     end_date_formatted = end_date.replace("-", "")
     
-    # 指数代码映射（使用正确的新浪代码，全部通过交易所前缀区分）
-    index_code_mapping = {
-        "000300": "sh000300",
-        "000001": "sh000001",
-        "000016": "sh000016",
-        "000905": "sh000905",
-        "399001": "sz399001",
-        "399006": "sz399006",
-    }
-    sina_symbol = index_code_mapping.get(index_code, index_code)
+    sina_symbol = index_sina_symbol(index_code)
     
     df = None
     source = None
@@ -336,15 +335,7 @@ def fetch_single_index_historical(
     if (df is None or df.empty) and tushare_token and TUSHARE_AVAILABLE and period == "daily":
         try:
             pro = ts.pro_api(tushare_token)
-            ts_code_mapping = {
-                "000300": "399300.SZ",
-                "000001": "000001.SH",
-                "000016": "000016.SH",
-                "000905": "000905.SH",
-                "399001": "399001.SZ",
-                "399006": "399006.SZ",
-            }
-            ts_code = ts_code_mapping.get(index_code)
+            ts_code = tushare_index_ts_code(index_code)
             if ts_code:
                 temp_df = pro.index_daily(ts_code=ts_code, start_date=start_date_formatted, end_date=end_date_formatted)
                 if temp_df is not None and not temp_df.empty:
@@ -443,9 +434,14 @@ def fetch_single_index_historical(
             pass
     
     # 方法6：使用东方财富接口（备用）
-    if df is None or df.empty:
+    if (df is None or df.empty) and AKSHARE_AVAILABLE:
         try:
-            temp_df = ak.index_zh_a_hist_min_em(symbol=index_code, period="日k", start_date=start_date_formatted, end_date=end_date_formatted)
+            temp_df = ak.index_zh_a_hist_min_em(
+                symbol=sina_symbol,
+                period="日k",
+                start_date=start_date_formatted,
+                end_date=end_date_formatted,
+            )
             if temp_df is not None and not temp_df.empty:
                 # 统一字段名
                 temp_df = normalize_column_names(temp_df)
@@ -455,6 +451,11 @@ def fetch_single_index_historical(
                 source = "eastmoney"
         except Exception:
             pass
+
+    # 如果数据已获取但 source 未被正确标记，至少给出稳定占位，
+    # 避免上层工具返回 source=None 影响下游逻辑/展示。
+    if df is not None and not df.empty and not source:
+        source = "unknown"
     
     # ========== 合并部分缓存数据 ==========
     if df is not None and not df.empty and cached_partial_df is not None:
@@ -490,10 +491,11 @@ def fetch_index_historical(
 ) -> Dict[str, Any]:
     """
     获取指数历史数据（融合 Coze get_index_historical.py）
-    支持多指数查询（逗号分隔）
+    支持多指数查询（逗号分隔）。不校验指数白名单；代码与分钟线共用 index_code_utils（39xxxx→sz，其余→sh）。
+    不强制依赖 akshare（可走缓存/mootdx/Tushare/新浪等）；5/1 开头自动走 ETF 历史接口。
     
     Args:
-        index_code: 指数代码，支持单个或多个（用逗号分隔），如 "000001" 或 "000300,000001"
+        index_code: 指数代码，支持单个或多个（用逗号分隔），如 "000001" 或 "sh000300,sz399001"
         period: 周期类型 "daily"/"weekly"/"monthly"，默认 "daily"
         start_date: 开始日期（YYYY-MM-DD 或 YYYYMMDD），默认30天前
         end_date: 结束日期（YYYY-MM-DD 或 YYYYMMDD），默认今天
@@ -506,40 +508,35 @@ def fetch_index_historical(
         Dict: 包含历史数据的字典
     """
     try:
-        if not AKSHARE_AVAILABLE:
-            return {
-                'success': False,
-                'message': 'akshare not installed. Please install: pip install akshare',
-                'data': None
-            }
-        
-        # 指数代码映射
-        index_mapping = {
-            "000001": {"name": "上证指数", "symbol": "sh000001"},
-            "399001": {"name": "深证成指", "symbol": "sz399001"},
-            "399006": {"name": "创业板指", "symbol": "sz399006"},
-            "000300": {"name": "沪深300", "symbol": "sh000300"},
-            "000016": {"name": "上证50", "symbol": "sh000016"},
-            "000905": {"name": "中证500", "symbol": "sh000905"},
-        }
-        
-        # 解析指数代码（支持单个或多个，用逗号分隔）
+        # 不要求必须安装 akshare：可走缓存 / mootdx / Tushare / 新浪等；仅 AkShare/东财兜底需 akshare
+        # 解析指数代码（支持单个或多个，用逗号分隔），规范为 6 位数字
         if isinstance(index_code, str):
-            index_codes = [code.strip() for code in index_code.split(",") if code.strip()]
+            raw_codes = [code.strip() for code in index_code.split(",") if code.strip()]
         elif isinstance(index_code, list):
-            index_codes = [str(code).strip() for code in index_code if str(code).strip()]
+            raw_codes = [str(code).strip() for code in index_code if str(code).strip()]
         else:
-            index_codes = [str(index_code).strip()]
-        
-        if not index_codes:
+            raw_codes = [str(index_code).strip()]
+
+        if not raw_codes:
             return {
-                'success': False,
-                'message': '未提供有效的指数代码',
-                'data': None
+                "success": False,
+                "message": "未提供有效的指数代码",
+                "data": None,
             }
-        
+
+        index_codes: List[str] = []
+        for rc in raw_codes:
+            n = normalize_index_code_for_minute(rc)
+            if n is None:
+                return {
+                    "success": False,
+                    "message": f"无法解析指数代码: {rc}（需 6 位数字或 sh/sz 前缀）",
+                    "data": None,
+                }
+            index_codes.append(n)
+
         # ========== 自动识别 ETF 代码并调用对应的 ETF 函数 ==========
-        # ETF代码通常以5或1开头（如510300, 159915），指数代码通常以000或399开头（如000300, 399001）
+        # ETF代码通常以5或1开头（如510300, 159915），其余 6 位按指数处理
         etf_codes = [code for code in index_codes if code.startswith("5") or code.startswith("1")]
         index_codes_only = [code for code in index_codes if code not in etf_codes]
         etf_result = None
@@ -579,20 +576,6 @@ def fetch_index_historical(
                     'data': None
                 }
         
-        # 验证所有指数代码
-        invalid_codes = []
-        for code in index_codes_only:
-            if code not in index_mapping:
-                invalid_codes.append(code)
-        
-        if invalid_codes:
-            return {
-                'success': False,
-                'message': f'不支持的指数代码: {", ".join(invalid_codes)}',
-                'supported_codes': list(index_mapping.keys()),
-                'data': None
-            }
-        
         # 处理多个指数（逐个获取）
         results = []
         source = None
@@ -612,8 +595,6 @@ def fetch_index_historical(
                     })
         
         for index_code_item in index_codes_only:
-            index_info = index_mapping[index_code_item]
-            
             # 获取数据
             df, data_source = fetch_single_index_historical(
                 index_code_item, period, start_date, end_date, tushare_token, use_cache
@@ -625,7 +606,7 @@ def fetch_index_historical(
             if df is None or df.empty:
                 results.append({
                     "index_code": index_code_item,
-                    "index_name": index_info['name'],
+                    "index_name": index_display_name(index_code_item),
                     "period": period,
                     "count": 0,
                     "klines": [],
@@ -664,7 +645,7 @@ def fetch_index_historical(
             
             result_data = {
                 'index_code': index_code_item,
-                'index_name': index_info['name'],
+                'index_name': index_display_name(index_code_item),
                 'period': period,
                 'start_date': start_date or '',
                 'end_date': end_date or '',
@@ -690,7 +671,7 @@ def fetch_index_historical(
             'success': True,
             'message': f'Successfully fetched {len(results)} index(es) historical data',
             'data': final_data,
-            'source': source or 'akshare',
+            'source': source or 'unknown',
             'count': len(results)
         }
     
@@ -711,7 +692,7 @@ def tool_fetch_index_historical(
     tushare_token: Optional[str] = None,
     use_cache: bool = True
 ) -> Dict[str, Any]:
-    """OpenClaw 工具：获取指数历史数据"""
+    """OpenClaw 工具：指数日/周/月 K 线；无白名单，不强制 akshare；见 fetch_index_historical。"""
     return fetch_index_historical(
         index_code=index_code,
         period=period,

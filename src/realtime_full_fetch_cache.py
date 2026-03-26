@@ -3,6 +3,7 @@
 
 使用场景：
 - ETF 实时 spot：ak.fund_etf_spot_ths(date="") 拉全量表后筛选目标代码
+- 指数现货快照：ak.stock_zh_index_spot_sina()；东财 ak.stock_zh_index_spot_em(symbol=...) 按分类多次拉取（各分类独立缓存键）
 - 其它类似“全量列表/全市场快照”场景
 
 约束：

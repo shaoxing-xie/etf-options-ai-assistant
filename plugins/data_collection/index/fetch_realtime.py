@@ -4,11 +4,14 @@
 OpenClaw 插件工具
 """
 
+import logging
 import pandas as pd
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Tuple
 from datetime import datetime
 import os
 import sys
+
+logger = logging.getLogger(__name__)
 
 # 导入交易日判断工具
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -38,66 +41,126 @@ except Exception:  # noqa: BLE001
     MOOTDX_AVAILABLE = False
 
 
-def _fetch_index_realtime_mootdx_single(index_code: str) -> Optional[Dict[str, Any]]:
-    """
-    使用 mootdx 获取单个指数的实时行情。
-
-    说明:
-        - index_code 例如 "000300"、"000001" 等。
-        - 使用 Quotes.factory('std').bars(frequency=9, offset=1) 取最新一根日K 作为近似实时快照。
-          （mootdx 指数 quotes 支持有限，使用 bars 是一个稳定方案；实时精度由后续需要再精细化）
-    """
-    if not MOOTDX_AVAILABLE:
-        return None
-
+def _mootdx_bypass_time_frame_limit() -> None:
+    """与股票实时通道一致：尽量绕过 tdxpy 交易时间限制（部分环境返回空与时段相关）。"""
     try:
-        client = Quotes.factory(market="std")
+        import tdxpy.hq as _tdx_hq  # type: ignore
+
+        _tdx_hq.time_frame = lambda: True  # type: ignore[attr-defined]
+    except Exception:
+        pass
+
+
+def _normalize_mootdx_code(c: Any) -> str:
+    s = str(c).strip()
+    if not s:
+        return ""
+    if "." in s:
+        s = s.split(".", 1)[0]
+    low = s.lower()
+    if low.startswith(("sh", "sz")) and len(s) > 2:
+        s = s[2:]
+    return s
+
+
+def _row_float_series(row: Any, *keys: str, default: float = 0.0) -> float:
+    for key in keys:
+        if key not in row.index:
+            continue
+        try:
+            v = row[key]
+            if v is not None and str(v) != "nan" and str(v) != "":
+                return float(v)
+        except (TypeError, ValueError):
+            continue
+    return default
+
+
+def _mootdx_index_quotes_batch(
+    client: Any,
+    index_codes: List[str],
+) -> Dict[str, Dict[str, Any]]:
+    """通达信 quotes：优先用于指数实时快照（列语义与股票实时一致）。"""
+    out: Dict[str, Dict[str, Any]] = {}
+    if not index_codes:
+        return out
+    try:
+        df = client.quotes(symbol=index_codes)
+    except Exception:
+        return out
+    if df is None or df.empty:
+        return out
+    code_series = df.get("code")
+    if code_series is None:
+        return out
+    try:
+        df_norm = code_series.astype(str).map(_normalize_mootdx_code)
+    except Exception:
+        return out
+    want = set(index_codes)
+    for code in index_codes:
+        try:
+            match = df[df_norm == code]
+            if match.empty:
+                continue
+            row = match.iloc[0]
+        except Exception:
+            continue
+        price = _row_float_series(row, "price", "last", default=0.0)
+        open_p = _row_float_series(row, "open", default=0.0)
+        high = _row_float_series(row, "high", default=0.0)
+        low = _row_float_series(row, "low", default=0.0)
+        prev_close = _row_float_series(row, "last_close", "pre_close", default=0.0)
+        volume = int(_row_float_series(row, "vol", "volume", default=0.0))
+        amount = _row_float_series(row, "amount", default=0.0)
+        if price <= 0:
+            continue
+        change = (price - prev_close) if prev_close else 0.0
+        change_pct = (change / prev_close * 100.0) if prev_close else 0.0
+        out[code] = {
+            "current_price": price,
+            "open": open_p,
+            "high": high,
+            "low": low,
+            "prev_close": prev_close,
+            "change": change,
+            "change_percent": change_pct,
+            "volume": float(volume),
+            "amount": amount,
+        }
+    # 只返回请求中出现的代码
+    return {k: v for k, v in out.items() if k in want}
+
+
+def _mootdx_index_last_1m_bar(client: Any, index_code: str) -> Optional[Dict[str, Any]]:
+    """
+    1 分钟 K 最后一根作为盘中近似（frequency=7 与 index fetch_minute 一致）。
+    不再使用日 K（frequency=9）充当「实时」。
+    """
+    try:
+        df = client.bars(symbol=index_code, frequency=7, offset=64)
     except Exception:
         return None
-
-    try:
-        df = client.bars(symbol=index_code, frequency=9, offset=1)
-    except Exception:
-        return None
-
     if df is None or df.empty:
         return None
-
-    row = df.iloc[-1]
-    # 安全取值
-    def safe_get(name: str, default: float = 0.0) -> float:
-        try:
-            if name in row.index:
-                v = row[name]
-                if v is not None and str(v) != "nan":
-                    return float(v)
-        except Exception:
-            pass
-        return default
-
-    close_price = safe_get("close", 0.0)
-    open_price = safe_get("open", 0.0)
-    high = safe_get("high", 0.0)
-    low = safe_get("low", 0.0)
-    volume = safe_get("vol", 0.0)
-    amount = safe_get("amount", 0.0)
-
-    # 这里日K中不直接包含昨收，用前一根K线近似；若失败则留为0
-    prev_close = 0.0
     try:
-        df_prev = client.bars(symbol=index_code, frequency=9, offset=2)
-        if df_prev is not None and len(df_prev) >= 2:
-            prev_close = float(df_prev.iloc[-2]["close"])
+        last = df.iloc[-1]
     except Exception:
-        prev_close = 0.0
-
-    if prev_close != 0.0:
-        change = close_price - prev_close
-        change_percent = change / prev_close * 100
-    else:
-        change = 0.0
-        change_percent = 0.0
-
+        return None
+    close_price = _row_float_series(last, "close", "收盘", default=0.0)
+    if close_price <= 0:
+        return None
+    open_price = _row_float_series(last, "open", "开盘", default=0.0)
+    high = _row_float_series(last, "high", "最高", default=0.0)
+    low = _row_float_series(last, "low", "最低", default=0.0)
+    volume = _row_float_series(last, "vol", "volume", "成交量", default=0.0)
+    amount = _row_float_series(last, "amount", "成交额", default=0.0)
+    prev_close = 0.0
+    if len(df) >= 2:
+        prev = df.iloc[-2]
+        prev_close = _row_float_series(prev, "close", "收盘", default=0.0)
+    change = (close_price - prev_close) if prev_close else 0.0
+    change_pct = (change / prev_close * 100.0) if prev_close else 0.0
     return {
         "current_price": close_price,
         "open": open_price,
@@ -105,10 +168,213 @@ def _fetch_index_realtime_mootdx_single(index_code: str) -> Optional[Dict[str, A
         "low": low,
         "prev_close": prev_close,
         "change": change,
-        "change_percent": change_percent,
+        "change_percent": change_pct,
         "volume": volume,
         "amount": amount,
     }
+
+
+def mootdx_index_quotes_only(index_codes_only: List[str]) -> Dict[str, Dict[str, Any]]:
+    """仅 mootdx quotes（批量），不做 1 分钟兜底。"""
+    if not MOOTDX_AVAILABLE or not index_codes_only:
+        return {}
+    _mootdx_bypass_time_frame_limit()
+    try:
+        client = Quotes.factory(market="std")
+    except Exception:
+        return {}
+    try:
+        return _mootdx_index_quotes_batch(client, index_codes_only)
+    finally:
+        try:
+            client.close()
+        except Exception:
+            pass
+
+
+def mootdx_index_1m_only(codes: List[str]) -> Dict[str, Dict[str, Any]]:
+    """仅 mootdx 1 分钟 K 最后一根（在 quotes + AkShare 之后使用）。"""
+    if not MOOTDX_AVAILABLE or not codes:
+        return {}
+    _mootdx_bypass_time_frame_limit()
+    out: Dict[str, Dict[str, Any]] = {}
+    try:
+        client = Quotes.factory(market="std")
+    except Exception:
+        return {}
+    try:
+        for code in codes:
+            one = _mootdx_index_last_1m_bar(client, code)
+            if one is not None:
+                out[code] = one
+    finally:
+        try:
+            client.close()
+        except Exception:
+            pass
+    return out
+
+
+def _fetch_index_spot_df_cached(
+    index_codes_only: List[str],
+) -> Tuple[Optional[pd.DataFrame], Optional[str]]:
+    """
+    全量指数现货快照：新浪 -> 东财多表拼接。
+    对单次全量拉取使用 realtime_full_fetch_cache（与 ETF 全量 spot 同级策略）。
+    """
+    if not AKSHARE_AVAILABLE or not index_codes_only:
+        return None, None
+    try:
+        from src.realtime_full_fetch_cache import get_or_fetch
+    except Exception:
+        get_or_fetch = None  # type: ignore[assignment]
+
+    def _sina() -> Any:
+        return ak.stock_zh_index_spot_sina()
+
+    try:
+        df = get_or_fetch("ak.stock_zh_index_spot_sina", _sina) if get_or_fetch else _sina()
+        if df is not None and not df.empty:
+            return df, "stock_zh_index_spot_sina"
+    except Exception:
+        pass
+
+    symbols_to_try: set[str] = set()
+    for code in index_codes_only:
+        if code.startswith("000"):
+            symbols_to_try.update(["上证系列指数", "沪深重要指数", "中证系列指数"])
+        elif code.startswith("399"):
+            symbols_to_try.update(["深证系列指数", "沪深重要指数"])
+        else:
+            symbols_to_try.update(
+                ["沪深重要指数", "上证系列指数", "深证系列指数", "中证系列指数"]
+            )
+
+    all_df: Optional[pd.DataFrame] = None
+    for sym in sorted(symbols_to_try):
+
+        def _em_fetch(symbol: str = sym) -> Any:
+            return ak.stock_zh_index_spot_em(symbol=symbol)
+
+        try:
+            if get_or_fetch:
+                temp_df = get_or_fetch(f"ak.stock_zh_index_spot_em:{sym}", _em_fetch)
+            else:
+                temp_df = _em_fetch()
+            if temp_df is not None and not temp_df.empty:
+                if all_df is None:
+                    all_df = temp_df
+                else:
+                    all_df = pd.concat([all_df, temp_df], ignore_index=True)
+        except Exception:
+            continue
+
+    if all_df is not None and not all_df.empty:
+        return all_df, "stock_zh_index_spot_em"
+    return None, None
+
+
+def _series_safe_get(row: Any, *keys: str, default: float = 0.0) -> float:
+    for key in keys:
+        if key not in row.index:
+            continue
+        try:
+            value = row[key]
+            if value is not None and str(value) != "nan" and str(value) != "":
+                return float(value)
+        except (ValueError, TypeError):
+            continue
+    return default
+
+
+def _extract_index_snapshots_from_df(
+    df: pd.DataFrame,
+    codes_needed: List[str],
+    index_mapping: Dict[str, Dict[str, str]],
+) -> Dict[str, Dict[str, Any]]:
+    """从全量现货表中筛出所需指数，返回与 mootdx 同结构的 snap（不含 code/name）。"""
+    code_col = None
+    for col in ("代码", "code", "symbol"):
+        if col in df.columns:
+            code_col = col
+            break
+    if not code_col:
+        return {}
+
+    out: Dict[str, Dict[str, Any]] = {}
+    for index_code_item in codes_needed:
+        if index_code_item not in index_mapping:
+            continue
+        index_info = index_mapping[index_code_item]
+        possible_codes = [index_info["symbol"]]
+        if index_code_item.startswith("399"):
+            possible_codes.extend([f"sz{index_code_item}", index_code_item])
+        else:
+            possible_codes.extend([f"sh{index_code_item}", index_code_item])
+
+        target_row = None
+        for code_pattern in possible_codes:
+            try:
+                mask = df[code_col].astype(str).str.contains(
+                    code_pattern, na=False, regex=False
+                )
+                if mask.any():
+                    target_row = df[mask].iloc[0]
+                    break
+            except Exception:
+                continue
+
+        if target_row is None:
+            continue
+
+        row = target_row
+        current_price = _series_safe_get(
+            row,
+            "最新价",
+            "close",
+            "price",
+            "last",
+            "当前价",
+            "现价",
+            default=0.0,
+        )
+        prev_close = _series_safe_get(
+            row, "昨收", "pre_close", "preclose", "昨收价", default=0.0
+        )
+        change = _series_safe_get(row, "涨跌额", "change", "涨跌", default=0.0)
+        change_percent = _series_safe_get(
+            row, "涨跌幅", "pct_chg", "涨跌幅%", default=0.0
+        )
+
+        if prev_close != 0 and current_price != 0:
+            if change == 0:
+                change = current_price - prev_close
+            if change_percent == 0:
+                change_percent = (change / prev_close) * 100 if prev_close else 0.0
+
+        open_price = _series_safe_get(
+            row, "今开", "open", "开盘", "开盘价", default=0.0
+        )
+        high = _series_safe_get(row, "最高", "high", "最高价", default=0.0)
+        low = _series_safe_get(row, "最低", "low", "最低价", default=0.0)
+        volume = _series_safe_get(row, "成交量", "volume", "vol", default=0.0)
+        amount = _series_safe_get(row, "成交额", "amount", "成交金额", default=0.0)
+
+        if current_price <= 0:
+            continue
+
+        out[index_code_item] = {
+            "current_price": current_price,
+            "change": change,
+            "change_percent": change_percent,
+            "open": open_price,
+            "high": high,
+            "low": low,
+            "prev_close": prev_close,
+            "volume": volume,
+            "amount": amount,
+        }
+    return out
 
 
 def fetch_index_realtime(
@@ -213,246 +479,114 @@ def fetch_index_realtime(
                 'data': None
             }
         
-        # ====== 第一优先：尝试通过 mootdx 获取实时/近实时快照 ======
-        df = None
-        source = None
+        # ====== 顺序：mootdx quotes（批量）-> AkShare 全量现货快照（短缓存）-> mootdx 1 分钟 K ======
+        if not AKSHARE_AVAILABLE and not MOOTDX_AVAILABLE:
+            return {
+                "success": False,
+                "message": "需要 mootdx 或 akshare 至少其一。请 pip install akshare 与/或 mootdx。",
+                "data": None,
+            }
 
-        mootdx_snapshots: Dict[str, Dict[str, Any]] = {}
-        if MOOTDX_AVAILABLE:
-            for code in index_codes_only:
-                snap = _fetch_index_realtime_mootdx_single(code)
-                if snap is not None:
-                    mootdx_snapshots[code] = snap
+        quotes_map: Dict[str, Dict[str, Any]] = (
+            mootdx_index_quotes_only(index_codes_only) if MOOTDX_AVAILABLE else {}
+        )
 
-        # 如果所有指数都从 mootdx 拿到了数据，则直接用 mootdx 结果返回
-        if mootdx_snapshots and len(mootdx_snapshots) == len(index_codes_only):
-            results = []
+        if len(quotes_map) == len(index_codes_only):
+            index_rows: List[Dict[str, Any]] = []
             for code in index_codes_only:
                 base = index_mapping[code]
-                snap = mootdx_snapshots[code]
-                snap_data = {
-                    "code": code,
-                    "name": base["name"],
-                    **snap,
-                    "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                }
-                results.append(snap_data)
-
-            # 如果有ETF结果，先添加到结果中
-            if etf_codes and etf_result and etf_result.get('success'):
-                etf_data = etf_result.get('data', {})
+                index_rows.append(
+                    {
+                        "code": code,
+                        "name": base["name"],
+                        **quotes_map[code],
+                        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    }
+                )
+            results = index_rows
+            if etf_codes and etf_result and etf_result.get("success"):
+                etf_data = etf_result.get("data", {})
                 if isinstance(etf_data, list):
-                    results.extend(etf_data)
+                    results = results + etf_data
                 elif isinstance(etf_data, dict):
-                    results.append(etf_data)
-
+                    results = results + [etf_data]
             return {
                 "success": True,
-                "message": "Successfully fetched index realtime data via mootdx",
+                "message": "Successfully fetched index realtime data via mootdx (quotes)",
                 "data": results[0] if len(results) == 1 else results,
                 "source": "mootdx",
                 "count": len(results),
             }
 
-        # ====== 第二优先：保留原有 akshare / 新浪 / 东财 链路，作为 fallback ======
-        if not AKSHARE_AVAILABLE:
-            # akshare 不可用时，若 mootdx 至少给出部分数据，就返回部分 + 其余降级
-            if mootdx_snapshots:
-                results: List[Dict[str, Any]] = []
-                for code in index_codes_only:
-                    if code in mootdx_snapshots:
-                        base = index_mapping[code]
-                        snap = mootdx_snapshots[code]
-                        results.append({
-                            "code": code,
-                            "name": base["name"],
-                            **snap,
-                            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                        })
-                    else:
-                        results.append(_get_fallback_data(code, index_mapping)["data"])
-                return {
-                    "success": True,
-                    "message": "Partially fetched via mootdx; others fallback",
-                    "data": results[0] if len(results) == 1 else results,
-                    "source": "mootdx+fallback",
-                    "count": len(results),
-                }
+        missing_after_quotes = [c for c in index_codes_only if c not in quotes_map]
+        ak_snap: Dict[str, Dict[str, Any]] = {}
+        ak_label: Optional[str] = None
+        if missing_after_quotes and AKSHARE_AVAILABLE:
+            df_ak, ak_label = _fetch_index_spot_df_cached(index_codes_only)
+            if df_ak is not None and not df_ak.empty:
+                ak_snap = _extract_index_snapshots_from_df(
+                    df_ak, missing_after_quotes, index_mapping
+                )
 
-            return {
-                'success': False,
-                'message': 'akshare not installed. Please install: pip install akshare',
-                'data': None
-            }
+        missing_after_ak = [c for c in missing_after_quotes if c not in ak_snap]
+        bars_map: Dict[str, Dict[str, Any]] = (
+            mootdx_index_1m_only(missing_after_ak)
+            if (missing_after_ak and MOOTDX_AVAILABLE)
+            else {}
+        )
 
-        # 方法：尝试使用 stock_zh_index_spot_sina（新浪接口，主用）
-        try:
-            df = ak.stock_zh_index_spot_sina()
-            source = "stock_zh_index_spot_sina"
-        except Exception:
-            # 如果新浪失败，尝试东方财富接口
-            try:
-                symbols_to_try = set()
-                for code in index_codes_only:
-                    if code.startswith("000"):
-                        symbols_to_try.update(["上证系列指数", "沪深重要指数", "中证系列指数"])
-                    elif code.startswith("399"):
-                        symbols_to_try.update(["深证系列指数", "沪深重要指数"])
-                    else:
-                        symbols_to_try.update(["沪深重要指数", "上证系列指数", "深证系列指数", "中证系列指数"])
-
-                all_df = None
-                for sym in symbols_to_try:
-                    try:
-                        temp_df = ak.stock_zh_index_spot_em(symbol=sym)
-                        if temp_df is not None and not temp_df.empty:
-                            if all_df is None:
-                                all_df = temp_df
-                            else:
-                                all_df = pd.concat([all_df, temp_df], ignore_index=True)
-                    except Exception:
-                        continue
-
-                if all_df is not None and not all_df.empty:
-                    df = all_df
-                    source = "stock_zh_index_spot_em"
-            except Exception:
-                df = None
-        
-        # 如果有ETF结果，先添加到结果中
-        results = []
-        if etf_codes and etf_result and etf_result.get('success'):
-            etf_data = etf_result.get('data', {})
-            if isinstance(etf_data, list):
-                results.extend(etf_data)
-            elif isinstance(etf_data, dict):
-                results.append(etf_data)
-        
-        if df is None or df.empty:
-            # 使用降级数据
-            for code in index_codes_only:
-                results.append(_get_fallback_data(code, index_mapping)["data"])
-            return {
-                'success': True,
-                'message': '使用降级数据',
-                'data': results[0] if len(results) == 1 else results,
-                'source': 'fallback',
-                'is_fallback': True
-            }
-        
-        # 筛选数据
-        code_col = None
-        for col in ['代码', 'code', 'symbol']:
-            if col in df.columns:
-                code_col = col
-                break
-        
-        if not code_col:
-            for code in index_codes_only:
-                results.append(_get_fallback_data(code, index_mapping)["data"])
-            return {
-                'success': True,
-                'message': '使用降级数据',
-                'data': results[0] if len(results) == 1 else results,
-                'source': 'fallback',
-                'is_fallback': True
-            }
-        
-        # 处理多个指数
-        for index_code_item in index_codes_only:
-            index_info = index_mapping[index_code_item]
-            
-            # 构建可能的代码格式进行匹配
-            possible_codes = [index_info['symbol']]
-            if index_code_item.startswith("399"):
-                possible_codes.extend([f"sz{index_code_item}", index_code_item])
+        per_code_sources: List[str] = []
+        index_results: List[Dict[str, Any]] = []
+        used_fallback = False
+        for code in index_codes_only:
+            base = index_mapping[code]
+            snap: Optional[Dict[str, Any]] = None
+            tag: Optional[str] = None
+            if code in quotes_map:
+                snap = quotes_map[code]
+                tag = "mootdx"
+            elif code in ak_snap:
+                snap = ak_snap[code]
+                tag = ak_label or "akshare"
+            elif code in bars_map:
+                snap = bars_map[code]
+                tag = "mootdx_1m"
             else:
-                possible_codes.extend([f"sh{index_code_item}", index_code_item])
-            
-            # 尝试匹配
-            target_row = None
-            for code_pattern in possible_codes:
-                try:
-                    mask = df[code_col].astype(str).str.contains(code_pattern, na=False, regex=False)
-                    if mask.any():
-                        target_row = df[mask].iloc[0]
-                        break
-                except Exception:
-                    continue
-            
-            if target_row is None or target_row.empty:
-                results.append(_get_fallback_data(index_code_item, index_mapping)["data"])
+                index_results.append(_get_fallback_data(code, index_mapping)["data"])
+                per_code_sources.append("fallback")
+                used_fallback = True
                 continue
-            
-            row = target_row
-            
-            # 安全获取值
-            def safe_get(row, *keys, default=0):
-                for key in keys:
-                    if key in row.index:
-                        try:
-                            value = row[key]
-                            if value is not None and str(value) != 'nan' and str(value) != '':
-                                return float(value)
-                        except (ValueError, TypeError):
-                            continue
-                return default
-            
-            current_price = safe_get(row, '最新价', 'close', 'price', 'last', '当前价', '现价', default=0)
-            prev_close = safe_get(row, '昨收', 'pre_close', 'preclose', '昨收价', default=0)
-            change = safe_get(row, '涨跌额', 'change', '涨跌', default=0)
-            change_percent = safe_get(row, '涨跌幅', 'pct_chg', '涨跌幅%', default=0)
-            
-            # 自动计算涨跌额和涨跌幅（如果缺失或为0）
-            if prev_close != 0 and current_price != 0:
-                if change == 0:
-                    change = current_price - prev_close
-                if change_percent == 0:
-                    change_percent = (change / prev_close) * 100 if prev_close != 0 else 0
-            
-            open_price = safe_get(row, '今开', 'open', '开盘', '开盘价', default=0)
-            high = safe_get(row, '最高', 'high', '最高价', default=0)
-            low = safe_get(row, '最低', 'low', '最低价', default=0)
-            volume = safe_get(row, '成交量', 'volume', 'vol', default=0)
-            amount = safe_get(row, '成交额', 'amount', '成交金额', default=0)
-            
-            # 获取名称
-            name = index_info['name']
-            for name_col in ['名称', 'name', '指数名称']:
-                if name_col in row.index:
-                    try:
-                        name_value = str(row[name_col])
-                        if name_value and name_value != 'nan':
-                            name = name_value
-                            break
-                    except:
-                        pass
-            
-            index_data = {
-                "code": index_code_item,
-                "name": name,
-                "current_price": current_price,
-                "change": change,
-                "change_percent": change_percent,
-                "open": open_price,
-                "high": high,
-                "low": low,
-                "prev_close": prev_close,
-                "volume": volume,
-                "amount": amount,
-                "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            }
-            
-            results.append(index_data)
-        
-        # 返回结果：单个指数返回对象，多个指数返回数组
-        return {
-            'success': True,
-            'message': 'Successfully fetched index realtime data',
-            'data': results[0] if len(results) == 1 else results,
-            'source': source or 'akshare',
-            'count': len(results)
+            index_results.append(
+                {
+                    "code": code,
+                    "name": base["name"],
+                    **snap,
+                    "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                }
+            )
+            per_code_sources.append(tag or "unknown")
+
+        results = index_results
+        if etf_codes and etf_result and etf_result.get("success"):
+            etf_data = etf_result.get("data", {})
+            if isinstance(etf_data, list):
+                results = results + etf_data
+            elif isinstance(etf_data, dict):
+                results = results + [etf_data]
+
+        uniq = sorted(set(per_code_sources))
+        source_out = uniq[0] if len(uniq) == 1 else "mixed:" + ",".join(uniq)
+
+        ret: Dict[str, Any] = {
+            "success": True,
+            "message": "Successfully fetched index realtime data",
+            "data": results[0] if len(results) == 1 else results,
+            "source": source_out,
+            "count": len(results),
         }
+        if used_fallback:
+            ret["is_fallback"] = True
+        return ret
     
     except Exception as e:
         return {

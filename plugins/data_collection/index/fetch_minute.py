@@ -6,7 +6,7 @@ OpenClaw 插件工具
 """
 
 import pandas as pd
-from typing import Optional, Dict, Any, Tuple
+from typing import Optional, Dict, Any, Tuple, List
 from datetime import datetime, timedelta
 from pathlib import Path
 import pytz
@@ -82,6 +82,55 @@ except Exception:
 
 logger = logging.getLogger(__name__)
 
+# 常见指数中文名（仅展示用；任意 6 位代码均可走拉数链路）
+_INDEX_KNOWN_NAMES: Dict[str, str] = {
+    "000001": "上证指数",
+    "399001": "深证成指",
+    "399006": "创业板指",
+    "000300": "沪深300",
+    "000016": "上证50",
+    "000905": "中证500",
+    "000852": "中证1000",
+}
+
+
+def normalize_index_code_for_minute(raw: str) -> Optional[str]:
+    """
+    统一为 6 位数字指数代码（用于缓存键、mootdx symbol、与 sh/sz 推导）。
+    支持：000300 / sh000300 / sz399001 / 000300.SH 等形式。
+    无法解析则返回 None。
+    """
+    s = str(raw).strip()
+    if not s:
+        return None
+    u = s.upper().replace("．", ".")
+    for suf in (".SH", ".SZ"):
+        if u.endswith(suf):
+            u = u[: -len(suf)]
+            break
+    low = u.lower()
+    if low.startswith("sh") and len(u) > 2:
+        u = u[2:]
+    elif low.startswith("sz") and len(u) > 2:
+        u = u[2:]
+    u = u.strip()
+    if not u.isdigit():
+        return None
+    if len(u) != 6:
+        return None
+    return u
+
+
+def index_sina_symbol(digits: str) -> str:
+    """新浪 getKLineData / 东财 index_zh_a_hist_min_em 的 symbol：深证 39xxxx -> sz，其余默认 sh。"""
+    if digits.startswith("39"):
+        return f"sz{digits}"
+    return f"sh{digits}"
+
+
+def index_display_name(digits: str) -> str:
+    return _INDEX_KNOWN_NAMES.get(digits, f"指数{digits}")
+
 
 def _is_dataframe(obj: Any) -> bool:
     """统一 DataFrame 类型检查，避免对 None/非DataFrame对象访问 .columns。"""
@@ -112,25 +161,12 @@ def fetch_index_minute_sina_direct(
             lookback_days,
         )
 
-    # 指数代码映射（针对新浪 symbol）
-    index_code_mapping = {
-        "000300": "sh000300",
-        "000001": "sh000001",
-        "000016": "sh000016",
-        "000905": "sh000905",
-        "399001": "sz399001",
-        "399006": "sz399006",
-    }
-    sina_symbol = index_code_mapping.get(index_code)
-    if sina_symbol is None:
-        if index_code.startswith("000"):
-            sina_symbol = f"sh{index_code}"
-        elif index_code.startswith("399"):
-            sina_symbol = f"sz{index_code}"
-        else:
-            if logger:
-                logger.warning("无法识别的指数代码格式: %s", index_code)
-            return None
+    clean = normalize_index_code_for_minute(index_code)
+    if not clean:
+        if logger:
+            logger.warning("无法解析指数代码: %s", index_code)
+        return None
+    sina_symbol = index_sina_symbol(clean)
 
     period_to_scale = {"1": 1, "5": 5, "15": 15, "30": 30, "60": 60}
     scale = period_to_scale.get(period, 30)
@@ -468,23 +504,15 @@ def fetch_single_index_minute(
     Returns:
         Tuple[Optional[pd.DataFrame], Optional[str]]: (数据DataFrame, 数据源名称)
     """
-    # 指数代码映射
-    index_mapping = {
-        "000001": {"name": "上证指数", "symbol": "sh000001"},
-        "399001": {"name": "深证成指", "symbol": "sz399001"},
-        "399006": {"name": "创业板指", "symbol": "sz399006"},
-        "000300": {"name": "沪深300", "symbol": "sh000300"},
-        "000016": {"name": "上证50", "symbol": "sh000016"},
-        "000905": {"name": "中证500", "symbol": "sh000905"},
-    }
-    
     if period not in ["1", "5", "15", "30", "60"]:
         return None, None
-    
-    index_info = index_mapping.get(index_code)
-    if not index_info:
+
+    clean = normalize_index_code_for_minute(index_code)
+    if not clean:
         return None, None
-    
+    # 下游统一用 6 位代码（缓存、mootdx）
+    index_code = clean
+
     # 计算日期范围
     now = datetime.now()
     if not end_date:
@@ -500,16 +528,7 @@ def fetch_single_index_minute(
     else:
         start_date_str = normalize_date(start_date)
     
-    # 指数代码映射（用于 akshare 备用数据源）
-    index_code_mapping = {
-        "000300": "sh000300",
-        "000001": "sh000001",
-        "000016": "sh000016",
-        "000905": "sh000905",
-        "399001": "sz399001",
-        "399006": "sz399006",
-    }
-    sina_symbol = index_code_mapping.get(index_code, index_code)
+    sina_symbol = index_sina_symbol(index_code)
     
     df = None
     source = None
@@ -672,14 +691,26 @@ def fetch_index_minute(
                 except Exception:
                     pass
             fetched, skipped = [], []
-            index_mapping = {
-                "000001": {}, "399001": {}, "399006": {}, "000300": {}, "000016": {}, "000905": {}
-            }
             if isinstance(index_code, str):
-                index_codes = [c.strip() for c in index_code.split(",") if c.strip()]
+                raw_batch = [c.strip() for c in index_code.split(",") if c.strip()]
             else:
-                index_codes = [str(index_code).strip()]
-            index_codes = [c for c in index_codes if c in index_mapping]
+                raw_batch = [str(index_code).strip()]
+            index_codes = []
+            for c in raw_batch:
+                n = normalize_index_code_for_minute(c)
+                if n is None:
+                    return {
+                        "success": False,
+                        "message": f"无法解析指数代码: {c}（需 6 位数字或 sh/sz 前缀）",
+                        "data": None,
+                    }
+                if n.startswith("5") or n.startswith("1"):
+                    return {
+                        "success": False,
+                        "message": f"批量预热仅支持指数，不含 ETF 代码: {n}",
+                        "data": None,
+                    }
+                index_codes.append(n)
             if not index_codes:
                 return {'success': False, 'message': '未提供有效的指数代码', 'data': None}
             for code in index_codes:
@@ -711,33 +742,34 @@ def fetch_index_minute(
                 'data': None
             }
         
-        # 指数代码映射
-        index_mapping = {
-            "000001": {"name": "上证指数", "symbol": "sh000001"},
-            "399001": {"name": "深证成指", "symbol": "sz399001"},
-            "399006": {"name": "创业板指", "symbol": "sz399006"},
-            "000300": {"name": "沪深300", "symbol": "sh000300"},
-            "000016": {"name": "上证50", "symbol": "sh000016"},
-            "000905": {"name": "中证500", "symbol": "sh000905"},
-        }
-        
-        # 解析指数代码（支持单个或多个，用逗号分隔）
+        # 解析指数代码（支持单个或多个，用逗号分隔），规范为 6 位数字
         if isinstance(index_code, str):
-            index_codes = [code.strip() for code in index_code.split(",") if code.strip()]
+            raw_codes = [code.strip() for code in index_code.split(",") if code.strip()]
         elif isinstance(index_code, list):
-            index_codes = [str(code).strip() for code in index_code if str(code).strip()]
+            raw_codes = [str(code).strip() for code in index_code if str(code).strip()]
         else:
-            index_codes = [str(index_code).strip()]
-        
-        if not index_codes:
+            raw_codes = [str(index_code).strip()]
+
+        if not raw_codes:
             return {
-                'success': False,
-                'message': '未提供有效的指数代码',
-                'data': None
+                "success": False,
+                "message": "未提供有效的指数代码",
+                "data": None,
             }
-        
+
+        index_codes: List[str] = []
+        for rc in raw_codes:
+            n = normalize_index_code_for_minute(rc)
+            if n is None:
+                return {
+                    "success": False,
+                    "message": f"无法解析指数代码: {rc}（需 6 位数字或 sh/sz 前缀）",
+                    "data": None,
+                }
+            index_codes.append(n)
+
         # ========== 自动识别 ETF 代码并调用对应的 ETF 函数 ==========
-        # ETF代码通常以5或1开头（如510300, 159915），指数代码通常以000或399开头（如000300, 399001）
+        # ETF代码通常以5或1开头（如510300, 159915），其余 6 位按指数处理
         etf_codes = [code for code in index_codes if code.startswith("5") or code.startswith("1")]
         index_codes_only = [code for code in index_codes if code not in etf_codes]
         etf_result = None
@@ -777,20 +809,6 @@ def fetch_index_minute(
                     'data': None
                 }
         
-        # 验证所有指数代码
-        invalid_codes = []
-        for code in index_codes_only:
-            if code not in index_mapping:
-                invalid_codes.append(code)
-        
-        if invalid_codes:
-            return {
-                'success': False,
-                'message': f'不支持的指数代码: {", ".join(invalid_codes)}',
-                'supported_codes': list(index_mapping.keys()),
-                'data': None
-            }
-        
         # 处理多个指数（逐个获取）
         results = []
         source = None
@@ -809,8 +827,6 @@ def fetch_index_minute(
                     })
         
         for index_code_item in index_codes_only:
-            index_info = index_mapping[index_code_item]
-            
             # 获取数据
             df, data_source = fetch_single_index_minute(
                 index_code_item, period, start_date, end_date, lookback_days, use_cache
@@ -822,6 +838,7 @@ def fetch_index_minute(
             if not _is_dataframe(df) or df.empty:
                 results.append({
                     "index_code": index_code_item,
+                    "name": index_display_name(index_code_item),
                     "period": period,
                     "count": 0,
                     "klines": [],
@@ -898,6 +915,7 @@ def fetch_index_minute(
             
             result_data = {
                 "index_code": index_code_item,
+                "name": index_display_name(index_code_item),
                 "period": period,
                 "total_count": total_count,  # 实际获取的总数据量
                 "returned_count": len(klines),  # 返回的数据量
