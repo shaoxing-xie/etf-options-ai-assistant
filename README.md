@@ -38,6 +38,27 @@
 
 > **免责声明**：本项目仅用于研究与工程实践，不构成任何投资建议。任何实盘行为与损益后果均由使用者自行承担。
 
+## ETF Stock 龙虾（OpenClaw）生态长项：从“会分析”到“会复现、会迭代”
+
+本项目的价值不在于堆更多结论，而在于把交易决策工程化：让每一次输出都可追溯、可复盘，并能在失败后持续进化。
+
+你会在这里体验到几项 OpenClaw ETF/股票龙虾生态的核心长项：
+
+- **证据驱动的端到端流程**：多 Agent 把“采集 -> 分析 -> 风控校验 -> 通知 -> 复盘”串成闭环；每次运行都有日志与上下文，减少“口嗨式结论”。
+- **Cron + Workflow 自动化**：盘前 / 盘中 / 盘后 / 研究任务按固定节奏运行，把盯盘从靠意志力变成靠系统。
+- **三 Skill 生产化流水线（CI 自动修复 + 质量兜底）**：把 `github + agent-team-orchestration + capability-evolver` 组合成受约束的执行闭环。
+  - 用 `Execution Contract` 强制“证据块 + 失败码门禁”，抑制幻觉、跑偏和超时扩散。
+  - 用 CI 自动修复演练与定时质量兜底，把“问题 -> 分类 -> 标准排查 -> checklist”固化成长期资产。
+  - 用 Evolver 复盘沉淀，让下一次成功率持续提升。
+- **GitHub 运维稳定 IO**：在当前 OpenClaw 形态下，GitHub 操作以 `exec + gh` 为主，结合 `gh api .../actions/runs/<id>/logs` 的 zip 日志兜底路径，确保可核验证据。
+
+如果你想把这套工程能力复用到自己的 ETF/风控场景，建议从：
+- `docs/openclaw/README.md`
+- `docs/openclaw/工作流参考手册.md`
+- `docs/openclaw/execution_contract.md`
+
+开始阅读并快速跑通。
+
 ## 紧急场景示例（开盘 10 分钟）
 
 场景：开盘后 10 分钟内，A 股 / ETF 快速下挫、消息面噪声增大。  
@@ -85,7 +106,7 @@
 - **语言**：Python 3.8+（核心逻辑与工具实现）
 - **数据源**：AKShare、Tushare、新浪等
 - **存储**：SQLite、Parquet、本地 JSON/CSV 缓存
-- **通知**：飞书（Feishu），后续可扩展钉钉 / 其他渠道
+- **通知**：飞书（Feishu）与钉钉（DingTalk），支持按需切换
 
 ---
 

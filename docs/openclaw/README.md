@@ -15,6 +15,7 @@
   - `信号与风控巡检工作流.md`：巡检工作流与风控检查流程。
   - `宽基ETF巡检快报-日内波动区间收敛说明.md`：缓存口径收敛、字段含义与验证方式。
   - `OpenClaw与Cursor协作代码维护执行通道CMEC实施方案.md`：OpenClaw 与 Cursor 的代码维护执行通道（CMEC）共享目录协作实施方案文档。
+  - **三个 Skill 生产化流水线（CI 自动修复 + 质量兜底）**：把 `github`、`agent-team-orchestration`、`capability-evolver` 组合成受约束的“证据驱动执行协议”。核心资产：`docs/openclaw/execution_contract.md`、`docs/openclaw/failure_codes.md`、`docs/openclaw/runbooks/github_actions_log_fetch.md`，以及两个工作流：`workflows/ci_autofix_triage_on_demand.yaml`（事件驱动入口）与 `workflows/quality_backstop_audit.yaml`（定时质量兜底）。
 
 - **优化与成本控制**  
   - `OpenClaw工具与Token优化建议.md`：如何通过精简工具暴露、调整 Agent 工具权限来减少 token 消耗与运行成本。

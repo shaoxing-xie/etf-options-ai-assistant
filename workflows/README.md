@@ -22,6 +22,8 @@
 | `strategy_evaluation.yaml` | 周五 18:00（`schedule.cron` + `timezone`） | 多策略 `tool_calculate_strategy_score` |
 | `strategy_weight_adjustment.yaml` | 周五 18:00（与上同时段） | 读权重并 `tool_adjust_strategy_weights`（依赖评分结果时请避免与 evaluation 步骤冲突或错开时间） |
 | `strategy_fusion_routine.yaml` | 无内置 cron（随 Agent / 手动） | `tool_strategy_engine` → 可选风控/通知；与 `agents/analysis_agent.yaml` 的 `strategy_fusion` 呼应（交易时段 **每 30 分钟** `*/30 9-15 * * 1-5`） |
+| `ci_autofix_triage_on_demand.yaml` | `schedule: null`（事件驱动） | CI 自动修复入口：Builder 取证、Reviewer 门禁、LOW 风险才可修复与 PR |
+| `quality_backstop_audit.yaml` | 工作日 20:30 | 质量兜底巡检：Cron 异常、工具 BUG、预测漂移、运维问题 |
 
 ---
 
@@ -41,6 +43,10 @@
 **研究 / 策略运维**  
 - `etf_rotation_research`、`strategy_research`：研究输出 + 日报。  
 - `strategy_evaluation`、`strategy_weight_adjustment`：周期性评分与权重（YAML 内为 **结构化 `schedule`**，见下节）。
+
+**三 Skill 自动修复与兜底（新增）**
+- `ci_autofix_triage_on_demand.yaml`：事件驱动（CI 失败触发），“先取证后判定”，仅 `RISK=LOW` 可进入修复+PR。
+- `quality_backstop_audit.yaml`：定时兜底（工作日 20:30），覆盖 Cron、工具 BUG、预测漂移、运维问题。
 
 **多策略融合（可选）**  
 - 工具 **`tool_strategy_engine`**：不替代 `tool_generate_signals`；可在 Cron/按需流程中 **并行或单独** 调用，输出 `candidates` + `fused`（见 `docs/architecture/strategy_engine_and_signal_fusion.md`）。示例 Cron 见根目录 `CRON_JOBS_EXAMPLE.json` 中 `strategy-fusion-example`（**`*/30 9-15 * * 1-5`**，默认 `enabled: false`）。  
@@ -86,6 +92,21 @@
 ## 与 OpenClaw 的衔接
 
 实际 Cron / Agent 绑定以 **`~/.openclaw/cron/jobs.json`** 与项目 **`docs/openclaw/`** 为准；本目录 YAML 可作为**步骤与工具名的参考模板**。
+
+### 混合触发映射（事件优先 + 定时兜底）
+
+- 事件触发（优先）：
+  - CI/workflow 失败 -> `ci_autofix_triage_on_demand.yaml`
+  - 运维告警/人工上报 BUG -> `ci_autofix_triage_on_demand.yaml`（先按证据协议分流）
+- 定时兜底：
+  - 每工作日 20:30 -> `quality_backstop_audit.yaml`
+  - 每周策略评分/权重任务仍沿用 `strategy_evaluation.yaml` / `strategy_weight_adjustment.yaml`
+
+建议在任务定义（如 `jobs.json`）里保持以下约束：
+
+- 必须回传证据块 `[COMMAND]/[STDOUT]/[STDERR]/[RAW_OUTPUT]`
+- Reviewer 无证据必须 `TEAM_FAIL: NO_EVIDENCE`
+- 非 `TEAM_OK + RISK=LOW` 禁止自动修复
 
 ---
 

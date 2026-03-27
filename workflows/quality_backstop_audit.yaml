@@ -1,0 +1,21 @@
+name: quality_backstop_audit
+description: 混合模式中的定时兜底巡检（覆盖 Cron、工具BUG、预测漂移、运维问题）
+schedule:
+  cron: "30 20 * * 1-5"
+  timezone: "Asia/Shanghai"
+
+meta:
+  phase: "2-5"
+  trigger_mode: scheduled_backstop
+  entry_agent: etf_main
+  reviewer_agent: etf_analysis_agent
+  evolver: capability-evolver
+
+structured_message: |
+  执行质量兜底巡检（定时）：
+  - 巡检 Cron/任务异常（最近一次执行状态、失败步骤、失败码一致性）。
+  - 巡检工具运行时 BUG（按环境/参数/代码缺陷三级分流）。
+  - 巡检预测准确性漂移（按既定窗口评估，超阈值触发 issue/告警建议）。
+  - 巡检运维问题（发现-诊断-处置-验证链路完整性）。
+  输出必须包含：失败码统计、主要风险、建议动作、是否允许自动修复（YES/NO）。
+

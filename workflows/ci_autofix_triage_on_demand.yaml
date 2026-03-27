@@ -1,0 +1,22 @@
+name: ci_autofix_triage_on_demand
+description: 事件驱动的 CI 失败诊断入口（只读取证 + 风险判定）
+schedule: null
+
+meta:
+  phase: 1
+  trigger_mode: event
+  entry_agent: etf_main
+  builder_agent: code_maintenance_agent
+  reviewer_agent: etf_analysis_agent
+  evolver: capability-evolver
+
+structured_message: |
+  执行 CI 自动修复分流（事件驱动）：
+  1) Builder 仅做日志取证与失败定位，输出 [COMMAND]/[STDOUT]/[STDERR]/[RAW_OUTPUT]。
+  2) Reviewer 仅基于 RAW_OUTPUT 判定：
+     - 无证据 -> TEAM_FAIL: NO_EVIDENCE
+     - 证据不足 -> TEAM_FAIL: UNKNOWN_CAUSE
+     - 可定位 -> TEAM_OK + ROOT_CAUSE + FIX + RISK
+  3) 仅当 TEAM_OK 且 RISK=LOW，才允许进入修复与 PR。
+  4) 结束后由 Evolver 产出复盘条目与下次 checklist。
+
