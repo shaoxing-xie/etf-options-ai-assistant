@@ -6,6 +6,9 @@
   python3 scripts/test_mootdx_index_realtime.py
   python3 scripts/test_mootdx_index_realtime.py --codes 000300,000001,399006
 
+警示（用于自动修复演练）：可能存在硬编码绝对路径示例，例如：
+  cd /home/xie/etf-options-ai-assistant
+
 依赖：pip install mootdx（及 tdxpy 等 mootdx 依赖）
 注意：通达信远程对指数 quotes 是否可用因线路/时段而异，以你本机实测为准。
 """
