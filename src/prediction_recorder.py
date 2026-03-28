@@ -11,12 +11,68 @@ from typing import Dict, Any, Optional
 import pytz
 
 from src.logger_config import get_module_logger
+from src.prediction_normalizer import PRICE_RANGES, process_prediction
 
 logger = get_module_logger(__name__)
 
 # 预测记录存储路径
 PREDICTION_RECORDS_DIR = Path("data/prediction_records")
 PREDICTION_DB_PATH = PREDICTION_RECORDS_DIR / "prediction_records.db"
+
+
+def _apply_prediction_normalization(symbol: str, prediction: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    对可识别标的的 upper/lower/current_price 做单位统一与质量门禁标记。
+    未识别标的或非数值输入时原样返回（不附加 normalization）。
+    """
+    out = dict(prediction)
+    if symbol not in PRICE_RANGES:
+        return out
+    try:
+        u = out.get("upper")
+        l = out.get("lower")
+        c = out.get("current_price")
+        if u is None or l is None or c is None:
+            return out
+        ru, rl, rc = float(u), float(l), float(c)
+    except (TypeError, ValueError):
+        return out
+
+    try:
+        nu, nl, nc, passed, msg = process_prediction(ru, rl, rc, symbol)
+    except Exception as e:
+        logger.warning("预测标准化异常 symbol=%s: %s", symbol, e)
+        out["normalization"] = {
+            "quality_gate_passed": False,
+            "message": str(e),
+            "raw_upper": ru,
+            "raw_lower": rl,
+            "raw_current_price": rc,
+        }
+        return out
+
+    out["upper"] = nu
+    out["lower"] = nl
+    out["current_price"] = nc
+    if nc and nc > 0:
+        out["range_pct"] = (nu - nl) / nc * 100.0
+    out["normalization"] = {
+        "quality_gate_passed": passed,
+        "message": msg,
+        "raw_upper": ru,
+        "raw_lower": rl,
+        "raw_current_price": rc,
+    }
+    if not passed:
+        logger.warning(
+            "预测质量门禁未通过仍落库 symbol=%s: %s (raw=%s/%s/%s)",
+            symbol,
+            msg,
+            ru,
+            rl,
+            rc,
+        )
+    return out
 
 
 def record_prediction(
@@ -55,6 +111,11 @@ def record_prediction(
     try:
         # 确保目录存在
         PREDICTION_RECORDS_DIR.mkdir(parents=True, exist_ok=True)
+
+        pred_payload = _apply_prediction_normalization(symbol, dict(prediction))
+        pred_payload.setdefault("method", prediction.get("method", "未知"))
+        if pred_payload.get("confidence") is None:
+            pred_payload["confidence"] = prediction.get("confidence", 0.5)
         
         # 获取当前日期
         tz_shanghai = pytz.timezone('Asia/Shanghai')
@@ -68,14 +129,8 @@ def record_prediction(
             'prediction_type': prediction_type,
             'symbol': symbol,
             'source': source,  # 'on_demand' 或 'scheduled'
-            'prediction': {
-                'upper': prediction.get('upper'),
-                'lower': prediction.get('lower'),
-                'current_price': prediction.get('current_price'),
-                'method': prediction.get('method', '未知'),
-                'confidence': prediction.get('confidence', 0.5),
-                'range_pct': prediction.get('range_pct'),
-            },
+            # 含 upper/lower/current、method、timestamp、IV 调试字段、normalization 等
+            'prediction': pred_payload,
             'actual_range': actual_range,  # 收盘后填入
             'verified': actual_range is not None  # 是否已验证（收盘后）
         }

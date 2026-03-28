@@ -83,6 +83,20 @@ evolver:
   note: "CHECKLIST_UPDATE 与 PROMPT_PATCH 按 evolver_evolution 模板；无则填 NONE。"
   template_path: "docs/openclaw/prompt_templates/evolver_evolution.md"
 
+prediction_pipeline:
+  description: >
+    自检/演化任务中若涉及「预测准确率、单位混乱、verified 字段」等，须区分代码与运维两层：
+    落库统一经 record_prediction（已接 prediction_normalizer）；收盘验证须跑 scripts/verify_predictions.py
+    或已注册的等价 Cron（见 workflows/prediction_verification.yaml）。禁止仅改 JSON 手填 verified 而无行情对照。
+  mandatory_for_accuracy_claims:
+    - "python scripts/verify_predictions.py --date YYYYMMDD --report"
+    - "或 OpenClaw 定时任务绑定上述命令且可检索执行日志"
+
+autofix_observability:
+  description: >
+    三 Skill 自动修复常见疏漏：实现了模块但未接入调用链、定时任务 ID 仅存在于聊天摘要、scripts/** 与
+    denied_paths 冲突导致无法合法提 PR。Builder 须在 allowed_paths 内补齐集成；Reviewer 对「无 RAW、无仓库内工作流/Cron 引用」的修复声明给 NO_EVIDENCE 或 TEAM_FAIL。
+
 workspace_data:
   description: >
     涉及 prediction_records / volatility_ranges 时，read 与 exec 以 OpenClaw workspaceDir 为准；

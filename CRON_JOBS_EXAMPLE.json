@@ -47,6 +47,15 @@
       "channel": "main"
     },
     {
+      "id": "prediction-verification",
+      "name": "预测记录收盘验证",
+      "description": "工作日 15:35：对照行情缓存填充 verified / actual_range（默认验证当日 JSON 内全部标的）",
+      "schedule": "35 15 * * 1-5",
+      "enabled": false,
+      "message": "执行预测验证：在仓库根运行 python scripts/verify_predictions.py --date $(date +%Y%m%d) --report（上海时区）。详见 workflows/prediction_verification.yaml。可选将 data/verification_reports/ 摘要发钉钉。",
+      "channel": "main"
+    },
+    {
       "id": "strategy-fusion-example",
       "name": "策略引擎融合（示例，默认关闭）",
       "description": "聚合 tool_generate_signals 与趋势信号并融合；详见 docs/architecture/strategy_engine_and_signal_fusion.md",

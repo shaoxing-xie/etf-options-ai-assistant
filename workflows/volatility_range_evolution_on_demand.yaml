@@ -31,6 +31,7 @@ structured_message: |
   ## 不变量（须读 config/evolution_invariants.yaml + config/evolver_scope.yaml）
   - 允许改动路径含：`plugins/analysis/**`、`config.yaml`（仅限波动/宽基监控相关键）、
     `src/volatility_range.py`、`src/volatility_range_fallback.py`、`src/on_demand_predictor.py`、
+    `src/prediction_recorder.py`、`src/prediction_normalizer.py`、
     `docs/research/**`、`docs/openclaw/**`。
   - 禁止：`plugins/data_collection/**`、`scripts/**`、`config/openclaw_*.yaml`、`plugins/notification/**` 等 denied_paths。
   - 对 `config.yaml` 的差异须可逐项说明用途；无关键变更 → Reviewer 判定 OUT_OF_SCOPE / TEAM_FAIL。

@@ -15,7 +15,8 @@ structured_message: |
   执行质量兜底巡检（定时）：
   - 巡检 Cron/任务异常（最近一次执行状态、失败步骤、失败码一致性）。
   - 巡检工具运行时 BUG（按环境/参数/代码缺陷三级分流）。
-  - 巡检预测准确性漂移（按既定窗口评估，超阈值触发 issue/告警建议）。
+  - 巡检预测准确性漂移（按既定窗口评估，超阈值触发 issue/告警建议）；核对 prediction_records 与
+    `scripts/verify_predictions.py` / `workflows/prediction_verification.yaml` 是否可引用 RAW，防止「仅聊天宣称已验证」。
   - 巡检运维问题（发现-诊断-处置-验证链路完整性）。
   输出必须包含以下结构化字段（逐行）：
   - TEAM_RESULT=TEAM_OK|TEAM_FAIL

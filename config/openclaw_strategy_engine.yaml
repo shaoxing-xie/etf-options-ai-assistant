@@ -40,3 +40,10 @@ agent_routing_hints: |
   - 进化：开启 persist_effective_weights 后，重复运行会沿用上次有效权重；策略反思任务请使用 evolution.fusion_weight_keys 对齐键名。
 
 # Cron：仓库内示例见 CRON_JOBS_EXAMPLE.json 的 strategy-fusion-example（*/30 9-15 * * 1-5）；与 agents/analysis_agent.yaml 的 strategy_fusion 一致；本机以 ~/.openclaw/cron/jobs.json 为准
+#
+# 预测记录收盘验证（与策略融合独立）：workflows/prediction_verification.yaml（工作日 15:35）+
+# scripts/verify_predictions.py；落库标准化见 src/prediction_recorder + src/prediction_normalizer。
+prediction_verification:
+  workflow_yaml: "workflows/prediction_verification.yaml"
+  script: "scripts/verify_predictions.py"
+  note: "Agent 若汇报「预测已验证」，须能指向上述脚本 RAW 或 verification_reports 产物路径。"

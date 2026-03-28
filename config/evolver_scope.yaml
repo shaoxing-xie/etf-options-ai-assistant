@@ -9,6 +9,9 @@ allowed_paths:
   - "src/volatility_range.py"
   - "src/volatility_range_fallback.py"
   - "src/on_demand_predictor.py"
+  # 预测落库与单位标准化（与 tool_predict_* / verify_predictions 同源）
+  - "src/prediction_recorder.py"
+  - "src/prediction_normalizer.py"
 
 denied_paths:
   - "plugins/data_collection/**"

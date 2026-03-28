@@ -1,0 +1,42 @@
+# 预测记录收盘验证：填充 actual_range / verified，并可选生成 Markdown 报告
+# 依赖：data/cache 下当日 parquet 已写入（建议排在盘后采集之后 3～5 分钟）
+name: prediction_verification
+description: |
+  读取 data/prediction_records/predictions_YYYYMMDD.json，对照 ETF 日线/分钟缓存校验区间命中，
+  写入 verified 与 actual_range；与 src/prediction_recorder 落库标准化（prediction_normalizer）配套。
+
+schedule: "35 15 * * 1-5"
+timezone: "Asia/Shanghai"
+
+meta:
+  phase: "2-5"
+  trigger_mode: scheduled
+  entry_agent: etf_main
+  related_scripts:
+    - "scripts/verify_predictions.py"
+    - "src/prediction_recorder.py"
+    - "src/prediction_normalizer.py"
+
+structured_message: |
+  【预测验证 — 定时】
+
+  ## 不变量
+  - 先 read：`config/evolution_invariants.yaml`、`config/evolver_scope.yaml`（本任务为运维闭环，非自动改代码 PR）。
+  - 工作目录为仓库根（OpenClaw workspaceDir）。
+
+  ## 执行步骤
+  1) 用 **exec** 在项目根执行（将 YYYYMMDD 换为 **Asia/Shanghai 当天**日期字符串，周一至周五）：
+     ```bash
+     cd <workspace> && python scripts/verify_predictions.py --date YYYYMMDD --report
+     ```
+     - 不要传 `--symbol`，以便验证当日 JSON 内**全部标的**。
+  2) 检查退出码与终端输出；报告路径：`data/verification_reports/verification_YYYYMMDD.md`。
+  3) （可选）将报告摘要通过既有钉钉/通知工具发给运维群；**禁止**编造未运行命令的输出。
+
+  ## 输出（便于审计）
+  逐行给出：
+  - VERIFY_STATUS=OK|PARTIAL|FAIL
+  - VERIFY_DATE=YYYYMMDD
+  - RECORDS_VERIFIED=<n>
+  - ACCURACY=<0~1 或 UNAVAILABLE>
+  - REPORT_PATH=<路径或 NONE>

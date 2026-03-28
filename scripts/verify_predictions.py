@@ -7,14 +7,13 @@
 使用方法：
     python scripts/verify_predictions.py --date 20260328 --symbol 510300
     
-Cron 调度：
-    0 15:30 * * 1-5  # 每个交易日 15:30 执行
+Cron 调度（crontab：分 时 日 月 周）：
+    30 15 * * 1-5   # 每个交易日 15:30（建议略晚于盘后采集，如 35 分见 workflows/prediction_verification.yaml）
 """
 
 import sys
 import json
 import argparse
-import sqlite3
 from pathlib import Path
 from datetime import datetime, timedelta
 from typing import Dict, List, Any, Optional
@@ -24,6 +23,7 @@ project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
 from src.logger_config import get_module_logger
+from src.prediction_normalizer import PRICE_RANGES, process_prediction
 
 logger = get_module_logger(__name__)
 
@@ -31,7 +31,30 @@ logger = get_module_logger(__name__)
 PREDICTION_RECORDS_DIR = project_root / "data" / "prediction_records"
 ETF_DAILY_DIR = project_root / "data" / "cache" / "etf_daily"
 ETF_MINUTE_DIR = project_root / "data" / "cache" / "etf_minute"
-INDEX_DAILY_DIR = project_root / "data" / "cache" / "index_daily"
+
+
+def _bounds_for_verify(record: Dict[str, Any]) -> tuple[float, float]:
+    """
+    取用于比对的上下轨：新记录在落库时已标准化；旧记录可能在 JSON 里仍为指数点量级，
+    此处用与落库相同逻辑再算一遍，避免历史脏数据导致准确率恒为 0。
+    """
+    pred = record.get("prediction") or {}
+    sym = record.get("symbol") or ""
+    u = pred.get("upper")
+    l = pred.get("lower")
+    c = pred.get("current_price")
+    try:
+        fu, fl = float(u), float(l)
+    except (TypeError, ValueError):
+        return 0.0, 0.0
+    if sym in PRICE_RANGES and c is not None:
+        try:
+            nu, nl, _, _, _ = process_prediction(float(u), float(l), float(c), sym)
+            return nu, nl
+        except Exception:
+            return fu, fl
+    return fu, fl
+
 
 def get_actual_prices_from_parquet(symbol: str, date: str) -> Optional[Dict[str, float]]:
     """
@@ -102,8 +125,7 @@ def verify_prediction_record(
     Returns:
         dict: 更新后的记录
     """
-    upper = record['prediction'].get('upper', 0)
-    lower = record['prediction'].get('lower', 0)
+    upper, lower = _bounds_for_verify(record)
     
     actual_high = actual_prices['high']
     actual_low = actual_prices['low']
@@ -169,8 +191,8 @@ def verify_predictions_for_date(date: str, symbol: Optional[str] = None) -> Dict
         if record.get('verified', False):
             continue
         
-        # 过滤标的
-        if symbol and record.get('symbol') != symbol:
+        # 过滤标的（默认 None = 验证当日文件内全部标的）
+        if symbol is not None and record.get("symbol") != symbol:
             continue
         
         # 获取实际行情
@@ -248,7 +270,12 @@ def generate_verification_report(date: str, stats: Dict[str, Any]) -> str:
 def main():
     parser = argparse.ArgumentParser(description='验证预测记录')
     parser.add_argument('--date', type=str, required=True, help='日期 (YYYYMMDD)')
-    parser.add_argument('--symbol', type=str, default='510300', help='标的代码')
+    parser.add_argument(
+        '--symbol',
+        type=str,
+        default=None,
+        help='仅验证该标的；省略则验证当日文件内全部标的',
+    )
     parser.add_argument('--report', action='store_true', help='生成报告')
     
     args = parser.parse_args()
