@@ -38,8 +38,10 @@ structured_message: |
      - 对 target_doc 当前内容进行阅读与梳理，基于 gap_summary 标出缺失或待优化部分。
      - 提出最小必要改动（新增段落、小节或 Checklist 条目），并按四段证据格式输出：
        [COMMAND]/[STDOUT]/[STDERR]/[RAW_OUTPUT]，其中 RAW_OUTPUT 可包含原始片段与建议草案。
+     - **双轨证据（报告线）**：[LOCAL_EVIDENCE] = 仓库内目标文档路径 + 引用片段/行号或 read 摘要；[EXTERNAL_REFS] = 与研究方法论、披露或行业惯例相关的检索（≥1 条 https://），用于升级表述而非替代本地 SOP；EVIDENCE_REF 双修。
   2) Reviewer：
      - 从研究与风险视角审查文档改动是否：
+       - 双轨完整（缺外链或缺本地文档锚点 → DUAL_EVIDENCE_INCOMPLETE）；
        - 明确关键风险与样本期要求；
        - 对执行者友好、可操作；
        - 未引导任何不当自动化行为。

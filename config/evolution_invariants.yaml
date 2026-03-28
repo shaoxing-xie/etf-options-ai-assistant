@@ -5,7 +5,7 @@
 # 维护：人工修改；本文件不在 evolver_scope 的 allowed_paths 中，自动进化 PR 不得改本文件。
 #
 version: 1
-updated_note: "与 docs/openclaw/三Skill驱动ETF研究自动进化实施方案.md 8.1.4 加严条款对齐"
+updated_note: "与 docs/openclaw/三Skill驱动ETF研究自动进化实施方案.md 8.1.4 加严条款对齐；含双轨证据（本地+外部）P0–P2"
 
 mandatory_reads:
   description: "演化类任务动手前必须先 read"
@@ -29,11 +29,37 @@ orchestration:
       Builder / Reviewer / Evolver，且 Reviewer 不得在无 RAW 指向时采信 Builder 结论。
     enforce: true
 
+# 在现有 allowed_paths 内，三 Skill 产出上限主要由「证据是否同时覆盖：本地可复核 + 外部可引用」决定。
+# 不扩权到 data_collection / scripts / notification；检索与引用写入 Builder RAW 与 EVIDENCE_REF；
+# 外部知识仅用于假设与表述升级；是否改代码由本地短样本验证 + Reviewer 样本期/过拟合门禁决定。
+dual_evidence:
+  applies_when: >
+    工作流名为 *_evolution_on_demand，或用户意图为因子/策略/研究文档 Checklist/波动区间等「研究类演化」
+    （分析线、策略线、报告线）。
+  not_required_when: >
+    纯 CI 日志取证、Cron 失败复现、与研究方法论无关的机械修复（如 ci_autofix_triage、cron_error_autofix）。
+  builder_raw_output_must_contain_subsections: >
+    在 [RAW_OUTPUT] 内须有两个逻辑小节（可用小标题，顺序不限）：
+    [LOCAL_EVIDENCE] — 本地可复核：仓库内 read 到的路径/片段、已执行命令的关键回显摘要、
+    短样本统计或回测对比结论（须能指回 [COMMAND]/[STDOUT] 或具体文件路径）。
+    [EXTERNAL_REFS] — 外部可引用：至少一次 web 检索（tavily_search / web-search 或等价），
+    每条含标题 + 完整 https:// URL + 与本轮任务相关的一句话摘录；禁止无链接的「文献口嗨」。
+  evidence_ref_rule: >
+    Reviewer 与 Orchestrator 的 EVIDENCE_REF 须同时包含：(1) 本地锚点（命令、日志路径、run id、
+    或仓库相对路径）；(2) 至少一个字面量 https://（与 [EXTERNAL_REFS] 一致或可解析对应）。
+  external_knowledge_role: >
+    外部来源仅作「假设、对标、术语与表述升级」；不得单独作为「已验证事实」或替代本地命令/数据复核。
+    若 Builder 叙事与本地 RAW 矛盾，以本地为准。
+  code_change_gate: >
+    任何实跑改代码/开 PR：须先在 [LOCAL_EVIDENCE] 中体现短样本验证（有限窗口回测、定向 pytest、
+    或 verify_predictions 等与任务匹配的最小命令）；Reviewer 须执行样本期与过拟合门禁
+    （SAMPLE_TOO_SHORT / OVERFIT_RISK），未满足则 AUTOFIX_ALLOWED=false。
+
 builder:
   evidence_blocks:
     required_in_order: ["COMMAND", "STDOUT", "STDERR", "RAW_OUTPUT"]
     bracket_labels: ["[COMMAND]", "[STDOUT]", "[STDERR]", "[RAW_OUTPUT]"]
-  rule: "Reviewer 仅基于 RAW_OUTPUT 与前三段做门禁；禁止以叙事摘要代替四段证据。"
+  rule: "Reviewer 仅基于 RAW_OUTPUT 与前三段做门禁；禁止以叙事摘要代替四段证据。研究类演化还须满足 dual_evidence。"
 
 reviewer:
   pr_and_autofix_requires_all:

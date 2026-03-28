@@ -68,6 +68,8 @@ Capture what matters. Decisions, context, things to remember. Skip the secrets u
 
 遵守顺序：**invariants 与 evolver_scope 冲突时，以二者中更严格者为准**；用户单句「授权修改」**不能**推翻 invariants 里 `reviewer.user_verbal_override.forbidden` 的约定。详细 Prompt 见 `docs/openclaw/prompt_templates/*_evolution.md`。
 
+**双轨证据（`*_evolution_on_demand`）**：在 **allowed_paths** 内提升分析/策略/报告三条线的上限，靠 **`dual_evidence`** — Builder `[RAW_OUTPUT]` 须含 **`[LOCAL_EVIDENCE]`** 与 **`[EXTERNAL_REFS]`**（含 `https://`），**`EVIDENCE_REF`** 同时锚定本地与外链；外部知识仅作假设与表述升级；**改代码**须通过本地短样本验证 + Reviewer **样本期/过拟合**门禁。缺一脚 → **`DUAL_EVIDENCE_INCOMPLETE`**。见 `config/evolution_invariants.yaml`、`docs/openclaw/execution_contract.md` §9。
+
 ## External vs Internal
 
 **Safe to do freely:**

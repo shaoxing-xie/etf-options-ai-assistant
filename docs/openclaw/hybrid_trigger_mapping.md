@@ -27,6 +27,7 @@
 1. Builder 必须回传四段证据块。
 2. Reviewer 无 RAW 证据直接 `TEAM_FAIL: NO_EVIDENCE`。
 3. 非 `TEAM_OK + RISK=LOW` 禁止自动修复。
+4. `*_evolution_on_demand` 研究类任务另须满足 **`dual_evidence`**（本地可复核 + 外部可引用，见 `evolution_invariants.yaml`）；否则 `DUAL_EVIDENCE_INCOMPLETE`。
 
 ## 3. 失败闭环动作
 

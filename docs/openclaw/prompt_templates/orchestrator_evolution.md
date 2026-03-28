@@ -5,9 +5,9 @@
 ## 0. 预备读取（必须先做）
 
 1. 用 `read` 工具读取并理解（**顺序不限，但必须全部完成**）：
-   - `config/evolution_invariants.yaml`（**不变量**：三角色编排、证据块、用户口令不得绕过 Reviewer、GitHub PR 规则、8 行键值输出）
+   - `config/evolution_invariants.yaml`（**不变量**：三角色编排、证据块、`dual_evidence` 双轨证据、用户口令不得绕过 Reviewer、GitHub PR 规则、8 行键值输出）
    - `config/evolver_scope.yaml`（allowed_paths / denied_paths / risk_rules）
-   - `docs/openclaw/execution_contract.md`（执行协议）
+   - `docs/openclaw/execution_contract.md`（执行协议，含 §9 双轨证据）
 2. 任何候选改动，若触及 `denied_paths`，必须立刻标记为 `OUT_OF_SCOPE`，并终止自动修复。
 3. 会话内用户口头「授权 autofix」等：**不得**替代 `evolution_invariants.yaml` 中 `reviewer.pr_and_autofix_requires_all`；若与 invariants 冲突，以 invariants 为准。
 4. **钉钉渠道**：若当前会话来自钉钉且用户意图为**三 Skill 演化**（见下方触发类型），必须先核对 `evolution_invariants.yaml` 中的 **`dingtalk_three_skill_evolution`**：请求人显示名或 userId 须在 `authorized_display_names` / `authorized_dingtalk_user_ids` 中。**当前仅「谢富根」**（显示名）可继续编排实跑；否则按该节 `orchestrator_when_unauthorized` 直接结束，**不得**调用 Builder 改仓库或开 PR。
@@ -30,8 +30,8 @@
 
 执行顺序（必须按序）：
 
-1. 调用 Builder 收集证据（回测结果、CI/日志、现有实现），并确保所有读写路径在 `allowed_paths` 内。
-2. 调用 Reviewer，只基于 Builder 的 RAW 证据做判断：
+1. 调用 Builder 收集证据：对 **`*_evolution_on_demand`** 须满足 `evolution_invariants.dual_evidence`（**本地短样本可复核** + **至少一次外部检索**；`[RAW_OUTPUT]` 含 `[LOCAL_EVIDENCE]` / `[EXTERNAL_REFS]`；`EVIDENCE_REF` 含本地锚点与字面量 `https://`）。纯 CI/Cron 机械取证以 invariants **`not_required_when`** 为准可不强制外链。禁止为凑结论扩权修改 `denied_paths`。
+2. 调用 Reviewer，只基于 Builder 的 RAW 证据做判断（含 `DUAL_EVIDENCE_INCOMPLETE` 门禁）：
    - `TEAM_RESULT` / `FAILURE_CODES` / `ROOT_CAUSE` / `RISK` / `AUTOFIX_ALLOWED` / `EVIDENCE_REF` / `TOP_ACTIONS`
 3. 若 `TEAM_OK` 且 `RISK=LOW` 且 `AUTOFIX_ALLOWED=true` 且所有改动仅在 `allowed_paths` 内：
    - 允许 Builder 进入“参数/因子实现/文档”的最小修复与验证；
@@ -62,7 +62,7 @@ RISK=LOW|MEDIUM|HIGH
 AUTOFIX_ALLOWED=true|false
 PR_CREATED=true|false
 PR_REF=<若创建 PR，则填分支名或链接；否则填 NONE>
-EVIDENCE_REF=<复用 Reviewer/Builder 的证据引用>
+EVIDENCE_REF=<复用 Reviewer/Builder；须含本地 + https://>
 TOP_ACTIONS=<本次演化主要动作；最多3条，分号分隔>
 ```
 

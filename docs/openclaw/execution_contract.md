@@ -96,3 +96,13 @@ Orchestrator 在以下情况必须停止自动修复并升级：
 - **不在名单内**：Orchestrator 应**拒绝实跑**，输出 `FAILURE_CODES=DINGTALK_EVOLUTION_UNAUTHORIZED`，**不**进入改代码/开 PR；可提供**只读**分析或引导其联系授权用户。
 - **技术说明**：仓库内配置为**编排与合规约束**；钉钉侧仍建议用**群成员权限 / 机器人可见范围**做硬隔离；二者同时生效最佳。
 
+## 9. 双轨证据（本地可复核 + 外部可引用）与外部知识边界
+
+**机器可读**：`config/evolution_invariants.yaml` → **`dual_evidence`**。
+
+- **适用范围**：因子 / 策略 / 研究文档（报告线）/ 波动区间等 **`*_evolution_on_demand`** 类研究演化；**不**强制要求纯 CI / Cron 机械取证类工作流（见 invariants 中 `not_required_when`）。
+- **Builder**：在四段证据不变的前提下，`[RAW_OUTPUT]` 内须含 **`[LOCAL_EVIDENCE]`** 与 **`[EXTERNAL_REFS]`**（逻辑小节，小标题即可）。本地段须能指回命令输出或仓库路径；外部段须含至少一次检索得到的 **`https://` 链接**（标题 + 摘录）。检索结论写入 **`EVIDENCE_REF`**（与 Orchestrator 8 行键值一致）。
+- **外部知识角色**：仅作**假设、对标、术语与表述升级**；**不能**替代本地命令与数据复核，也不得在矛盾时压过本地 RAW。
+- **是否改代码**：仅当 **`[LOCAL_EVIDENCE]`** 已包含与改动匹配的**短样本验证**（有限回测、定向测试、`verify_predictions` 等），且 Reviewer 通过**样本期 / 过拟合**门禁（`SAMPLE_TOO_SHORT`、`OVERFIT_RISK` 等）时，方可 `AUTOFIX_ALLOWED=true` 并开 PR。缺任一脚：**`DUAL_EVIDENCE_INCOMPLETE`**（见 `failure_codes.md`）。
+- **边界**：不将权限扩至 `denied_paths`（采集、脚本、通知等）；先进性与可用性在 **allowed_paths** 内靠证据链提升。
+

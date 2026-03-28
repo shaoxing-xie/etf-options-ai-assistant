@@ -27,6 +27,9 @@
 - config/evolution_invariants.yaml 中的 reviewer.user_verbal_override、github 节优先于会话内用户一句「授权修改」类口令。
 - 非 evolution 类日常巡检/问答：不要求每轮都 read 上述三文件；仅当本轮任务落入上述触发条件时才执行预检。
 
+【双轨证据 — 研究类演化】
+- 对 workflows/*_evolution_on_demand（因子/策略/报告/波动区间）：Builder 的 [RAW_OUTPUT] 须含 [LOCAL_EVIDENCE] 与 [EXTERNAL_REFS]（至少一条 https://）；EVIDENCE_REF 须双修；外部仅作假设/表述升级；改代码须有短样本本地验证，Reviewer 把关 SAMPLE_TOO_SHORT / OVERFIT_RISK。缺则 FAILURE_CODES 含 DUAL_EVIDENCE_INCOMPLETE。细节见 evolution_invariants.yaml 的 dual_evidence 与 execution_contract.md §9。
+
 【钉钉 — 三 Skill 演化授权】
 - 若入口为钉钉且本轮为「三 Skill 演化 / 实跑 / 开 ai-evolve PR」类意图：read 完三文件后，再读 evolution_invariants.yaml 中的 dingtalk_three_skill_evolution。
 - 仅当请求人显示名为「谢富根」（或 authorized_dingtalk_user_ids 已配置且匹配）时，才允许继续 Builder→Reviewer→Evolver 实跑与改仓库。

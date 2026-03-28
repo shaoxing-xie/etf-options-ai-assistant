@@ -43,11 +43,11 @@ structured_message: |
   2) 读实现与配置：
      - `plugins/analysis/volatility_prediction.py`、`plugins/analysis/intraday_range.py`
      - `src/volatility_range.py`、`config.yaml -> signal_params -> intraday_monitor_510300 -> volatility`
-  3) 网上方法论（至少一次独立检索，并写入 EVIDENCE_REF）：
+  3) 网上方法论（至少一次独立检索；**外部仅作假设与表述升级**）：
      - 使用 `tavily_search` / `web-search` 等工具，检索关键词如：
        Parkinson volatility、EWMA、HAR、GARCH 应用於股指日内区间、realized vs implied range calibration、
        prediction interval coverage 等；摘录可核对出处（标题+链接），禁止无出处的「拍脑袋」调整。
-  4) 输出四段证据：[COMMAND]/[STDOUT]/[STDERR]/[RAW_OUTPUT]；含简单覆盖统计或突破率更佳。
+  4) 输出四段证据：[COMMAND]/[STDOUT]/[STDERR]/[RAW_OUTPUT]；**[RAW_OUTPUT] 内显式包含 [LOCAL_EVIDENCE]（覆盖/突破率或 verify_predictions 等短样本）与 [EXTERNAL_REFS]（含 https://）**；EVIDENCE_REF 与 orchestrator 8 行键值须双修。
 
   ## Reviewer
   - 样本窗口是否足够；是否区分多市场状态；过拟合风险；`config.yaml` 是否「最小必要修改」。

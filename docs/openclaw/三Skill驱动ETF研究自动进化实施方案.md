@@ -169,6 +169,20 @@ risk_rules:
   - 策略相关：`docs/research/strategy_evolution_log.md`
   - 通用执行模式：更新 `docs/openclaw/execution_contract.md` 或对应 Prompt 模板。
 
+#### 3.4 双轨证据与外部知识边界（P0–P2 已落盘）
+
+在**不扩权**到 `evolver_scope.denied_paths`（采集、`scripts/**` 修改、通知等）的前提下，三 Skill 的产出上限主要由证据是否**同时**满足 **本地可复核** 与 **外部可引用** 决定：
+
+| 层级 | 落点 | 内容 |
+|------|------|------|
+| P0 | `config/evolution_invariants.yaml` → **`dual_evidence`** | 适用边界、`[LOCAL_EVIDENCE]` / `[EXTERNAL_REFS]` 结构、`EVIDENCE_REF` 双修、外部知识角色、改代码短样本门禁 |
+| P0 | `docs/openclaw/execution_contract.md` §9 | 与人读协议对齐 |
+| P0 | `docs/openclaw/failure_codes.md` | **`DUAL_EVIDENCE_INCOMPLETE`** |
+| P1 | `docs/openclaw/prompt_templates/builder_evolution.md`、`reviewer_evolution.md`、`orchestrator_evolution.md`、`evolver_evolution.md` | 检索写入 RAW、Reviewer 校验、编排指令、Evolver 复盘 |
+| P2 | `workflows/*_evolution_on_demand.yaml`、`AGENTS.md`、`agent_system_snippets/etf_main_evolution_preflight.md` | 分析 / 策略 / 报告三线工作流说明与 OpenClaw 预检 |
+
+**原则**：检索与引用进入 Builder **RAW** 与 **EVIDENCE_REF**；外部材料仅限**假设与表述升级**；**是否改代码**由 **本地短样本验证** + Reviewer **样本期 / 过拟合**门禁裁定。
+
 ---
 
 ### 四、按模块拆分的典型“自动进化”场景

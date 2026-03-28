@@ -41,11 +41,13 @@ structured_message: |
   1) Builder：
      - 读取与 target_factor 相关的实现与回测脚本（仅限 allowed_paths）。
      - 运行有限集合的标准回测/诊断命令，输出 [COMMAND]/[STDOUT]/[STDERR]/[RAW_OUTPUT] 四段证据。
+     - **双轨证据（分析线）**：在 [RAW_OUTPUT] 内写清 [LOCAL_EVIDENCE]（短样本回测/统计，可指回命令与路径）与 [EXTERNAL_REFS]（至少一条含 https:// 的检索摘录）；外部仅作假设与表述升级；EVIDENCE_REF 同时含本地锚点与 https://。
   2) Reviewer：
      - 按 reviewer_evolution 模板，基于 RAW_OUTPUT 进行：
+       - 双轨完整性（缺一则 DUAL_EVIDENCE_INCOMPLETE）；
        - 样本期长度检查（建议≥3年）；
        - 收益/风险表现评估（Sharpe/IR、回撤等）；
-       - 过拟合风险与边界检查；
+       - 过拟合风险与边界检查；无本地短验证支撑改代码则 AUTOFIX_ALLOWED=false；
      - 输出 TEAM_RESULT / FAILURE_CODES / ROOT_CAUSE / RISK / AUTOFIX_ALLOWED / EVIDENCE_REF / TOP_ACTIONS。
   3) Orchestrator：
      - 仅当 TEAM_OK 且 RISK=LOW 且 AUTOFIX_ALLOWED=true 且变更范围在 allowed_paths 内时，

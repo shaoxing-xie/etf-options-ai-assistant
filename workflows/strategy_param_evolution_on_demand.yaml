@@ -42,12 +42,14 @@ structured_message: |
   1) Builder：
      - 收集 target_strategy 相关配置与历史回测/评估脚本（仅限 allowed_paths）。
      - 运行标准回测/评估命令，对比调参前后表现，输出四段证据块。
+     - **双轨证据（策略线）**：[RAW_OUTPUT] 内 [LOCAL_EVIDENCE]（调参前后短样本对比）+ [EXTERNAL_REFS]（如参数稳健性、换手/成本类公开方法，至少一条 https://）；EVIDENCE_REF 双修。
   2) Reviewer：
      - 依据 reviewer_evolution 模板，重点检查：
+       - 双轨完整性（DUAL_EVIDENCE_INCOMPLETE）；
        - 样本期是否覆盖多个市场环境；
        - 收益/回撤/波动等风险指标是否改善；
        - 是否存在明显过拟合迹象；
-       - 变更是否严格限制在参数/过滤器/风控层。
+       - 变更是否严格限制在参数/过滤器/风控层；改参须由 [LOCAL_EVIDENCE] 中间接可复核。
   3) Orchestrator：
      - 仅在 TEAM_OK + RISK=LOW + AUTOFIX_ALLOWED=true 且变更范围安全时，
        允许 Builder 在 ai-evolve/strategy-* 分支上提交参数/过滤器调优 PR。

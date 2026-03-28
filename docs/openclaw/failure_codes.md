@@ -8,6 +8,7 @@
 |---|---|---|---|
 | `LOG_FETCH_FAILED` | 失败日志获取失败 | `gh run view --log` 为空，且 `gh api .../logs` 也失败 | 否 |
 | `NO_EVIDENCE` | 无原始证据 | Builder 未提供 `RAW_OUTPUT` | 否 |
+| `DUAL_EVIDENCE_INCOMPLETE` | 双轨证据缺一 | 研究类演化缺少 `[LOCAL_EVIDENCE]` 或 `[EXTERNAL_REFS]`（含有效 `https://`），或 `EVIDENCE_REF` 未同时锚定本地与外部 | 否 |
 | `UNKNOWN_CAUSE` | 原因未知 | 有证据但无法定位根因 | 否 |
 | `FIX_RISK_HIGH` | 修复风险高 | Reviewer 判定 `RISK=MEDIUM/HIGH` | 否 |
 | `LOCAL_REPRO_FAILED` | 本地复现失败 | 无法稳定复现实例或验证修复 | 否 |
@@ -25,6 +26,7 @@
 |---|---|---|---|---|
 | `LOG_FETCH_FAILED` | 停止，转日志兜底流程 | 切换 logs zip runbook | 标记证据缺失 | 记录数据通道失效模式 |
 | `NO_EVIDENCE` | 停止，要求重跑取证 | 重新执行并补齐四段输出 | 返回 `TEAM_FAIL:NO_EVIDENCE` | 追加“证据完整性检查” |
+| `DUAL_EVIDENCE_INCOMPLETE` | 停止，要求补本地或补检索 | 补齐 RAW 内 LOCAL/EXTERNAL 小节并重跑最小验证命令 | 返回 `TEAM_FAIL` 并列出缺哪一脚 | 记入 Checklist：演化必双修 |
 | `UNKNOWN_CAUSE` | 停止自动修复，升级人工 | 扩展采样与对比命令 | 返回 `TEAM_FAIL:UNKNOWN_CAUSE` | 记录新故障类别候选 |
 | `FIX_RISK_HIGH` | 停止自动修复，走审批 | 输出变更方案不直接改 | 返回风险与影响面 | 更新风险边界策略 |
 | `LOCAL_REPRO_FAILED` | 停止合并，要求补复现 | 提供最小复现步骤 | 标记验证不充分 | 记录复现门槛与环境依赖 |

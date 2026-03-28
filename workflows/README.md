@@ -33,6 +33,8 @@
 | `research_checklist_evolution_on_demand.yaml` | `schedule: null`（按需） | 研究文档 / Checklist 演化工作流：只修改 docs/research/** 与研究相关 docs/openclaw/**，不改任何代码 |
 | `volatility_range_evolution_on_demand.yaml` | `schedule: null`（按需） | 宽基 ETF **预测波动区间** 优化：`tool_predict_volatility` / `tool_predict_intraday_range` 与缓存同源逻辑；可结合 `prediction_records`、`volatility_ranges` 与 **网络检索** 做证据化调参与模型改进（见 `config/evolver_scope` 允许路径） |
 
+**双轨证据（上述四个 `*_evolution_on_demand`）**：须满足 `config/evolution_invariants.yaml` → **`dual_evidence`** — Builder `[RAW_OUTPUT]` 含 **`[LOCAL_EVIDENCE]`** 与 **`[EXTERNAL_REFS]`**（至少一条 `https://`），Orchestrator **`EVIDENCE_REF`** 同时锚定本地与外链；缺一脚 → **`DUAL_EVIDENCE_INCOMPLETE`**。人读摘要见 `docs/openclaw/execution_contract.md` §9。
+
 ---
 
 ## 按场景分组
