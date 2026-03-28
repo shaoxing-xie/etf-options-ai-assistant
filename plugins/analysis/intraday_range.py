@@ -45,7 +45,7 @@ def tool_predict_intraday_range(
 
         def _get_intraday_bounds_pct(_cfg) -> tuple[float, float]:
             # P0/P2：统一使用同一套上下限约束，避免任何链路绕过输出收敛
-            min_intraday_pct = 0.005
+            min_intraday_pct = 0.015
             max_intraday_pct = 0.04
             try:
                 vol_cfg = (
@@ -138,7 +138,7 @@ def tool_predict_intraday_range(
         try:
             etf_minute_30m, etf_minute_15m = fetch_etf_minute_data_with_fallback(
                 underlying=sym,
-                lookback_days=15,
+                lookback_days=10,
                 max_retries=2,
                 retry_delay=1.0,
             )

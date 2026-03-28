@@ -562,8 +562,8 @@ def calculate_index_volatility_range_multi_period(
     index_minute_15m: pd.DataFrame,
     current_price: float,
     remaining_minutes: int,
-    primary_weight: float = 0.7,
-    secondary_weight: float = 0.3,
+    primary_weight: float = 0.6,
+    secondary_weight: float = 0.4,
     is_etf_data: bool = False,
     price_ratio: float = 1.0  # ETF价格转指数价格的比率
 ) -> Dict[str, Any]:
@@ -886,8 +886,8 @@ def calculate_etf_volatility_range_multi_period(
     etf_minute_15m: pd.DataFrame,
     etf_current_price: float,
     remaining_minutes: int,
-    primary_weight: float = 0.7,
-    secondary_weight: float = 0.3,
+    primary_weight: float = 0.6,
+    secondary_weight: float = 0.4,
     underlying: str = '510300',  # ETF代码，用于IV融合
     config: Optional[Dict] = None
 ) -> Dict[str, Any]:
