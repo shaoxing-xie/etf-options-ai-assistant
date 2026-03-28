@@ -147,6 +147,8 @@ user_facing:
     phase_b_closure:
       description: >
         用户已确认拍 B（或单条消息内见 phase_b_preconfirm_marker）后，本轮不得止于「建议清单」而无仓库内可验证产出。
+      does_not_apply_when: >
+        用户明确要求「仅输出方案、本人改代码」且含 manual_implementation_only 标记时，不要求 PR，以详案交付为准。
       must_close_with_one_of:
         - "在 allowed_paths 内产生实际文件变更，且 PR_CREATED=true 并给出 PR_REF（ai-evolve/report-* 或等价），或"
         - "因环境无法 gh/git：ORCH_STATUS=TEAM_FAIL，FAILURE_CODES 含 AUTOFIX_BLOCKED_ENV 或等价，TOP_ACTIONS 写明
@@ -160,6 +162,18 @@ user_facing:
         rule: >
           用户单条消息末尾含上述标记之一时，视为已授权拍 B，允许在同一助手回合内先完成拍 A 举证再执行拍 B，
           但仍须 Reviewer 口令下 RISK=LOW 且仅触 allowed_paths；最终 8 行键值须反映拍 B 结果（PR_CREATED/PR_REF 等）。
+    manual_implementation_only:
+      description: >
+        用户明确要求「只给详细方案、本人改代码/配置、Agent 禁止改仓库」时，**不适用** phase_b_closure 的「必须有 PR」；
+        但仍须有可执行详案，不得以一句「自行优化」敷衍。
+      marker_examples:
+        - "【仅输出方案我自改】"
+        - "不要改仓库，给我详细优化建议即可"
+      rule: >
+        禁止 write/apply_patch/创建 PR/改写工作区文件。正文须为结构化详案，至少包含：①现状与证据摘要；②差距清单；
+        ③按优先级排序的改动项，每项含「建议改动的仓库相对路径（或 ~/.openclaw 路径）」「改什么（配置键/函数/工作流步骤）」
+        「伪代码或步骤」「依赖与风险」；④若涉 denied_paths 须标明须人工 PR。末尾 8 行键值：AUTOFIX_ALLOWED=false、
+        PR_CREATED=false、PR_REF=NA；FAILURE_CODES 可含 NONE 或 DOC_GAP；EVIDENCE_REF 仍须双修（本地路径+https://）。
     phase_a_machine_block:
       description: >
         拍 A（只诊断、不写仓库）的回复末尾仍须使用与 orchestrator_final_output 相同的 8 个键名，禁止改用

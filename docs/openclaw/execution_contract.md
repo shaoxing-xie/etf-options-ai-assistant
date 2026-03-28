@@ -116,5 +116,5 @@ Orchestrator 在以下情况必须停止自动修复并升级：
 - **例外**：用户明确要求「打印门禁依据 / 教学 / 审计」时，可展开引用路径与片段。
 - **报告诊断 → 文档实跑（同会话连续两拍）**：用户可先只做诊断；在同一会话中用简短话确认实跑后，Agent 应**连续执行**阶段二（见 `evolution_invariants.yaml` → `user_facing.chained_report_diagnosis_to_doc_pr`），不必要求用户重贴长模板。对**契约条款**的啰嗦确认仍应避免；对**是否改仓库**的**一次**业务确认允许且建议保留。
 - **拍 A 机器块**：只诊断时，回复末尾仍须使用 **与 orchestrator 相同的 8 个键名**（见 `evolution_invariants.yaml` → `phase_a_machine_block`），**禁止**用其它字段名替代；`EVIDENCE_REF` 须可复核（本地路径 + `https://`）。
-- **拍 B 必须有优化产出**：用户已确认实跑（或单条消息内预确认）后，须有 **可验证的仓库变更 + PR**（allowed_paths 内），或 **TEAM_FAIL** 并写明环境阻塞；禁止只有「建议」无 diff（见 `evolution_invariants.yaml` → `phase_b_closure`）。
+- **拍 B 必须有优化产出**：用户已确认实跑（或单条消息内 **【实跑确认】**）后，须有 **可验证的仓库变更 + PR**（allowed_paths 内），或 **TEAM_FAIL** 并写明环境阻塞；禁止只有「建议」无 diff（见 `phase_b_closure`）。**例外**：用户明确要求 **【仅输出方案我自改】** 时，禁止 Agent 改仓库，但须交付**结构化详案**（路径、步骤、风险），`PR_CREATED=false`（见 `manual_implementation_only`）。
 

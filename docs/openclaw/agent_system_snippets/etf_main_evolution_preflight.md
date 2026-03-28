@@ -43,7 +43,7 @@
 - 用户可先指令「诊断某类报告 + 网上对标 + 优化建议（不写仓库）」；首轮须 AUTOFIX_ALLOWED=false、PR_CREATED=false。
 - 拍 A 回复末尾仍须使用 **Orchestrator 标准 8 键**（ORCH_STATUS、FAILURE_CODES、RISK、AUTOFIX_ALLOWED、PR_CREATED、PR_REF、EVIDENCE_REF、TOP_ACTIONS），**禁止** DIAGNOSIS_STAGE / STATUS:READ_ONLY 等替代字段；EVIDENCE_REF 含真实本地路径 + https://。见 `evolution_invariants.yaml` → `user_facing.chained_report_diagnosis_to_doc_pr.phase_a_machine_block`。
 - 同一会话下一条用户可用口语确认实跑阶段二（如「确认阶段二」「按上轮 TOP_ACTIONS 开 PR 改 docs/research/xxx.md」），你应**连续执行** research_checklist_evolution_on_demand（或等价），仍 read 三文件、守门禁、`ai-evolve/report-*`，**勿**要求重贴整段示例 J。
-- **拍 B 闭环**：用户已确认实跑（或单条含「【实跑确认】」）后，**禁止**仅以长篇建议收尾；须在 allowed_paths 内**实际改文件并提 PR**（`PR_CREATED=true`+`PR_REF`），或明确 `TEAM_FAIL`+环境阻塞原因。见 `user_facing.chained_report_diagnosis_to_doc_pr.phase_b_closure`。
+- **拍 B 闭环**：用户已确认实跑（或单条含「【实跑确认】」）后，**禁止**仅以长篇建议收尾；须在 allowed_paths 内**实际改文件并提 PR**（`PR_CREATED=true`+`PR_REF`），或明确 `TEAM_FAIL`+环境阻塞原因。见 `phase_b_closure`。**例外**：用户含「【仅输出方案我自改】」等标记时，**不**适用必须有 PR；须输出**可人工落地的详案**，且 `PR_CREATED=false`。见 `manual_implementation_only`。
 - 细则：`evolution_invariants.yaml` → `user_facing.chained_report_diagnosis_to_doc_pr`。
 
 【钉钉 — 三 Skill 演化授权】

@@ -762,7 +762,7 @@ TOP_ACTIONS=
 确认阶段二。改 docs/research/factor_research_checklist.md，按你上条说的办。
 ```
 
-**J-合并：一条钉钉里「先诊断、我已预同意实跑」（同一助手回合内应办完拍 A+拍 B）**
+**J-合并 A：一条钉钉里预同意 Agent 提 PR（同一助手回合内拍 A+拍 B）**
 
 ```text
 @机器人 etf_main
@@ -772,9 +772,19 @@ TOP_ACTIONS=
 【实跑确认】
 ```
 
+**J-合并 B：只要详案、禁止动仓库（我自己改代码）**
+
+```text
+@机器人 etf_main
+
+开盘行情分析要对标机构晨报。你**禁止**改仓库、**禁止**开 PR、**禁止** apply_patch。先自己取证（产物路径、相关 workflow、cron 日志）+ 上网对标机构盘前/晨报，写一份**尽量细**的优化建议：按优先级列出每一条该改什么、改哪个文件或配置键、大概怎么改（步骤或伪代码）、要注意的风险。人话短总结 + 标准 8 行键值（PR_CREATED=false、PR_REF=NA）。
+
+【仅输出方案我自改】
+```
+
 **若始终「只有诊断、没有 PR」**（常见原因）
 
-1. **第二轮没发**：须在同会话再发「确认阶段二…」，或用上面 **J-合并** 一次带 `【实跑确认】`。  
+1. **第二轮没发**：须在同会话再发「确认阶段二…」，或用 **J-合并 A** 带 `【实跑确认】`；若你选了 **J-合并 B**，本就不会有 PR，以详案为准。  
 2. **OpenClaw 未给 `etf_main` 写权限 / 未配置 `gh`**：Agent 只能长文建议 → 应出现 **`AUTOFIX_BLOCKED_ENV`**，你本机手敲 `git checkout -b ai-evolve/report-…` 按 `TOP_ACTIONS` 改。  
 3. **预检未更新**：确保 **`etf_main_evolution_preflight.md`** 最新版已进 Agent system（含 **phase_b_closure**）。详见 **`docs/research/opening_morning_brief_roadmap.md` §6**。
 
