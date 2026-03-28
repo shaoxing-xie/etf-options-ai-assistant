@@ -7,10 +7,12 @@ import pandas as pd
 from datetime import datetime, timedelta
 from typing import Dict, Optional, Any
 import pytz
+import json
+from pathlib import Path
 
 from src.logger_config import get_module_logger, log_error_with_context
 from src.data_collector import (
-    fetch_index_daily_em, fetch_global_index_spot_em, fetch_global_index_hist_em,
+    fetch_index_daily_em, fetch_global_index_hist_em,
     fetch_index_opening_history,
     fetch_a50_daily_sina_hist
     # 注意：fetch_a50_daily_sina 已移除，新浪财经CN_MarketData.getKLineData接口不支持A50期货数据（返回null）
@@ -19,6 +21,108 @@ from src.data_collector import (
 from src.indicator_calculator import calculate_macd, calculate_ma
 
 logger = get_module_logger(__name__)
+
+
+def _hxc_cache_path() -> Path:
+    return Path("data/cache/global_index").joinpath("hxc_close_cache.json")
+
+
+def _load_hxc_close_cache() -> Dict[str, float]:
+    try:
+        p = _hxc_cache_path()
+        if not p.exists():
+            return {}
+        data = json.loads(p.read_text(encoding="utf-8") or "{}")
+        if not isinstance(data, dict):
+            return {}
+        out: Dict[str, float] = {}
+        for k, v in data.items():
+            try:
+                out[str(k)] = float(v)
+            except Exception:
+                continue
+        return out
+    except Exception:
+        return {}
+
+
+def _save_hxc_close_cache(cache: Dict[str, float]) -> None:
+    try:
+        p = _hxc_cache_path()
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(json.dumps(cache, ensure_ascii=False, indent=2), encoding="utf-8")
+    except Exception:
+        return
+
+
+def _extract_date_yyyymmdd_from_row(row: pd.Series) -> Optional[str]:
+    """从一行数据中提取日期（YYYYMMDD），兼容多级列名。"""
+    if row is None:
+        return None
+    date_val = None
+    # 直接遍历，避免 Index membership 在某些类型上异常
+    for k in row.index:
+        if k == "日期":
+            date_val = row.get(k)
+            break
+        if isinstance(k, tuple) and len(k) >= 1 and str(k[0]) == "日期":
+            date_val = row.get(k)
+            break
+        if str(k).lower() in ("date", "datetime"):
+            date_val = row.get(k)
+            break
+    if date_val is None and len(row.index) > 0:
+        date_val = row.iloc[0]
+
+    try:
+        dt = pd.to_datetime(date_val, errors="coerce")
+        if pd.notna(dt):
+            if isinstance(dt, pd.Timestamp):
+                return dt.strftime("%Y%m%d")
+            return str(dt).replace("-", "").replace("/", "")[:8]
+    except Exception:
+        pass
+    if isinstance(date_val, str) and date_val.strip():
+        return date_val.replace("-", "").replace("/", "")[:8]
+    return None
+
+
+def _extract_close_from_row(row: pd.Series) -> Optional[float]:
+    """从一行数据中提取收盘价，兼容多级列名。"""
+    # 不使用 pd.notna 以避免某些对象类型触发异常被吞
+    if row is None:
+        return None
+    # 兼容单层列
+    if "收盘" in row.index:
+        try:
+            return float(row["收盘"])
+        except Exception:
+            pass
+    # 兼容多级列：('收盘', '^HXC') 等
+    for k in row.index:
+        if k == "收盘":
+            try:
+                return float(row[k])
+            except Exception:
+                continue
+        if isinstance(k, tuple) and len(k) >= 1 and str(k[0]) == "收盘":
+            try:
+                return float(row[k])
+            except Exception:
+                continue
+    return None
+
+
+def _extract_close_series(df: pd.DataFrame) -> Optional[pd.Series]:
+    """从DataFrame中提取收盘列（Series），兼容多级列名。"""
+    if df is None or df.empty:
+        return None
+    if "收盘" in df.columns:
+        return df["收盘"]
+    for c in df.columns:
+        if isinstance(c, tuple) and len(c) >= 1 and str(c[0]) == "收盘":
+            return df[c]
+    return None
 
 def _fetch_market_breadth_sina(
     max_retries: int = 3,
@@ -611,25 +715,74 @@ def fetch_a50_futures_data() -> Dict[str, Any]:
         # 获取A50日线数据（最近2天）
         today = datetime.now().strftime("%Y%m%d")
         yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y%m%d")
-        
+        logger.info("开始获取A50期指数据: start=%s, end=%s", yesterday, today)
+
         # 使用AKShare接口获取A50数据（数据源：新浪财经）
         a50_daily = fetch_a50_daily_sina_hist(
             start_date=yesterday,
             end_date=today
         )
-        
-        if a50_daily is None or a50_daily.empty:
-            logger.warning("获取A50期指数据失败（新浪财经数据源，通过AKShare）")
-            return {'change_pct': None}
-        
-        # 计算涨跌幅
-        if len(a50_daily) >= 2:
-            prev_close = a50_daily.iloc[-2]['收盘']
-            curr_close = a50_daily.iloc[-1]['收盘']
-            change_pct = (curr_close - prev_close) / prev_close * 100
-            return {'change_pct': change_pct}
+
+        if a50_daily is not None and not a50_daily.empty:
+            logger.info("A50主链路返回成功: rows=%d", len(a50_daily))
+            # 计算涨跌幅
+            if len(a50_daily) >= 2:
+                prev_close = a50_daily.iloc[-2]['收盘']
+                curr_close = a50_daily.iloc[-1]['收盘']
+                change_pct = (curr_close - prev_close) / prev_close * 100
+                return {
+                    'change_pct': change_pct,
+                    'status': 'ok',
+                    'source': 'fetch_a50_daily_sina_hist'
+                }
+            logger.warning("A50主链路样本不足: rows=%d (<2)", len(a50_daily))
         else:
-            return {'change_pct': None}
+            logger.warning("A50主链路返回空数据，准备走工具兜底")
+
+        # 兜底：调用工具层历史接口（fetch_a50.py）
+        try:
+            from plugins.data_collection.futures.fetch_a50 import tool_fetch_a50_data
+            fallback = tool_fetch_a50_data(
+                symbol="A50期指",
+                data_type="hist",
+                start_date=yesterday,
+                end_date=today,
+                use_cache=True,
+            )
+            hist_data = (fallback or {}).get("hist_data") or {}
+            klines = hist_data.get("klines") or []
+            logger.info(
+                "A50兜底结果: success=%s, source=%s, kline_count=%d",
+                (fallback or {}).get("success"),
+                (fallback or {}).get("source"),
+                len(klines),
+            )
+            if len(klines) >= 2:
+                prev_close = float(klines[-2].get("close"))
+                curr_close = float(klines[-1].get("close"))
+                change_pct = (curr_close - prev_close) / prev_close * 100
+                return {
+                    'change_pct': change_pct,
+                    'status': 'ok_fallback',
+                    'source': (fallback or {}).get("source", "tool_fetch_a50_data")
+                }
+            if len(klines) == 1:
+                logger.warning("A50兜底样本不足: 仅1条K线，无法计算涨跌幅")
+                return {
+                    'change_pct': None,
+                    'status': 'insufficient_data',
+                    'source': (fallback or {}).get("source", "tool_fetch_a50_data"),
+                    'reason': 'A50历史样本不足(仅1条)'
+                }
+        except Exception as fallback_error:
+            logger.warning("A50兜底调用异常: %s", str(fallback_error))
+
+        logger.warning("获取A50期指数据失败（主链路+兜底均未得到可计算样本）")
+        return {
+            'change_pct': None,
+            'status': 'failed',
+            'reason': '主链路返回空或样本不足，兜底未获取到可计算样本'
+        }
         
     except Exception as e:
         log_error_with_context(
@@ -637,7 +790,7 @@ def fetch_a50_futures_data() -> Dict[str, Any]:
             {'function': 'fetch_a50_futures_data'},
             "获取A50期指数据失败"
         )
-        return {'change_pct': None}
+        return {'change_pct': None, 'status': 'error', 'reason': str(e)}
 
 
 def fetch_nasdaq_golden_dragon() -> Dict[str, Any]:
@@ -648,14 +801,8 @@ def fetch_nasdaq_golden_dragon() -> Dict[str, Any]:
         dict: HXC数据，包含涨跌幅等
     """
     try:
-        # 获取HXC实时数据
-        hxc_spot = fetch_global_index_spot_em(symbol="纳斯达克中国金龙指数")
-        
-        if hxc_spot is None or hxc_spot.empty:
-            logger.warning("纳斯达克中国金龙指数实时数据获取失败")
-            return {'change_pct': None}
-        
-        # 获取HXC历史数据
+        # 按用户要求：HXC 不再走 AkShare 全量快照，仅使用 yfinance 历史链路
+        # 获取HXC历史数据（先取近2天）
         today = datetime.now().strftime("%Y%m%d")
         yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y%m%d")
         hxc_hist = fetch_global_index_hist_em(
@@ -663,19 +810,70 @@ def fetch_nasdaq_golden_dragon() -> Dict[str, Any]:
             start_date=yesterday,
             end_date=today
         )
-        
+
+        # 如果近2天样本不足，再扩窗口到近10天取最近两条有效交易日
+        if hxc_hist is None or hxc_hist.empty or len(hxc_hist) < 2:
+            back_start = (datetime.now() - timedelta(days=10)).strftime("%Y%m%d")
+            hxc_hist = fetch_global_index_hist_em(
+                symbol="纳斯达克中国金龙指数",
+                start_date=back_start,
+                end_date=today
+            )
+
         if hxc_hist is None or hxc_hist.empty:
             logger.warning("纳斯达克中国金龙指数历史数据获取失败")
-            return {'change_pct': None}
-        
-        # 计算涨跌幅
+            return {'change_pct': None, 'status': 'failed', 'reason': '历史数据为空'}
+
         if len(hxc_hist) >= 2:
-            prev_close = hxc_hist.iloc[-2]['收盘']
-            curr_close = hxc_hist.iloc[-1]['收盘']
+            close_s = _extract_close_series(hxc_hist)
+            if close_s is None or len(close_s) < 2:
+                return {'change_pct': None, 'status': 'insufficient_data', 'reason': '收盘列缺失或样本不足'}
+            prev_close = float(close_s.iloc[-2])
+            curr_close = float(close_s.iloc[-1])
             change_pct = (curr_close - prev_close) / prev_close * 100
-            return {'change_pct': change_pct}
-        else:
-            return {'change_pct': None}
+            # 更新缓存（按日期存收盘）
+            try:
+                date_str = _extract_date_yyyymmdd_from_row(hxc_hist.iloc[-1])
+                if date_str:
+                    cache = _load_hxc_close_cache()
+                    cache[date_str] = curr_close
+                    _save_hxc_close_cache(cache)
+            except Exception:
+                pass
+            return {'change_pct': change_pct, 'status': 'ok', 'source': 'global_index_hist'}
+
+        # len == 1：尝试使用缓存补齐上一交易日收盘
+        try:
+            curr_close = _extract_close_from_row(hxc_hist.iloc[-1])
+            if curr_close is None:
+                return {'change_pct': None, 'status': 'insufficient_data', 'reason': '收盘列缺失'}
+            curr_date = _extract_date_yyyymmdd_from_row(hxc_hist.iloc[-1])
+
+            cache = _load_hxc_close_cache()
+            if curr_date:
+                # 找到严格小于 curr_date 的最近一条
+                prev_dates = sorted([d for d in cache.keys() if d < curr_date])
+                if prev_dates:
+                    prev_date = prev_dates[-1]
+                    prev_close = float(cache[prev_date])
+                    change_pct = (curr_close - prev_close) / prev_close * 100
+                    # 也把当前值写入缓存
+                    cache[curr_date] = curr_close
+                    _save_hxc_close_cache(cache)
+                    return {
+                        'change_pct': change_pct,
+                        'status': 'ok_cache_prev_close',
+                        'source': 'global_index_hist+cache_prev_close',
+                        'cache_prev_date': prev_date,
+                    }
+            # 写入当前 close，供未来使用
+            if curr_date:
+                cache[curr_date] = curr_close
+                _save_hxc_close_cache(cache)
+        except Exception:
+            pass
+
+        return {'change_pct': None, 'status': 'insufficient_data', 'reason': '历史样本不足(<2)'}
         
     except Exception as e:
         log_error_with_context(
@@ -683,7 +881,7 @@ def fetch_nasdaq_golden_dragon() -> Dict[str, Any]:
             {'function': 'fetch_nasdaq_golden_dragon'},
             "获取纳斯达克中国金龙指数数据失败"
         )
-        return {'change_pct': None}
+        return {'change_pct': None, 'status': 'error', 'reason': str(e)}
 
 
 def analyze_market_before_open(
@@ -759,6 +957,10 @@ def analyze_market_before_open(
             "after_close_trend": after_close_trend,
             "a50_change": a50_change,
             "hxc_change": hxc_change,
+            "a50_status": a50_data.get("status"),
+            "hxc_status": hxc_data.get("status"),
+            "a50_reason": a50_data.get("reason"),
+            "hxc_reason": hxc_data.get("reason"),
             "final_trend": final_trend,
             "final_strength": final_strength,
             "opening_strategy": strategy_suggestion,

@@ -1,0 +1,57 @@
+name: strategy_param_evolution_on_demand
+description: |
+  策略参数 / 过滤器演化工作流（on-demand）。在严格执行契约与 evolver_scope 边界下，
+  对指定策略的参数、阈值和过滤条件进行低风险调优，禁止自动修改核心信号逻辑与标的池定义。
+
+schedule: null
+
+meta:
+  phase: 3
+  trigger_mode: on_demand
+  entry_agent: etf_main
+  builder_agent: code_maintenance_agent
+  reviewer_agent: etf_analysis_agent
+  evolver: capability-evolver
+
+structured_message: |
+  执行策略参数 / 过滤器演化（on-demand）。
+
+  ## 输入（由调用方提供）
+  - target_strategy: 目标策略标识（例如: trend_following_510300）
+  - performance_issue: 表现或风险偏差描述（例如: 回撤超出基准 5%，胜率下降）
+
+  ## 角色映射
+  - Orchestrator=etf_main（使用 orchestrator_evolution 模板）
+  - Builder=code_maintenance_agent（使用 builder_evolution 模板）
+  - Reviewer=etf_analysis_agent（使用 reviewer_evolution 模板）
+  - Evolver=capability-evolver（使用 evolver_evolution 模板）
+
+  ## 边界约束（必须）
+  - 先 read config/evolution_invariants.yaml（原则固化），再读 config/evolver_scope.yaml。
+  - 所有自动修改仅限于 config/evolver_scope.yaml 的 allowed_paths：
+    - strategies/**
+    - plugins/analysis/**
+    - docs/research/**
+    - docs/openclaw/**
+  - 禁止修改：
+    - 核心入场/出场信号定义；
+    - 标的池定义；
+    - data_collection、平台配置与通知模块。
+
+  ## 工作流期望行为
+  1) Builder：
+     - 收集 target_strategy 相关配置与历史回测/评估脚本（仅限 allowed_paths）。
+     - 运行标准回测/评估命令，对比调参前后表现，输出四段证据块。
+  2) Reviewer：
+     - 依据 reviewer_evolution 模板，重点检查：
+       - 样本期是否覆盖多个市场环境；
+       - 收益/回撤/波动等风险指标是否改善；
+       - 是否存在明显过拟合迹象；
+       - 变更是否严格限制在参数/过滤器/风控层。
+  3) Orchestrator：
+     - 仅在 TEAM_OK + RISK=LOW + AUTOFIX_ALLOWED=true 且变更范围安全时，
+       允许 Builder 在 ai-evolve/strategy-* 分支上提交参数/过滤器调优 PR。
+  4) Evolver：
+     - 对本次策略演化进行复盘，输出 ERROR_CLASS（如 STRATEGY_UNDERPERFORMANCE）、
+       STANDARD_COMMANDS、CHECKLIST_UPDATE 与 PROMPT_PATCH，便于下次快速诊断类似问题。
+

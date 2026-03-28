@@ -1,0 +1,56 @@
+name: factor_evolution_on_demand
+description: |
+  因子 / 指标演化工作流（on-demand）。在严格执行契约与 evolver_scope 边界下，
+  利用 Orchestrator + Builder + Reviewer + Evolver 三 Skill 组合，针对指定因子或指标
+  完成证据收集、风险评估与（满足条件时的）低风险自动 PR 创建。
+
+schedule: null
+
+meta:
+  phase: 2
+  trigger_mode: on_demand
+  entry_agent: etf_main
+  builder_agent: code_maintenance_agent
+  reviewer_agent: etf_analysis_agent
+  evolver: capability-evolver
+
+structured_message: |
+  执行因子 / 指标演化（on-demand）。
+
+  ## 输入（由调用方提供）
+  - target_factor: 目标因子/指标名称（例如: factor_momentum_20d）
+  - problem_summary: 最近表现或问题描述（例如: 最近 6 个月信息比率明显下降）
+
+  ## 角色映射
+  - Orchestrator=etf_main（使用 orchestrator_evolution 模板）
+  - Builder=code_maintenance_agent（使用 builder_evolution 模板）
+  - Reviewer=etf_analysis_agent（使用 reviewer_evolution 模板）
+  - Evolver=capability-evolver（使用 evolver_evolution 模板）
+
+  ## 边界约束（必须）
+  - 先 read config/evolution_invariants.yaml（原则固化），再读 config/evolver_scope.yaml。
+  - 所有自动修改仅限于 config/evolver_scope.yaml 的 allowed_paths：
+    - plugins/analysis/**
+    - strategies/**
+    - docs/research/**
+    - docs/openclaw/**
+  - 禁止修改 denied_paths 中的任何文件（data_collection、scripts、config/openclaw_*.yaml、plugins/notification、.github 等）。
+  - 任何触及 denied_paths 的改动都必须被 Reviewer 判定为 OUT_OF_SCOPE，并返回 TEAM_FAIL。
+
+  ## 工作流期望行为
+  1) Builder：
+     - 读取与 target_factor 相关的实现与回测脚本（仅限 allowed_paths）。
+     - 运行有限集合的标准回测/诊断命令，输出 [COMMAND]/[STDOUT]/[STDERR]/[RAW_OUTPUT] 四段证据。
+  2) Reviewer：
+     - 按 reviewer_evolution 模板，基于 RAW_OUTPUT 进行：
+       - 样本期长度检查（建议≥3年）；
+       - 收益/风险表现评估（Sharpe/IR、回撤等）；
+       - 过拟合风险与边界检查；
+     - 输出 TEAM_RESULT / FAILURE_CODES / ROOT_CAUSE / RISK / AUTOFIX_ALLOWED / EVIDENCE_REF / TOP_ACTIONS。
+  3) Orchestrator：
+     - 仅当 TEAM_OK 且 RISK=LOW 且 AUTOFIX_ALLOWED=true 且变更范围在 allowed_paths 内时，
+       才允许 Builder 进行小范围因子实现调整与再验证，并在 ai-evolve/analysis-* 分支上创建 PR。
+  4) Evolver：
+     - 按 evolver_evolution 模板输出 ERROR_CLASS / STANDARD_COMMANDS / AUTOFIX_ALLOWED / CHECKLIST_UPDATE / PROMPT_PATCH / EVIDENCE_REF，
+       以便后续写入因子演化日志与 Checklist。
+

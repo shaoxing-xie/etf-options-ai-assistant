@@ -317,6 +317,10 @@ def _format_daily_report(report_data: Dict[str, Any], report_date: Optional[str]
     opening_strategy = analysis.get("opening_strategy") if isinstance(analysis.get("opening_strategy"), dict) else {}
     a50_change = analysis.get("a50_change")
     hxc_change = analysis.get("hxc_change")
+    a50_status = analysis.get("a50_status")
+    hxc_status = analysis.get("hxc_status")
+    a50_reason = analysis.get("a50_reason")
+    hxc_reason = analysis.get("hxc_reason")
 
     # 组织正文（参考你贴的两种示例：先给自然语言摘要，再给指标结构）
     lines: List[str] = []
@@ -344,9 +348,32 @@ def _format_daily_report(report_data: Dict[str, Any], report_date: Optional[str]
         lines.append(f"- **趋势强度：** {strength}")
 
     a50_s = _fmt_pct(a50_change)
-    lines.append(f"- **A50期指数据：** {a50_s if a50_s is not None else '获取失败'}")
+    if a50_s is None:
+        if a50_status == "insufficient_data":
+            a50_display = "样本不足"
+        elif a50_status == "error":
+            a50_display = "接口异常"
+        else:
+            a50_display = "获取失败"
+        if isinstance(a50_reason, str) and a50_reason.strip():
+            a50_display = f"{a50_display}（{a50_reason.strip()}）"
+    else:
+        a50_display = a50_s
+    lines.append(f"- **A50期指数据：** {a50_display}")
+
     hxc_s = _fmt_pct(hxc_change)
-    lines.append(f"- **纳斯达克中国金龙指数：** {hxc_s if hxc_s is not None else '获取失败'}")
+    if hxc_s is None:
+        if hxc_status == "insufficient_data":
+            hxc_display = "样本不足"
+        elif hxc_status == "error":
+            hxc_display = "接口异常"
+        else:
+            hxc_display = "获取失败"
+        if isinstance(hxc_reason, str) and hxc_reason.strip():
+            hxc_display = f"{hxc_display}（{hxc_reason.strip()}）"
+    else:
+        hxc_display = hxc_s
+    lines.append(f"- **纳斯达克中国金龙指数：** {hxc_display}")
     lines.append("")
 
     # 外盘/指数概览（如有）

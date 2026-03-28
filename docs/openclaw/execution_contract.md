@@ -2,6 +2,8 @@
 
 本文定义 `github + agent-team-orchestration + capability-evolver` 的统一执行约束，用于避免幻觉、跑偏、超时扩散和“无证据结论”。
 
+**机器可读不变量**：与本文配套的硬性原则同时固化在 **`config/evolution_invariants.yaml`**（Orchestrator / Builder / Reviewer / Evolver 在演化任务中须 `read` 该文件并遵守；该文件**不在**自动进化可改路径内，仅人工维护）。
+
 ## 1. 角色职责
 
 - Orchestrator（`etf_main`）

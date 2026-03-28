@@ -1,0 +1,89 @@
+# ETF 研究自动进化 — 机器可读「不变量」（原则固化）
+#
+# 用途：OpenClaw / etf_main 在处理任意 *_evolution_on_demand 或用户口述「演化、实跑、AUTOFIX」时，
+#       应用 read 读取本文件并与 evolver_scope、execution_contract 一并遵守。
+# 维护：人工修改；本文件不在 evolver_scope 的 allowed_paths 中，自动进化 PR 不得改本文件。
+#
+version: 1
+updated_note: "与 docs/openclaw/三Skill驱动ETF研究自动进化实施方案.md 8.1.4 加严条款对齐"
+
+mandatory_reads:
+  description: "演化类任务动手前必须先 read"
+  paths:
+    - "config/evolution_invariants.yaml"
+    - "config/evolver_scope.yaml"
+    - "docs/openclaw/execution_contract.md"
+
+orchestration:
+  orchestrator_agent: "etf_main"
+  sequence:
+    - role: Builder
+      agent_or_skill: "code_maintenance_agent"
+    - role: Reviewer
+      agent_or_skill: "etf_analysis_agent"
+    - role: Evolver
+      agent_or_skill: "capability-evolver"
+  require_explicit_teams:
+    description: >
+      须通过 sessions_spawn 或 OpenClaw 等价能力分角色执行；若单会话模拟，须分块标题标明
+      Builder / Reviewer / Evolver，且 Reviewer 不得在无 RAW 指向时采信 Builder 结论。
+    enforce: true
+
+builder:
+  evidence_blocks:
+    required_in_order: ["COMMAND", "STDOUT", "STDERR", "RAW_OUTPUT"]
+    bracket_labels: ["[COMMAND]", "[STDOUT]", "[STDERR]", "[RAW_OUTPUT]"]
+  rule: "Reviewer 仅基于 RAW_OUTPUT 与前三段做门禁；禁止以叙事摘要代替四段证据。"
+
+reviewer:
+  pr_and_autofix_requires_all:
+    - "TEAM_RESULT=TEAM_OK"
+    - "RISK=LOW"
+    - "AUTOFIX_ALLOWED=true"
+    - "变更路径全部落在 evolver_scope.allowed_paths 内"
+  user_verbal_override:
+    forbidden: true
+    description: >
+      禁止仅因用户在钉钉/群聊/私聊中说「授权 autofix」「同意修改」「执行」等口令，
+      在 Reviewer 已给出 RISK=MEDIUM 或 RISK=HIGH 或 AUTOFIX_ALLOWED=false 时自动修改仓库、
+      直推 main、或跳过 PR。若业务必须允许中高风险人工强开，须先修订本文件与 execution_contract
+      并走人工变更流程，不得默认可绕过上述门禁。
+
+github:
+  allowed_branch_prefixes:
+    - "ai-evolve/analysis-"
+    - "ai-evolve/strategy-"
+    - "ai-evolve/report-"
+  forbidden:
+    - "直接提交或推送至 main 作为自动进化结果"
+    - "自动 merge main"
+    - "代码已改但 PR_CREATED=true 却无 PR_REF（分支名或 PR 链接）"
+  pr_ref_required_when: "PR_CREATED=true"
+
+orchestrator_final_output:
+  keys:
+    - "ORCH_STATUS"
+    - "FAILURE_CODES"
+    - "RISK"
+    - "AUTOFIX_ALLOWED"
+    - "PR_CREATED"
+    - "PR_REF"
+    - "EVIDENCE_REF"
+    - "TOP_ACTIONS"
+  format_rule: >
+    最终须给出上述 8 个键，每行一条 KEY=value；钉钉等渠道可有前置简报，但键值块须可单独截取解析。
+
+evolver:
+  required_fields:
+    - "ERROR_CLASS"
+    - "STANDARD_COMMANDS"
+    - "CHECKLIST_UPDATE"
+    - "PROMPT_PATCH"
+    - "EVIDENCE_REF"
+  note: "CHECKLIST_UPDATE 与 PROMPT_PATCH 按 evolver_evolution 模板；无则填 NONE。"
+  template_path: "docs/openclaw/prompt_templates/evolver_evolution.md"
+
+workspace_data:
+  description: >
+    涉及 prediction_records / volatility_ranges 时，read 与 exec 以 OpenClaw workspaceDir 为准；
+    data/ 常被 gitignore，可先在本机运行 scripts/evolution_workflows_dry_run.sh sync-data。

@@ -1,0 +1,56 @@
+name: volatility_range_evolution_on_demand
+description: |
+  宽基 ETF「预测波动区间」优化（on-demand）。在 Orchestrator + Builder + Reviewer + Evolver
+  三 Skill 组合下，结合近期真实预测记录 / 缓存与可核对的网上方法论（如波动率估计、区间校准），
+  对预测模型与参数提出证据化改进；满足 RISK=LOW 等条件时方允许自动 PR。
+
+schedule: null
+
+meta:
+  phase: 2.5
+  trigger_mode: on_demand
+  entry_agent: etf_main
+  builder_agent: code_maintenance_agent
+  reviewer_agent: etf_analysis_agent
+  evolver: capability-evolver
+
+structured_message: |
+  执行宽基 ETF 预测波动区间优化（on-demand）。
+
+  ## 输入（由调用方提供）
+  - target_symbols: 默认 ["510300"]，可含其他宽基 ETF（如 510050、510500）
+  - evaluation_window: 回看交易日数（建议 ≥20，用于对照预测区间与实际高低价）
+  - pain_summary: 当前痛点（例如：区间过宽、置信度与实现波动不匹配、极端日突破率过高等）
+
+  ## 角色映射
+  - Orchestrator=etf_main（orchestrator_evolution）
+  - Builder=code_maintenance_agent（builder_evolution）
+  - Reviewer=etf_analysis_agent（reviewer_evolution）
+  - Evolver=capability-evolver（evolver_evolution）
+
+  ## 不变量（须读 config/evolution_invariants.yaml + config/evolver_scope.yaml）
+  - 允许改动路径含：`plugins/analysis/**`、`config.yaml`（仅限波动/宽基监控相关键）、
+    `src/volatility_range.py`、`src/volatility_range_fallback.py`、`src/on_demand_predictor.py`、
+    `docs/research/**`、`docs/openclaw/**`。
+  - 禁止：`plugins/data_collection/**`、`scripts/**`、`config/openclaw_*.yaml`、`plugins/notification/**` 等 denied_paths。
+  - 对 `config.yaml` 的差异须可逐项说明用途；无关键变更 → Reviewer 判定 OUT_OF_SCOPE / TEAM_FAIL。
+
+  ## 证据与外部知识（Builder）
+  1) 读近期产物（若存在）：
+     - `data/prediction_records/predictions_*.json`（tool_predict_* 落地）
+     - `data/volatility_ranges/*.json`（宽基巡检快报同源缓存）
+  2) 读实现与配置：
+     - `plugins/analysis/volatility_prediction.py`、`plugins/analysis/intraday_range.py`
+     - `src/volatility_range.py`、`config.yaml -> signal_params -> intraday_monitor_510300 -> volatility`
+  3) 网上方法论（至少一次独立检索，并写入 EVIDENCE_REF）：
+     - 使用 `tavily_search` / `web-search` 等工具，检索关键词如：
+       Parkinson volatility、EWMA、HAR、GARCH 应用於股指日内区间、realized vs implied range calibration、
+       prediction interval coverage 等；摘录可核对出处（标题+链接），禁止无出处的「拍脑袋」调整。
+  4) 输出四段证据：[COMMAND]/[STDOUT]/[STDERR]/[RAW_OUTPUT]；含简单覆盖统计或突破率更佳。
+
+  ## Reviewer
+  - 样本窗口是否足够；是否区分多市场状态；过拟合风险；`config.yaml` 是否「最小必要修改」。
+
+  ## Orchestrator / Evolver
+  - 仅 TEAM_OK + RISK=LOW + AUTOFIX_ALLOWED=true 且 diff 在 allowed_paths 内时允许 Builder 开 PR（分支约定同既有 evolution 契约）。
+  - Evolver 输出 STANDARD_COMMANDS、CHECKLIST_UPDATE，便于下次复跑同类评估。

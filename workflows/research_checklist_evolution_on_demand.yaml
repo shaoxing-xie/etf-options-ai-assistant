@@ -1,0 +1,51 @@
+name: research_checklist_evolution_on_demand
+description: |
+  研究文档 / Checklist 演化工作流（on-demand）。仅对 docs/research/** 与研究相关的
+  docs/openclaw/** 文档进行结构与内容优化，不修改任何代码或数据采集/平台配置。
+
+schedule: null
+
+meta:
+  phase: 1
+  trigger_mode: on_demand
+  entry_agent: etf_main
+  builder_agent: code_maintenance_agent
+  reviewer_agent: etf_analysis_agent
+  evolver: capability-evolver
+
+structured_message: |
+  执行研究文档 / Checklist 演化（on-demand）。
+
+  ## 输入（由调用方提供）
+  - target_doc: 目标文档或 Checklist 标识（例如: docs/research/factor_research_checklist.md）
+  - gap_summary: 发现的缺陷或遗漏（例如: 未覆盖波动率风险说明；缺少回测样本期要求）
+
+  ## 角色映射
+  - Orchestrator=etf_main（使用 orchestrator_evolution 模板）
+  - Builder=code_maintenance_agent（使用 builder_evolution 模板）
+  - Reviewer=etf_analysis_agent（使用 reviewer_evolution 模板）
+  - Evolver=capability-evolver（使用 evolver_evolution 模板）
+
+  ## 边界约束（必须）
+  - 先 read config/evolution_invariants.yaml（原则固化），再读 config/evolver_scope.yaml。
+  - 仅允许修改：
+    - docs/research/**
+    - docs/openclaw/** 中与 ETF 研究流程、执行契约与工作流说明相关的文档
+  - 禁止修改任何代码、data_collection、平台配置或通知模块。
+
+  ## 工作流期望行为
+  1) Builder：
+     - 对 target_doc 当前内容进行阅读与梳理，基于 gap_summary 标出缺失或待优化部分。
+     - 提出最小必要改动（新增段落、小节或 Checklist 条目），并按四段证据格式输出：
+       [COMMAND]/[STDOUT]/[STDERR]/[RAW_OUTPUT]，其中 RAW_OUTPUT 可包含原始片段与建议草案。
+  2) Reviewer：
+     - 从研究与风险视角审查文档改动是否：
+       - 明确关键风险与样本期要求；
+       - 对执行者友好、可操作；
+       - 未引导任何不当自动化行为。
+     - 输出 TEAM_RESULT / FAILURE_CODES / ROOT_CAUSE / RISK / AUTOFIX_ALLOWED / EVIDENCE_REF / TOP_ACTIONS。
+  3) Orchestrator：
+     - 若 Reviewer 判定 RISK=LOW 且 AUTOFIX_ALLOWED=true，可允许 Builder 在 ai-evolve/report-* 分支上创建仅文档变更的 PR。
+  4) Evolver：
+     - 将本次文档演化抽象为 ERROR_CLASS=DOC_GAP 或类似分类，给出后续可复用的 Checklist 更新建议。
+

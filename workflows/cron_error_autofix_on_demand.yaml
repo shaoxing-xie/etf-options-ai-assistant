@@ -1,0 +1,32 @@
+name: cron_error_autofix_on_demand
+description: 事件驱动的 Cron 报错诊断与低风险自动修复入口
+schedule: null
+
+meta:
+  phase: "2-5"
+  trigger_mode: event
+  entry_agent: etf_main
+  builder_agent: code_maintenance_agent
+  reviewer_agent: etf_analysis_agent
+  evolver: capability-evolver
+
+structured_message: |
+  执行 Cron 报错自动修复分流（事件驱动）：
+  1) Builder 只做取证与复现（日志、失败步骤、最小复现命令），输出 [COMMAND]/[STDOUT]/[STDERR]/[RAW_OUTPUT]。
+  2) Reviewer 只基于 RAW_OUTPUT 判定并输出结构化字段：
+     - TEAM_RESULT=TEAM_OK|TEAM_FAIL
+     - FAILURE_CODES=...
+     - ROOT_CAUSE=...
+     - RISK=LOW|MEDIUM|HIGH
+     - AUTOFIX_ALLOWED=true|false
+     - EVIDENCE_REF=...
+  3) 修复准入：
+     - 仅当 TEAM_OK 且 RISK=LOW 且 AUTOFIX_ALLOWED=true 才允许执行修复。
+     - MEDIUM/HIGH 仅允许给建议，不得自动改代码。
+  4) 修复与提交流程（LOW 风险）：
+     - Builder 在独立分支完成最小修复。
+     - 执行最小验证（至少 release_safety_gate 或对应测试）。
+     - 使用 github 能力发起 PR（禁止自动 merge 到 main）。
+  5) Evolver 产出复盘：
+     - ERROR_CLASS / CHECKLIST_UPDATE / AUTOFIX_ALLOWED（本次）；
+     - 给出下一次同类故障的标准命令与判定门槛。

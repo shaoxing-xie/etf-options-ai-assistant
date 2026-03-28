@@ -17,5 +17,18 @@ structured_message: |
   - 巡检工具运行时 BUG（按环境/参数/代码缺陷三级分流）。
   - 巡检预测准确性漂移（按既定窗口评估，超阈值触发 issue/告警建议）。
   - 巡检运维问题（发现-诊断-处置-验证链路完整性）。
-  输出必须包含：失败码统计、主要风险、建议动作、是否允许自动修复（YES/NO）。
+  输出必须包含以下结构化字段（逐行）：
+  - TEAM_RESULT=TEAM_OK|TEAM_FAIL
+  - FAILURE_CODES=<逗号分隔；无则 NONE>
+  - ROOT_CAUSE=<一句话；未知则 UNKNOWN_CAUSE>
+  - RISK=LOW|MEDIUM|HIGH
+  - AUTOFIX_ALLOWED=true|false
+  - EVIDENCE_REF=<至少1个 runId/jobId/日志路径>
+  - TOP_ACTIONS=<最多3条，分号分隔>
+
+  自动修复准入（硬约束）：
+  - 仅当 TEAM_RESULT=TEAM_OK 且 RISK=LOW 且 AUTOFIX_ALLOWED=true 时，才允许进入修复动作。
+  - MEDIUM/HIGH 风险只允许给修复建议，不得自动改动代码。
+  - 自动修复仅允许使用 github 能力发起 PR（exec + gh / github skill），禁止直接 merge 到 main。
+  - 无 RAW 证据不得给 TEAM_OK；证据不足必须使用 NO_EVIDENCE / UNKNOWN_CAUSE 失败码。
 

@@ -24,6 +24,11 @@
 | `strategy_fusion_routine.yaml` | 无内置 cron（随 Agent / 手动） | `tool_strategy_engine` → 可选风控/通知；与 `agents/analysis_agent.yaml` 的 `strategy_fusion` 呼应（交易时段 **每 30 分钟** `*/30 9-15 * * 1-5`） |
 | `ci_autofix_triage_on_demand.yaml` | `schedule: null`（事件驱动） | CI 自动修复入口：Builder 取证、Reviewer 门禁、LOW 风险才可修复与 PR |
 | `quality_backstop_audit.yaml` | 工作日 20:30 | 质量兜底巡检：Cron 异常、工具 BUG、预测漂移、运维问题 |
+| `cron_error_autofix_on_demand.yaml` | `schedule: null`（事件驱动） | Cron 报错自动修复入口：仅 `TEAM_OK + RISK=LOW + AUTOFIX_ALLOWED=true` 才允许修复并提 PR |
+| `factor_evolution_on_demand.yaml` | `schedule: null`（按需） | 因子 / 指标演化工作流：三 Skill 编排，严格遵守 evolver_scope 边界，仅允许在 allowed_paths 内低风险自动创建 PR。 |
+| `strategy_param_evolution_on_demand.yaml` | `schedule: null`（按需） | 策略参数 / 过滤器演化工作流：仅调整参数/阈值/过滤器/风控规则，不改核心信号逻辑与标的池，满足 TEAM_OK+RISK=LOW 才允许 PR。 |
+| `research_checklist_evolution_on_demand.yaml` | `schedule: null`（按需） | 研究文档 / Checklist 演化工作流：只修改 docs/research/** 与研究相关 docs/openclaw/**，不改任何代码 |
+| `volatility_range_evolution_on_demand.yaml` | `schedule: null`（按需） | 宽基 ETF **预测波动区间** 优化：`tool_predict_volatility` / `tool_predict_intraday_range` 与缓存同源逻辑；可结合 `prediction_records`、`volatility_ranges` 与 **网络检索** 做证据化调参与模型改进（见 `config/evolver_scope` 允许路径） |
 
 ---
 
@@ -47,6 +52,7 @@
 **三 Skill 自动修复与兜底（新增）**
 - `ci_autofix_triage_on_demand.yaml`：事件驱动（CI 失败触发），“先取证后判定”，仅 `RISK=LOW` 可进入修复+PR。
 - `quality_backstop_audit.yaml`：定时兜底（工作日 20:30），覆盖 Cron、工具 BUG、预测漂移、运维问题。
+- `cron_error_autofix_on_demand.yaml`：事件驱动（Cron 报错触发），仅 `TEAM_OK + RISK=LOW + AUTOFIX_ALLOWED=true` 可进入修复+PR，禁止自动 merge main。
 
 **多策略融合（可选）**  
 - 工具 **`tool_strategy_engine`**：不替代 `tool_generate_signals`；可在 Cron/按需流程中 **并行或单独** 调用，输出 `candidates` + `fused`（见 `docs/architecture/strategy_engine_and_signal_fusion.md`）。示例 Cron 见根目录 `CRON_JOBS_EXAMPLE.json` 中 `strategy-fusion-example`（**`*/30 9-15 * * 1-5`**，默认 `enabled: false`）。  

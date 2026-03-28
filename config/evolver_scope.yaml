@@ -1,0 +1,29 @@
+# 原则性约束的机器可读版本见 config/evolution_invariants.yaml（不在下列 allowed_paths 内，自动 PR 不可修改）
+allowed_paths:
+  - "plugins/analysis/**"
+  - "strategies/**"
+  - "docs/research/**"
+  - "docs/openclaw/**"
+  # 宽基 ETF 波动区间：工具与缓存同源；Reviewer 须拒绝与本主题无关的 diff
+  - "config.yaml"
+  - "src/volatility_range.py"
+  - "src/volatility_range_fallback.py"
+  - "src/on_demand_predictor.py"
+
+denied_paths:
+  - "plugins/data_collection/**"
+  - "scripts/**"
+  - "config/openclaw_*.yaml"
+  - "plugins/notification/**"
+  - ".github/**"
+
+risk_rules:
+  RISK_LOW: >
+    变更仅限文档、研究 Checklist、因子实现或策略参数，且有回测或诊断证据显示效果改善或风险下降。
+  RISK_MEDIUM: >
+    变更涉及策略核心逻辑或样本期 < 2 年 / 标的过少 / 风险指标边界模糊。
+  RISK_HIGH: >
+    涉及 data_collection、平台集成、配置密钥、通知通道或无法提供充分证据支撑的逻辑大改。
+  OUT_OF_SCOPE: >
+    任何修改 denied_paths 中的文件或不在 allowed_paths 中的路径。
+
