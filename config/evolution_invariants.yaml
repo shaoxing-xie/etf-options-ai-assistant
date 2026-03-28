@@ -144,6 +144,19 @@ user_facing:
     orchestrator_rule: >
       未见到用户确认前，不得对仓库 apply_patch / 直推 / 创建实跑 PR。确认后阶段二的第二轮回复须再给出完整 8 行键值；
       若 PR_CREATED=true 须有 PR_REF。
+    phase_a_machine_block:
+      description: >
+        拍 A（只诊断、不写仓库）的回复末尾仍须使用与 orchestrator_final_output 相同的 8 个键名，禁止改用
+        DIAGNOSIS_STAGE、STATUS:READ_ONLY 等替代 schema，便于日志与自动化解析。
+      required_keys_same_as: "orchestrator_final_output.keys（八键名与 orchestrator_final_output 一致）"
+      typical_values_read_only_diagnosis: >
+        ORCH_STATUS=TEAM_OK 或 TEAM_FAIL（证据不足时）；FAILURE_CODES 可含 REPORT_STRUCTURE_GAP、DOC_GAP、
+        DUAL_EVIDENCE_INCOMPLETE、NO_EVIDENCE 等；RISK=LOW|MEDIUM|HIGH；AUTOFIX_ALLOWED=false；
+        PR_CREATED=false；PR_REF=NA；EVIDENCE_REF 须含本地锚点（如 data/trend_analysis/before_open/*.json、
+        ~/.openclaw/cron/runs/*.jsonl）与至少一个 https://；TOP_ACTIONS 为可执行后续项（含「确认阶段二改某 doc」）。
+      correct_data_paths_note: >
+        开盘分析落盘目录为仓库 data/trend_analysis/before_open/（见 config.yaml before_open_dir），
+        不是 workflows/data/...。
 
 evolver:
   required_fields:

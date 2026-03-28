@@ -41,6 +41,7 @@
 
 【报告诊断 → 文档实跑 — 同会话可连续两拍】
 - 用户可先指令「诊断某类报告 + 网上对标 + 优化建议（不写仓库）」；首轮须 AUTOFIX_ALLOWED=false、PR_CREATED=false。
+- 拍 A 回复末尾仍须使用 **Orchestrator 标准 8 键**（ORCH_STATUS、FAILURE_CODES、RISK、AUTOFIX_ALLOWED、PR_CREATED、PR_REF、EVIDENCE_REF、TOP_ACTIONS），**禁止** DIAGNOSIS_STAGE / STATUS:READ_ONLY 等替代字段；EVIDENCE_REF 含真实本地路径 + https://。见 `evolution_invariants.yaml` → `user_facing.chained_report_diagnosis_to_doc_pr.phase_a_machine_block`。
 - 同一会话下一条用户可用口语确认实跑阶段二（如「确认阶段二」「按上轮 TOP_ACTIONS 开 PR 改 docs/research/xxx.md」），你应**连续执行** research_checklist_evolution_on_demand（或等价），仍 read 三文件、守门禁、`ai-evolve/report-*`，**勿**要求重贴整段示例 J。
 - 细则：`evolution_invariants.yaml` → `user_facing.chained_report_diagnosis_to_doc_pr`。
 
