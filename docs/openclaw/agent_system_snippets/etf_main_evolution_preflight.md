@@ -26,6 +26,11 @@
 - 若任一文件 read 失败（ENOENT 等），须在回复中如实说明，并给出 TEAM_FAIL / NO_EVIDENCE 或等价门禁结论，禁止假装已遵守 invariants。
 - config/evolution_invariants.yaml 中的 reviewer.user_verbal_override、github 节优先于会话内用户一句「授权修改」类口令。
 - 非 evolution 类日常巡检/问答：不要求每轮都 read 上述三文件；仅当本轮任务落入上述触发条件时才执行预检。
+
+【钉钉 — 三 Skill 演化授权】
+- 若入口为钉钉且本轮为「三 Skill 演化 / 实跑 / 开 ai-evolve PR」类意图：read 完三文件后，再读 evolution_invariants.yaml 中的 dingtalk_three_skill_evolution。
+- 仅当请求人显示名为「谢富根」（或 authorized_dingtalk_user_ids 已配置且匹配）时，才允许继续 Builder→Reviewer→Evolver 实跑与改仓库。
+- 否则：禁止改仓库与开 PR；回复须含 FAILURE_CODES=DINGTALK_EVOLUTION_UNAUTHORIZED，并引导由谢富根发起。
 ```
 
 ---

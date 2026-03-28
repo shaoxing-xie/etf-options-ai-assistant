@@ -88,3 +88,11 @@ Orchestrator 在以下情况必须停止自动修复并升级：
 - 修复策略（含风险等级）
 - Evolver 复盘条目（分类 + 标准命令 + checklist）
 
+## 8. 钉钉渠道与三 Skill 演化授权
+
+**机器可读名单**：`config/evolution_invariants.yaml` → `dingtalk_three_skill_evolution`。
+
+- **当前策略**：在钉钉上**仅**允许显示名为 **「谢富根」** 的用户（及未来填入 `authorized_dingtalk_user_ids` 的账号）发起或要求执行**完整三 Skill 演化**（Builder → Reviewer → Evolver，含满足门禁后的改仓库与 `ai-evolve/*` PR）。
+- **不在名单内**：Orchestrator 应**拒绝实跑**，输出 `FAILURE_CODES=DINGTALK_EVOLUTION_UNAUTHORIZED`，**不**进入改代码/开 PR；可提供**只读**分析或引导其联系授权用户。
+- **技术说明**：仓库内配置为**编排与合规约束**；钉钉侧仍建议用**群成员权限 / 机器人可见范围**做硬隔离；二者同时生效最佳。
+

@@ -525,6 +525,8 @@ pain_summary=近期预测日内区间偏宽/偏窄或与实现波动不匹配（
 
 以下假设你已在 OpenClaw 里把 **钉钉消息入口** 绑到 Agent **`etf_main`**（群机器人 @、或应用允许的私信/会话）。**具体以 `~/.openclaw` 里网关与 Agent 路由为准**；若当前只接了分析/通知而没有接入 `etf_main`，需要先在 OpenClaw 侧配置「该会话 → etf_main」。
 
+**授权（已写入仓库配置）**：在钉钉上**仅**允许用户 **「谢富根」** 发起或要求执行**完整三 Skill 演化**（多角色编排 + Evolver + 满足门禁后的改仓库 / `ai-evolve/*` PR）。名单与拒绝时的键值输出规则见 **`config/evolution_invariants.yaml`** → **`dingtalk_three_skill_evolution`**；执行协议见 **`docs/openclaw/execution_contract.md` §8**。其他用户可走只读分析，或请谢富根代发演化任务；钉钉群权限建议与此一致做硬隔离。
+
 **话术结构（建议每次都写清）：**
 
 1. **目标 Agent**：`etf_main`（若你们群固定路由到它，可省略，但首次建议写明）。  

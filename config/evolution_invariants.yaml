@@ -49,6 +49,21 @@ reviewer:
       直推 main、或跳过 PR。若业务必须允许中高风险人工强开，须先修订本文件与 execution_contract
       并走人工变更流程，不得默认可绕过上述门禁。
 
+# 钉钉渠道：谁可以要求「完整三 Skill 演化」（编排 + Evolver + 实跑开 PR 路径）
+dingtalk_three_skill_evolution:
+  description: >
+    仅下列身份可在钉钉侧发起或要求执行完整三 Skill 演化能力（含多角色编排、 capability-evolver、
+    满足门禁后的仓库修改与 ai-evolve/* PR）。其他用户：可提供一般行情/研究问答，不得进入该实跑编排。
+  authorized_display_names:
+    - "谢富根"
+  # 若 OpenClaw 消息载荷含稳定 userId，可填入 DingTalk openId 等以便机器校验（可选）
+  authorized_dingtalk_user_ids: []
+  orchestrator_when_unauthorized: >
+    确认入口为钉钉且意图属于三 Skill 演化，但请求人不在 authorized_* 中：不得调用 Builder 改仓库或开 PR。
+    输出 ORCH_STATUS=COMPLETED，FAILURE_CODES=DINGTALK_EVOLUTION_UNAUTHORIZED，RISK=LOW，
+    AUTOFIX_ALLOWED=false，PR_CREATED=false，PR_REF=NA，EVIDENCE_REF=evolution_invariants.dingtalk_three_skill_evolution，
+    TOP_ACTIONS=请由授权用户「谢富根」发起或转交内部工单；一般分析需求可继续只读回答。
+
 github:
   allowed_branch_prefixes:
     - "ai-evolve/analysis-"
