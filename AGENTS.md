@@ -56,6 +56,8 @@ Capture what matters. Decisions, context, things to remember. Skip the secrets u
 
 ## ETF 自动进化（evolution / 钉钉实跑）
 
+总纲与边界说明见 **`docs/openclaw/三Skill驱动ETF研究自动进化实施方案.md`**（仓库内已实施并完成验证；与下列三文件一并构成「动手前必读」）。
+
 当用户提到 **`workflows/*_evolution_on_demand.yaml`**、**波动区间演化**、**三 Skill / Builder-Reviewer-Evolver**、**AUTOFIX**、**ai-evolve/***、或明确要「演化 / 实跑 / 干跑」并可能改代码时，在编排或修改仓库**之前**用 `read` 读取：
 
 1. **`config/evolution_invariants.yaml`** — 机器可读不变量（三角色顺序、四段证据、禁止口头授权绕过门禁、GitHub PR 规则、8 行键值输出等）

@@ -35,7 +35,27 @@
 
 ---
 
-## 2. 使用指南（User Guide）
+## 2. 三 Skill 自动化进化（研究 / 工程迭代）
+
+> **状态**：`docs/openclaw/三Skill驱动ETF研究自动进化实施方案.md` 所述能力已在仓库**实施并完成验证**（GitHub PR 约束 + Builder/Reviewer 编排 + Evolver 复盘 + 质量兜底与 CI 分流）。
+
+**核心思想**：在**固定边界**内让「分析、策略、研究文档」持续改进——**允许路径**内可证据化自动 PR；**数据采集、通知、`scripts/`、`.github/`** 等默认不自动改代码，只能 Issue/人工或运维脚本处理。
+
+**必读配置与契约**：
+
+| 文件 | 作用 |
+|------|------|
+| `config/evolution_invariants.yaml` | 不变量：三角色顺序、四段证据、Reviewer 门禁、Orchestrator 输出键等 |
+| `config/evolver_scope.yaml` | `allowed_paths` / `denied_paths` |
+| `docs/openclaw/execution_contract.md` | 执行契约与失败码 |
+
+**入口文档**：`docs/openclaw/三Skill驱动ETF研究自动进化实施方案.md`  
+**工作流目录**：`workflows/`（`*_evolution_on_demand.yaml`、`quality_backstop_audit.yaml`、`ci_autofix_triage_on_demand.yaml` 等）  
+**预测与质量闭环**（与进化配套）：`config.yaml`（`prediction_quality` / `prediction_monitoring`）、`scripts/verify_predictions.py`、`scripts/prediction_metrics_weekly.py`；详见根目录 `README.md` 与 `config/openclaw_strategy_engine.yaml`。
+
+---
+
+## 3. 使用指南（User Guide）
 
 聚焦“怎么用”：
 
@@ -54,7 +74,7 @@
 
 ---
 
-## 3. OpenClaw 集成（Integration）
+## 4. OpenClaw 集成（Integration）
 
 面向需要在 OpenClaw 中部署与维护本项目的用户：
 
@@ -68,7 +88,7 @@
 
 ---
 
-## 4. 工具与协议参考（Reference）
+## 5. 工具与协议参考（Reference）
 
 当你需要查某个工具的参数、返回值或错误码时使用：
 
@@ -88,7 +108,7 @@
 
 ---
 
-## 5. 架构与开发（Architecture）
+## 6. 架构与开发（Architecture）
 
 面向二次开发者和代码审阅者：
 
@@ -102,7 +122,7 @@
 
 ---
 
-## 6. 运维与排错（Ops）
+## 7. 运维与排错（Ops）
 
 包含常见问题、风险控制与回滚、钉钉/飞书连接排查等：
 
@@ -114,7 +134,7 @@
 
 ---
 
-## 7. 历史归档（Legacy）
+## 8. 历史归档（Legacy）
 
 `docs/legacy/` 下保留了历史设计文档、迁移方案与测试报告，仅供参考：
 

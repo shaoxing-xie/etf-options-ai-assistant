@@ -38,26 +38,33 @@
 
 > **免责声明**：本项目仅用于研究与工程实践，不构成任何投资建议。任何实盘行为与损益后果均由使用者自行承担。
 
-## ETF Stock 龙虾（OpenClaw）生态长项：从“会分析”到“会复现、会迭代”
+## ETF Stock 龙虾（OpenClaw）生态长项：从“会分析”到“会复现、会迭代、会进化”
 
-本项目的价值不在于堆更多结论，而在于把交易决策工程化：让每一次输出都可追溯、可复盘，并能在失败后持续进化。
+本项目的价值不在于堆更多结论，而在于把**研究、交易决策与工程变更**统一成可执行、可追溯、可改进的闭环：**日常自动化跑通流程**，**异常与退化时按契约进化代码与文档**（在明确边界内），而不是依赖单次会话的“口头修复”。
 
 你会在这里体验到几项 OpenClaw ETF/股票龙虾生态的核心长项：
 
 - **证据驱动的端到端流程**：多 Agent 把“采集 -> 分析 -> 风控校验 -> 通知 -> 复盘”串成闭环；每次运行都有日志与上下文，减少“口嗨式结论”。
 - **Cron + Workflow 自动化**：盘前 / 盘中 / 盘后 / 研究任务按固定节奏运行，把盯盘从靠意志力变成靠系统。
-- **三 Skill 生产化流水线（CI 自动修复 + 质量兜底）**：把 `github + agent-team-orchestration + capability-evolver` 组合成受约束的执行闭环。
-  - 用 `Execution Contract` 强制“证据块 + 失败码门禁”，抑制幻觉、跑偏和超时扩散。
-  - 用 CI 自动修复演练与定时质量兜底，把“问题 -> 分类 -> 标准排查 -> checklist”固化成长期资产。
-  - 用 Evolver 复盘沉淀，让下一次成功率持续提升。
+- **三 Skill 驱动的 ETF 研究自动进化（已落地并验证）**  
+  实施方案全文见 **`docs/openclaw/三Skill驱动ETF研究自动进化实施方案.md`**。思想可以概括成三条能力拧成一股绳：
+  1. **GitHub**：在 `ai-evolve/*` 等约定分支上**提 PR、不自动合 main**，变更可 diff、可审查。
+  2. **agent-team-orchestration**：**Builder（如 code_maintenance_agent）+ Reviewer（如 etf_analysis_agent）** 分角色执行，输出带 `TEAM_RESULT` / `FAILURE_CODES` / `RISK` 等可解析结论。
+  3. **capability-evolver**：把失败案例抽象为 `ERROR_CLASS`、`STANDARD_COMMANDS`、`CHECKLIST_UPDATE`，沉淀到研究与 OpenClaw 文档，而不是只修一次算一次。
+
+  **机器可读边界与不变量**（运行前必读，避免“越权自动改采集/通知/脚本”）：
+  - `config/evolution_invariants.yaml` — 三角色顺序、四段证据、口头授权不可绕过门禁、Orchestrator 最终输出键等。
+  - `config/evolver_scope.yaml` — `allowed_paths` / `denied_paths`，自动修改只允许落在允许路径内。
+  - `docs/openclaw/execution_contract.md` — 执行契约与证据块格式。
+
+  **典型入口工作流**（`workflows/`）：按需演化（因子 / 策略参数 / 波动区间 / Checklist 等 `*_evolution_on_demand.yaml`）、CI 失败分流（`ci_autofix_triage_on_demand.yaml`）、定时质量兜底（`quality_backstop_audit.yaml`）、Cron 报错修复（`cron_error_autofix_on_demand.yaml`）。Prompt 模板见 `docs/openclaw/prompt_templates/*_evolution.md`。
+
+- **预测与验证的工程化（与“进化”配套的数据闭环）**  
+  预测落库经 **`src/prediction_recorder.py`** 与 **`src/prediction_normalizer.py`**，质量门禁阈值在 **`config.yaml` → `prediction_quality`** 可配；收盘后验证见 **`scripts/verify_predictions.py`**（工作流 **`workflows/prediction_verification.yaml`**）；滚动命中率与相对基线告警见 **`scripts/prediction_metrics_weekly.py`**（**`config.yaml` → `prediction_monitoring`**）。多模型区间融合仅作离线试验时见 **`docs/research/prediction_fusion_contract.md`** 与 **`scripts/prediction_fusion_experiment.py`**。
+
 - **GitHub 运维稳定 IO**：在当前 OpenClaw 形态下，GitHub 操作以 `exec + gh` 为主，结合 `gh api .../actions/runs/<id>/logs` 的 zip 日志兜底路径，确保可核验证据。
 
-如果你想把这套工程能力复用到自己的 ETF/风控场景，建议从：
-- `docs/openclaw/README.md`
-- `docs/openclaw/工作流参考手册.md`
-- `docs/openclaw/execution_contract.md`
-
-开始阅读并快速跑通。
+**建议阅读顺序（自动化进化）**：`docs/openclaw/README.md` → **`三Skill驱动ETF研究自动进化实施方案.md`** → `execution_contract.md` → `工作流参考手册.md`（含 Cron 与任务 ID 约定）。
 
 ## 紧急场景示例（开盘 10 分钟）
 
@@ -92,7 +99,8 @@
 - **信号与策略研究**：支持多策略信号生成、信号效果回放、策略评分与权重调整，形成完整的策略研究闭环（Strategy Research Loop）。
 - **风险控制与仓位管理**：提供仓位建议、止盈止损计算、可交易性过滤、集中风控（通过 `option_trader.py env/risk_check`）等能力。
 - **OpenClaw 集成与工作流**：与 OpenClaw 深度集成，支持多 Agent 协同、定时工作流（Cron）、飞书通知与研究型轮动/回测工作流。
-- **运维与可观测性**：统一日志、健康检查、代码体检工具，与 OpenClaw 的 ops / code_maintenance Agent 协作。
+- **三 Skill 自动化进化**：在 `evolution_invariants` + `evolver_scope` 约束下，通过编排技能 + GitHub PR + Evolver 复盘，使分析/策略/研究文档可持续迭代；数据采集与通知通道默认**不自动改代码**。
+- **运维与可观测性**：统一日志、健康检查、代码体检工具，与 OpenClaw 的 ops / code_maintenance Agent 协作；预测验证与周报脚本支撑质量趋势，而非仅单次结论。
 
 ### 你能获得什么（Value）
 
@@ -195,6 +203,11 @@ bash install_plugin.sh
   - `docs/getting-started/README.md`  
   - `docs/overview/5分钟快速开始指南.md`
 
+- **三 Skill 与自动化进化（实施完成，建议通读）**：  
+  - **`docs/openclaw/三Skill驱动ETF研究自动进化实施方案.md`** — 总纲：GitHub + 编排 + Evolver、边界与 PR 约定。  
+  - `config/evolution_invariants.yaml`、`config/evolver_scope.yaml`、`docs/openclaw/execution_contract.md` — 运行时硬约束。  
+  - `workflows/*_evolution_on_demand.yaml`、`workflows/quality_backstop_audit.yaml` 等 — 入口与兜底。
+
 - **使用指南（User Guide）**：  
   - 工作流与调度：`docs/openclaw/工作流参考手册.md`  
   - 信号与风控巡检：`docs/openclaw/信号与风控巡检工作流.md`  
@@ -239,15 +252,17 @@ bash install_plugin.sh
 etf-options-ai-assistant/
 ├── README.md
 ├── LICENSE
-├── config.yaml
+├── config.yaml                       # 含 prediction_quality / prediction_monitoring 等
 ├── Prompt_config.yaml
-├── config/strategy_fusion.yaml      # 融合阈值与默认权重
-├── config/openclaw_strategy_engine.yaml  # OpenClaw 路由 / 权重落盘进化（可选读）
-├── src/                 # 核心业务逻辑（数据采集、分析、信号、风控等）
+├── config/strategy_fusion.yaml       # 融合阈值与默认权重
+├── config/openclaw_strategy_engine.yaml  # OpenClaw 路由、策略融合与预测验证指针
+├── config/evolution_invariants.yaml  # 三 Skill 演化不变量（机器可读）
+├── config/evolver_scope.yaml         # 允许/禁止自动修改的路径边界
+├── src/                 # 核心业务逻辑；含 prediction_recorder / prediction_normalizer
 ├── plugins/             # OpenClaw 插件层（含 plugins/strategy_engine 策略融合）
-├── workflows/           # OpenClaw 工作流定义与数据产物
-├── docs/                # 项目文档（入门、使用、集成、参考、架构、运维等）
-├── scripts/             # 安装、诊断与工具脚本
+├── workflows/           # 工作流：交易链路 + *_evolution_on_demand + 质量兜底等
+├── docs/                # 含 docs/openclaw/三Skill驱动ETF研究自动进化实施方案.md
+├── scripts/             # 安装、诊断、verify_predictions、prediction_metrics_weekly 等
 ├── tests/               # 测试用例
 └── .venv/               # Python 虚拟环境（本地）
 ```
@@ -285,6 +300,7 @@ etf-options-ai-assistant/
 
 - `v0.1.x`：开源基线稳定（文档、配置模板、最小 CI）
 - `v0.2.x`：策略模块化与更多盘中风险模板
+- **三 Skill 自动化进化**：实施方案已在仓库落地并跑通验证（见上文与 `docs/openclaw/三Skill驱动ETF研究自动进化实施方案.md`）；后续以 **证据化 PR、扩大回测窗口、监控告警调参** 为主迭代，而非扩大自动修改面。
 - `v1.0.0`：生产部署与回滚流程标准化
 
 参与方式见上文 [**联系与反馈**](#联系与反馈)（Issue / PR / 安全披露）。
