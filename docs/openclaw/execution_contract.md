@@ -106,3 +106,12 @@ Orchestrator 在以下情况必须停止自动修复并升级：
 - **是否改代码**：仅当 **`[LOCAL_EVIDENCE]`** 已包含与改动匹配的**短样本验证**（有限回测、定向测试、`verify_predictions` 等），且 Reviewer 通过**样本期 / 过拟合**门禁（`SAMPLE_TOO_SHORT`、`OVERFIT_RISK` 等）时，方可 `AUTOFIX_ALLOWED=true` 并开 PR。缺任一脚：**`DUAL_EVIDENCE_INCOMPLETE`**（见 `failure_codes.md`）。
 - **边界**：不将权限扩至 `denied_paths`（采集、脚本、通知等）；先进性与可用性在 **allowed_paths** 内靠证据链提升。
 
+## 10. 用户侧：自然语言指令与输出克制
+
+**机器可读**：`config/evolution_invariants.yaml` → **`user_facing`**。
+
+- **指令**：用户不必每次附带长篇「规划话术」或工作流 YAML 全名；口语意图即可。Agent **仍须**在内部 `read` 三文件并遵守双轨证据与门禁；简短指令**不是**跳过 read 的借口。
+- **对用户的回复**：默认 **少讲契约、少要确认**；不要把 invariants/contract 大段贴给用户，也不要例行追问「您是否确认遵守某条规则」。结论用人话写短（几句或要点列表即可）。
+- **机器块**：演化/编排类任务的 **8 行 `KEY=value`** 仍须在回复中**完整、可截取**地给出（通常置于**末尾单独一段**）；这是为日志与自动化解析，**不是**要求用户逐条口头确认。
+- **例外**：用户明确要求「打印门禁依据 / 教学 / 审计」时，可展开引用路径与片段。
+

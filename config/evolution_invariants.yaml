@@ -5,7 +5,7 @@
 # 维护：人工修改；本文件不在 evolver_scope 的 allowed_paths 中，自动进化 PR 不得改本文件。
 #
 version: 1
-updated_note: "与 docs/openclaw/三Skill驱动ETF研究自动进化实施方案.md 8.1.4 加严条款对齐；含双轨证据（本地+外部）P0–P2"
+updated_note: "8.1.4；dual_evidence；user_facing（自然语言指令+输出克制，见 execution_contract §10）"
 
 mandatory_reads:
   description: "演化类任务动手前必须先 read"
@@ -86,7 +86,7 @@ dingtalk_three_skill_evolution:
   authorized_dingtalk_user_ids: []
   orchestrator_when_unauthorized: >
     确认入口为钉钉且意图属于三 Skill 演化，但请求人不在 authorized_* 中：不得调用 Builder 改仓库或开 PR。
-    输出 ORCH_STATUS=COMPLETED，FAILURE_CODES=DINGTALK_EVOLUTION_UNAUTHORIZED，RISK=LOW，
+    输出 ORCH_STATUS=TEAM_FAIL，FAILURE_CODES=DINGTALK_EVOLUTION_UNAUTHORIZED，RISK=LOW，
     AUTOFIX_ALLOWED=false，PR_CREATED=false，PR_REF=NA，EVIDENCE_REF=evolution_invariants.dingtalk_three_skill_evolution，
     TOP_ACTIONS=请由授权用户「谢富根」发起或转交内部工单；一般分析需求可继续只读回答。
 
@@ -113,6 +113,23 @@ orchestrator_final_output:
     - "TOP_ACTIONS"
   format_rule: >
     最终须给出上述 8 个键，每行一条 KEY=value；钉钉等渠道可有前置简报，但键值块须可单独截取解析。
+
+# 用户口令可简短；细则在模型侧执行，不向用户重复说教（见 execution_contract §10）
+user_facing:
+  natural_language_commands:
+    allowed: true
+    description: >
+      用户可用口语描述意图（如「诊断开盘报告、对照网上机构晨报、先别改代码」），不必粘贴 workflows 全名或
+      Prompt 长模板。Orchestrator 仍须执行 mandatory_reads、映射到具体 on_demand 或诊断模式，并遵守 dual_evidence。
+  output_to_user:
+    default: minimal_explanation
+    rule: >
+      除非用户明确要「完整契约原文/审计追溯/教学」，否则不要复述 evolution_invariants、本文件全文或
+      execution_contract 大段；不要以问卷形式要求用户「确认是否遵守某条规则」。门禁在内部执行。
+      对人可见部分：简短中文结论（建议 1～5 句）+ 必要时的要点列表；末尾单独一段保留完整 8 行 KEY=value，
+      勿再用长文逐条解释这 8 行的含义。
+    machine_block_required: true
+    note: 「8 行键值」是给机器/日志截取用，不是让用户口头确认的材料。
 
 evolver:
   required_fields:
