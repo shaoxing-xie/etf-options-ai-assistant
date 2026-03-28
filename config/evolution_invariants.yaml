@@ -144,6 +144,22 @@ user_facing:
     orchestrator_rule: >
       未见到用户确认前，不得对仓库 apply_patch / 直推 / 创建实跑 PR。确认后阶段二的第二轮回复须再给出完整 8 行键值；
       若 PR_CREATED=true 须有 PR_REF。
+    phase_b_closure:
+      description: >
+        用户已确认拍 B（或单条消息内见 phase_b_preconfirm_marker）后，本轮不得止于「建议清单」而无仓库内可验证产出。
+      must_close_with_one_of:
+        - "在 allowed_paths 内产生实际文件变更，且 PR_CREATED=true 并给出 PR_REF（ai-evolve/report-* 或等价），或"
+        - "因环境无法 gh/git：ORCH_STATUS=TEAM_FAIL，FAILURE_CODES 含 AUTOFIX_BLOCKED_ENV 或等价，TOP_ACTIONS 写明
+          阻塞（无 gh token、无写权限、仅限只读沙箱），并列出建议用户本机执行的 git/gh 命令；禁止假装已改文件。"
+      forbid: >
+        禁止在拍 B 以「优化思路」长文结尾却无 diff、无 PR、无 CHANGED_FILES 列表；此类视为未闭环，须 TEAM_FAIL。
+      single_message_preconfirm:
+        marker_examples:
+          - "【实跑确认】"
+          - "本消息已含实跑确认：请诊断后立即改文档并提 PR"
+        rule: >
+          用户单条消息末尾含上述标记之一时，视为已授权拍 B，允许在同一助手回合内先完成拍 A 举证再执行拍 B，
+          但仍须 Reviewer 口令下 RISK=LOW 且仅触 allowed_paths；最终 8 行键值须反映拍 B 结果（PR_CREATED/PR_REF 等）。
     phase_a_machine_block:
       description: >
         拍 A（只诊断、不写仓库）的回复末尾仍须使用与 orchestrator_final_output 相同的 8 个键名，禁止改用

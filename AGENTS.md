@@ -70,7 +70,7 @@ Capture what matters. Decisions, context, things to remember. Skip the secrets u
 
 **双轨证据（`*_evolution_on_demand`）**：在 **allowed_paths** 内提升分析/策略/报告三条线的上限，靠 **`dual_evidence`** — Builder `[RAW_OUTPUT]` 须含 **`[LOCAL_EVIDENCE]`** 与 **`[EXTERNAL_REFS]`**（含 `https://`），**`EVIDENCE_REF`** 同时锚定本地与外链；外部知识仅作假设与表述升级；**改代码**须通过本地短样本验证 + Reviewer **样本期/过拟合**门禁。缺一脚 → **`DUAL_EVIDENCE_INCOMPLETE`**。见 `config/evolution_invariants.yaml`、`docs/openclaw/execution_contract.md` §9。
 
-**自然语言 + 输出克制**：细则见 **`evolution_invariants.yaml` → `user_facing`** 与 **`docs/openclaw/execution_contract.md` §10`。用户可用**口语**下任务（不必每次粘贴长模板）；你**内部**仍须 read 三文件并守门禁。**对用户**默认短结论，**不要**复述契约全文或例行「请确认门禁」；**末尾**仍给完整 **8 行键值**供截取用。报告诊断拍 A：须 **ORCH_STATUS…TOP_ACTIONS** 标准八键，**禁止** DIAGNOSIS_STAGE 等替代（见 **`user_facing.chained_report_diagnosis_to_doc_pr.phase_a_machine_block`**）。
+**自然语言 + 输出克制**：细则见 **`evolution_invariants.yaml` → `user_facing`** 与 **`docs/openclaw/execution_contract.md` §10`。用户可用**口语**下任务（不必每次粘贴长模板）；你**内部**仍须 read 三文件并守门禁。**对用户**默认短结论，**不要**复述契约全文或例行「请确认门禁」；**末尾**仍给完整 **8 行键值**供截取用。报告诊断拍 A：须 **ORCH_STATUS…TOP_ACTIONS** 标准八键，**禁止** DIAGNOSIS_STAGE 等替代（见 **`phase_a_machine_block`**）。用户已确认拍 B 或含 **【实跑确认】** 时：须有 **PR/diff** 或 **TEAM_FAIL + AUTOFIX_BLOCKED_ENV**（见 **`phase_b_closure`**）。
 
 ## External vs Internal
 

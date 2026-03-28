@@ -13,6 +13,7 @@
 | `FIX_RISK_HIGH` | 修复风险高 | Reviewer 判定 `RISK=MEDIUM/HIGH` | 否 |
 | `LOCAL_REPRO_FAILED` | 本地复现失败 | 无法稳定复现实例或验证修复 | 否 |
 | `CI_RERUN_FAILED` | CI 重跑失败 | 修复后 rerun 仍失败 | 视风险而定（默认否） |
+| `AUTOFIX_BLOCKED_ENV` | 环境无法自动修复/开 PR | 无 `gh`/无 token/工作区只读/OpenClaw 禁写 | 否 |
 
 ## 2. 状态判定规则
 
@@ -31,6 +32,7 @@
 | `FIX_RISK_HIGH` | 停止自动修复，走审批 | 输出变更方案不直接改 | 返回风险与影响面 | 更新风险边界策略 |
 | `LOCAL_REPRO_FAILED` | 停止合并，要求补复现 | 提供最小复现步骤 | 标记验证不充分 | 记录复现门槛与环境依赖 |
 | `CI_RERUN_FAILED` | 回退并升级问题等级 | 收集新 run 证据 | 重新归因 | 更新“修复后二次失败”模板 |
+| `AUTOFIX_BLOCKED_ENV` | 停止自动改仓库 | 输出本机可执行命令、改用手工 PR | TEAM_FAIL + 阻塞说明 | 记录环境依赖 |
 
 ## 4. 输出规范（失败场景）
 

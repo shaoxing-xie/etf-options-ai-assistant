@@ -34,8 +34,20 @@
 ## 5. OpenClaw 拍 A / 拍 B 与 8 行键值
 
 - **拍 A**（只诊断）：末尾仍须 **ORCH_STATUS、FAILURE_CODES、RISK、AUTOFIX_ALLOWED、PR_CREATED、PR_REF、EVIDENCE_REF、TOP_ACTIONS**（见 `config/evolution_invariants.yaml` → `user_facing.chained_report_diagnosis_to_doc_pr.phase_a_machine_block`），**禁止**仅用 `DIAGNOSIS_STAGE` 等替代字段。
-- **拍 B**（确认后改文档）：`research_checklist_evolution_on_demand` + `ai-evolve/report-*`，`PR_REF` 必填。
+- **拍 B**（确认后改文档）：须有 **git diff 或 PR_REF**；禁止仅建议无改动（见 `phase_b_closure`）。单条消息末带 **【实跑确认】** 时可在同一回合内拍完 A 再拍 B。
 
-## 6. 修订记录
+## 6. 何谓「优化闭环」（避免只诊断不疼）
+
+| 情况 | 是否算已优化 |
+|------|----------------|
+| 仅有长文诊断、`DIAGNOSIS_STAGE` 或非标准 8 键 | **否** |
+| 拍 A 结束 | **否**（只读） |
+| 拍 B：**git 可见 diff** 或 **PR_REF** 指向 `ai-evolve/report-*`，且改的是 `docs/research/**` 或 `docs/openclaw/**` | **是（文档层）** |
+| 采集/工作流/通知代码变更 | **须**单独开发 PR（多半不在自动进化 allow-list） |
+
+若已发「确认阶段二」仍无 PR：检查 Agent 是否挂载 **写仓库 + gh**、`etf_main` 是否贴齐 **预检片段**、钉钉路由是否到 **`etf_main`**；模型须输出 **`AUTOFIX_BLOCKED_ENV`** 而非伪成功。
+
+## 7. 修订记录
 
 - 2026-03-28：初稿，承接钉钉诊断与仓库 evolver_scope 边界。
+- 2026-03-28：§6 闭环说明。

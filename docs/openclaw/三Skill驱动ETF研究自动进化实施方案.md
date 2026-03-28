@@ -747,7 +747,7 @@ TOP_ACTIONS=
 ```text
 @机器人 etf_main
 
-确认阶段二。请按你刚才的诊断，直接改 docs/openclaw/工作流参考手册.md 并同步更新 docs/research/opening_morning_brief_roadmap.md（若本轮只改其一也可），该提 PR 就按你们规范在 ai-evolve/report-* 上提。
+确认阶段二。必须出**可验证优化**：用 apply_patch 或等价改 docs/openclaw/工作流参考手册.md 与 docs/research/opening_morning_brief_roadmap.md，创建 ai-evolve/report-* 分支并 **gh pr create**，8 行键值里 PR_CREATED=true、PR_REF=链接。不许只写建议不严。
 ```
 
 ```text
@@ -761,6 +761,22 @@ TOP_ACTIONS=
 
 确认阶段二。改 docs/research/factor_research_checklist.md，按你上条说的办。
 ```
+
+**J-合并：一条钉钉里「先诊断、我已预同意实跑」（同一助手回合内应办完拍 A+拍 B）**
+
+```text
+@机器人 etf_main
+
+开盘行情分析要对标机构晨报：先自己取证+上网对标，给一个短诊断；然后**直接**在仓库里改 docs/openclaw/工作流参考手册.md 和 docs/research/opening_morning_brief_roadmap.md（按诊断补章节），在 ai-evolve/report-* 上创建 PR，给我 PR 链接。若环境不能 gh/不能写盘，8 行键值里写 TEAM_FAIL 和 AUTOFIX_BLOCKED_ENV，说明原因，不要假装已优化。
+
+【实跑确认】
+```
+
+**若始终「只有诊断、没有 PR」**（常见原因）
+
+1. **第二轮没发**：须在同会话再发「确认阶段二…」，或用上面 **J-合并** 一次带 `【实跑确认】`。  
+2. **OpenClaw 未给 `etf_main` 写权限 / 未配置 `gh`**：Agent 只能长文建议 → 应出现 **`AUTOFIX_BLOCKED_ENV`**，你本机手敲 `git checkout -b ai-evolve/report-…` 按 `TOP_ACTIONS` 改。  
+3. **预检未更新**：确保 **`etf_main_evolution_preflight.md`** 最新版已进 Agent system（含 **phase_b_closure**）。详见 **`docs/research/opening_morning_brief_roadmap.md` §6**。
 
 **边界说明（避免期望错位）**
 
