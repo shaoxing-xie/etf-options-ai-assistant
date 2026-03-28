@@ -10,9 +10,13 @@
 
 配置：config.yaml → prediction_monitoring
 
-用法：
+用法（须在仓库根目录执行，勿在 ~ 下直接跑 scripts/）：
+  cd /path/to/etf-options-ai-assistant
   python scripts/prediction_metrics_weekly.py --end-date 20260328
   python scripts/prediction_metrics_weekly.py   # 默认上海日历当天
+
+  # 或任意目录下用绝对路径：
+  python /path/to/etf-options-ai-assistant/scripts/prediction_metrics_weekly.py --end-date 20260328
 """
 
 from __future__ import annotations

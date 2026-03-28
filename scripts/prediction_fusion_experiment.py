@@ -2,7 +2,8 @@
 """
 多模型区间预测 — 离线融合试验（契约见 docs/research/prediction_fusion_contract.md）。
 
-示例：
+示例（先在仓库根 cd，或用绝对路径调用脚本）：
+  cd /path/to/etf-options-ai-assistant
   echo '[{"source":"a","symbol":"510300","upper":4.8,"lower":4.6,"weight":1}]' | \\
     python scripts/prediction_fusion_experiment.py --stdin
 

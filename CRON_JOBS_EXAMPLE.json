@@ -52,7 +52,7 @@
       "description": "周五 18:05：python scripts/prediction_metrics_weekly.py；读 config prediction_monitoring",
       "schedule": "5 18 * * 5",
       "enabled": false,
-      "message": "在仓库根执行：python scripts/prediction_metrics_weekly.py（可选 --end-date YYYYMMDD）。输出 data/verification_reports/weekly_metrics_*.md；告警为「较自身前窗下降≥hit_rate_drop_alert_pp」，非全局50%。",
+      "message": "cd <etf-options-ai-assistant 根目录> && python scripts/prediction_metrics_weekly.py（可选 --end-date YYYYMMDD）。勿在 ~ 下运行：相对路径 scripts/ 仅对仓库根有效。输出 data/verification_reports/weekly_metrics_*.md。",
       "channel": "main"
     },
     {
