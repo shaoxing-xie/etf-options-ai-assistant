@@ -728,7 +728,65 @@ TOP_ACTIONS=
 
 ---
 
-**提示**：钉钉单条消息有长度限制，**可拆成多条**：先工作流名 +  pain_summary，再贴 **示例 F** 中加粗块（【编排】…【PR 前置】）。复杂任务可要求「先确认已 read evolver_scope 再执行」。**实跑优先用示例 F**，示例 E 适合简短试探。**运维与复盘类**（定时任务、工作流体检、历史报告核对）可用 **示例 G / H / I**。
+**示例 J：诊断 / 优化「某类分析报告」输出（通用两阶段；实例：etf 开盘行情分析）**
+
+适用：**任意**定时或按需任务——只要交付物是**可读的分析/研报类长文本**（盘前、盘中、盘后、专题等），你都可通过同一套路先做「证据化诊断 + 综合网上方法论」，**经本人确认**后再进入「只改允许路径内的文档/模板」或人工改工作流。
+
+**通用占位（下次换任务时只改花括号内）**
+
+| 占位符 | 含义 | 本例填写 |
+|--------|------|----------|
+| `{TASK_LABEL}` | 任务显示名（钉钉/Cron/自述） | `etf：开盘行情分析` |
+| `{TASK_ANCHOR}` | 仓库内锚点：工作流文件名、相关文档路径、或 Agent 说明 | 如 `workflows/before_open_analysis.yaml`（若与现网一致）；不知则可写「待 Builder 在 repo 内检索 before_open / opening」 |
+| `{PAIN_SUMMARY}` | 你对当前报告的不满意点 | 如：「章节千篇一律 / 缺风险情景 / 与昨收数据衔接弱 / 太长或太短」 |
+
+**阶段一 — 诊断 + 网上对标 + 优化建议（默认不写仓库、不建 PR）**
+
+```text
+@机器人 etf_main
+
+任务：报告输出诊断（三 Skill 干跑）— {TASK_LABEL}。
+关联锚点：{TASK_ANCHOR}；痛点：{PAIN_SUMMARY}。
+
+【编排】sessions_spawn 或等价：Builder → Reviewer → Evolver；须 read config/evolution_invariants.yaml、evolver_scope、execution_contract。
+
+【Builder】四段证据；[RAW_OUTPUT] 须含：
+- [LOCAL_EVIDENCE]：① 我下面粘贴的近期报告全文或节选（至少一份）；② 若有则 read 仓库内与该任务相关的 `docs/research/**`、`docs/openclaw/**` 或 allowed_paths 内说明；③ 可选 rg/ls 定位 `before_open`、`opening`、报告模板等关键词，贴出路径与摘要（勿改 denied_paths 下文件）。
+- [EXTERNAL_REFS]：至少一次 web 检索，主题与「同类报告怎么写」相关（例：盘前策略简报结构、ETF 晨会要素、风险披露清单）；每条标题 + https:// + 一句话可挪用点；外部仅作假设与表述升级。
+
+【Reviewer】对照 dual_evidence；评价：结构、数据衔接、可复核性、风险与合规表述；本阶段 AUTOFIX_ALLOWED=false，PR_CREATED=false。
+
+【Evolver】ERROR_CLASS 可归 REPORT_STRUCTURE_GAP / DOC_GAP；CHECKLIST_UPDATE、PROMPT_PATCH 给出可复制的改进条目。
+
+最后只输出 8 行键值：ORCH_STATUS … TOP_ACTIONS。（本阶段 EVIDENCE_REF 须含本地锚点 + https://）
+
+---（以下为报告粘贴区，可多条）---
+<粘贴最近一次或两次完整报告，或分段发送>
+```
+
+**阶段二 — 经你确认后，再改文档/模板（允许路径内自动 PR）**
+
+仅在你在钉钉**明确回复**「同意按阶段一的第 … 条建议落地」或「同意实跑 checklist 演化」后，再发下一轮（可新开线程引用阶段一的 `TOP_ACTIONS`）：
+
+```text
+@机器人 etf_main
+
+任务：workflows/research_checklist_evolution_on_demand.yaml 实跑（若只想先要草案可改「干跑」）。
+target_doc=<你在阶段一确认的文档，如 docs/research/xxx.md 或 docs/openclaw/xxx.md>
+gap_summary=将阶段一建议收敛为：①…②…；（可选）对齐 [EXTERNAL_REFS] 中某某链接的表述层级。
+
+须满足 TEAM_OK + RISK=LOW + AUTOFIX_ALLOWED=true + 仅 allowed_paths；分支 ai-evolve/report-*；最后 8 行键值。
+```
+
+**边界说明（避免期望错位）**
+
+- **允许自动 PR 的**通常是：`docs/research/**`、研究向 `docs/openclaw/**`、以及 `evolver_scope.allowed_paths` 内与**文案/Checklist/指标说明**相关的调整。  
+- **工作流 YAML、采集、通知、脚本**等若在 `denied_paths` 或不在 allow-list：阶段一仍可诊断与给出**建议 diff**；实跑自动改仓库须**人工**另提 PR，或先调整 `evolver_scope`（本方案不默认扩权）。  
+- 与 **示例 I** 区分：**示例 I** 侧重「复盘某次 OpenClaw 输出与 8 行键值是否一致」；**示例 J** 侧重「以报告正文为主资产 + 双轨证据 + 网上对标 → 确认后再落文档」。
+
+---
+
+**提示**：钉钉单条消息有长度限制，**可拆成多条**：先工作流名 +  pain_summary，再贴 **示例 F** 中加粗块（【编排】…【PR 前置】）。复杂任务可要求「先确认已 read evolver_scope 再执行」。**实跑优先用示例 F**，示例 E 适合简短试探。**运维与复盘类**（定时任务、工作流体检、历史报告核对）可用 **示例 G / H / I**；**例行分析报告结构与质量迭代**可用 **示例 J**。
 
 #### 8.2 如何解读一次演化任务的结果
 
