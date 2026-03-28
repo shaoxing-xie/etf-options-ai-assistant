@@ -751,17 +751,21 @@ TOP_ACTIONS=
 【编排】sessions_spawn 或等价：Builder → Reviewer → Evolver；须 read config/evolution_invariants.yaml、evolver_scope、execution_contract。
 
 【Builder】四段证据；[RAW_OUTPUT] 须含：
-- [LOCAL_EVIDENCE]：① 我下面粘贴的近期报告全文或节选（至少一份）；② 若有则 read 仓库内与该任务相关的 `docs/research/**`、`docs/openclaw/**` 或 allowed_paths 内说明；③ 可选 rg/ls 定位 `before_open`、`opening`、报告模板等关键词，贴出路径与摘要（勿改 denied_paths 下文件）。
+- [LOCAL_EVIDENCE]：**优先由 Builder 自行查找并 read 近期报告正文**（用户本条消息可不粘贴全文）：
+  1) 按 `{TASK_LABEL}` / `{TASK_ANCHOR}` 在仓库内 **rg** `before_open`、`opening_market`、`opening_analysis`、工作流 `structured_message` 等，锁定产出链路与目录约定（例：`config.yaml` 中 `before_open_dir`、`opening_market` 对应的数据路径，常为 `data/trend_analysis/before_open`、`data/trend_analysis/opening` 或同类；以你 read 到的实际配置为准）。
+  2) **exec ls -la**（或等价）浏览上述目录及 `data/**` 下与趋势/开盘相关的最新 `*.md` / `*.txt` / `*.json`，**至少 read 最近 1～2 份**带时间戳或日期的文件，把可读段落摘入 RAW（附文件路径与修改时间）。
+  3) 若报告只存在于 OpenClaw 侧：在允许的前提下 **检索** `~/.openclaw/cron/runs`、会话/网关日志、或 `memory/**` 中近期与 `{TASK_LABEL}` 相关的输出片段（路径写进 EVIDENCE_REF）。
+  4) 补充 read `docs/research/**`、`docs/openclaw/**` 中与该任务相关的模板或说明（allowed_paths）。
+  5) **仅在 1)～3) 均无法取得任何报告片段时**，在 TOP_ACTIONS 写明已搜索的路径，并请用户粘贴或指明日期的**单次**补样；不得虚构报告内容。
 - [EXTERNAL_REFS]：至少一次 web 检索，主题与「同类报告怎么写」相关（例：盘前策略简报结构、ETF 晨会要素、风险披露清单）；每条标题 + https:// + 一句话可挪用点；外部仅作假设与表述升级。
 
 【Reviewer】对照 dual_evidence；评价：结构、数据衔接、可复核性、风险与合规表述；本阶段 AUTOFIX_ALLOWED=false，PR_CREATED=false。
 
 【Evolver】ERROR_CLASS 可归 REPORT_STRUCTURE_GAP / DOC_GAP；CHECKLIST_UPDATE、PROMPT_PATCH 给出可复制的改进条目。
 
-最后只输出 8 行键值：ORCH_STATUS … TOP_ACTIONS。（本阶段 EVIDENCE_REF 须含本地锚点 + https://）
+最后只输出 8 行键值：ORCH_STATUS … TOP_ACTIONS。（本阶段 EVIDENCE_REF 须含本地锚点 + https://；本地锚点含「报告文件路径或日志路径」）
 
----（以下为报告粘贴区，可多条）---
-<粘贴最近一次或两次完整报告，或分段发送>
+（**可选**：若你已在外部另有成稿，仍可追加粘贴一段作为交叉核对，非必填。）
 ```
 
 **阶段二 — 经你确认后，再改文档/模板（允许路径内自动 PR）**
@@ -782,7 +786,7 @@ gap_summary=将阶段一建议收敛为：①…②…；（可选）对齐 [EXT
 
 - **允许自动 PR 的**通常是：`docs/research/**`、研究向 `docs/openclaw/**`、以及 `evolver_scope.allowed_paths` 内与**文案/Checklist/指标说明**相关的调整。  
 - **工作流 YAML、采集、通知、脚本**等若在 `denied_paths` 或不在 allow-list：阶段一仍可诊断与给出**建议 diff**；实跑自动改仓库须**人工**另提 PR，或先调整 `evolver_scope`（本方案不默认扩权）。  
-- 与 **示例 I** 区分：**示例 I** 侧重「复盘某次 OpenClaw 输出与 8 行键值是否一致」；**示例 J** 侧重「以报告正文为主资产 + 双轨证据 + 网上对标 → 确认后再落文档」。
+- 与 **示例 I** 区分：**示例 I** 侧重「复盘某次 OpenClaw 输出与 8 行键值是否一致」；**示例 J** 侧重「报告正文由 Builder **自检索** `data/**` / 配置指向目录 / OpenClaw 运行痕迹为主 + 双轨证据 + 网上对标 → 确认后再落文档」。
 
 ---
 
