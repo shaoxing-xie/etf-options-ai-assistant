@@ -32,6 +32,22 @@ PREDICTION_RECORDS_DIR = project_root / "data" / "prediction_records"
 ETF_DAILY_DIR = project_root / "data" / "cache" / "etf_daily"
 ETF_MINUTE_DIR = project_root / "data" / "cache" / "etf_minute"
 
+_prediction_quality_cache: Optional[Dict[str, Any]] = None
+
+
+def _get_prediction_quality_config() -> Dict[str, Any]:
+    """与落库一致的质量门禁参数（来自 config.yaml prediction_quality）。"""
+    global _prediction_quality_cache
+    if _prediction_quality_cache is None:
+        try:
+            from src.config_loader import load_system_config
+
+            raw = load_system_config(use_cache=True).get("prediction_quality")
+            _prediction_quality_cache = raw if isinstance(raw, dict) else {}
+        except Exception:
+            _prediction_quality_cache = {}
+    return _prediction_quality_cache
+
 
 def _bounds_for_verify(record: Dict[str, Any]) -> tuple[float, float]:
     """
@@ -49,7 +65,13 @@ def _bounds_for_verify(record: Dict[str, Any]) -> tuple[float, float]:
         return 0.0, 0.0
     if sym in PRICE_RANGES and c is not None:
         try:
-            nu, nl, _, _, _ = process_prediction(float(u), float(l), float(c), sym)
+            nu, nl, _, _, _ = process_prediction(
+                float(u),
+                float(l),
+                float(c),
+                sym,
+                quality_gate=_get_prediction_quality_config(),
+            )
             return nu, nl
         except Exception:
             return fu, fl

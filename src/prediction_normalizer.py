@@ -14,10 +14,35 @@
 3. 执行标准化转换
 """
 
-from typing import Tuple, Optional
+from typing import Tuple, Optional, Dict, Any, Mapping
 import logging
 
 logger = logging.getLogger(__name__)
+
+# 质量门禁默认（与历史行为一致）；可被 config.yaml → prediction_quality 覆盖
+DEFAULT_QUALITY_GATE: Dict[str, float] = {
+    "min_range_pct": 0.5,
+    "max_range_pct": 10.0,
+    "band_low_factor": 0.95,
+    "band_high_factor": 1.05,
+    "expected_low_margin": 0.8,
+    "expected_high_margin": 1.2,
+}
+
+
+def merge_quality_gate(override: Optional[Mapping[str, Any]]) -> Dict[str, float]:
+    """合并配置中的 prediction_quality，非法键或类型忽略。"""
+    out = dict(DEFAULT_QUALITY_GATE)
+    if not override:
+        return out
+    for k in DEFAULT_QUALITY_GATE:
+        if k not in override or override[k] is None:
+            continue
+        try:
+            out[k] = float(override[k])
+        except (TypeError, ValueError):
+            logger.warning("prediction_quality.%s 无效，使用默认", k)
+    return out
 
 # 标的价格区间配置（单位：元）
 PRICE_RANGES = {
@@ -164,48 +189,49 @@ def validate_prediction_quality(
     upper: float,
     lower: float,
     current_price: float,
-    symbol: str
+    symbol: str,
+    quality_gate: Optional[Mapping[str, Any]] = None,
 ) -> Tuple[bool, str]:
     """
     验证预测质量（质量门禁）
     
     Args:
-        upper: 预测上轨
-        lower: 预测下轨
-        current_price: 当前价格
-        symbol: 标的代码
-        
-    Returns:
-        Tuple[bool, str]: (是否通过, 原因)
+        quality_gate: 来自 config prediction_quality 的字典；None 时用 DEFAULT_QUALITY_GATE。
     """
+    g = merge_quality_gate(quality_gate)
+
     # 规则1：上轨必须大于下轨
     if upper <= lower:
         return False, f"上下轨颠倒: upper={upper}, lower={lower}"
     
-    # 规则2：区间宽度必须在合理范围 [0.5%, 10%]
+    # 规则2：区间宽度（相对现价百分比）
     if current_price > 0:
         range_pct = (upper - lower) / current_price * 100
-        if range_pct < 0.5:
-            return False, f"区间过窄 ({range_pct:.2f}%)，必然突破"
-        if range_pct > 10:
-            return False, f"区间过宽 ({range_pct:.2f}%)，无参考价值"
+        if range_pct < g["min_range_pct"]:
+            return False, f"区间过窄 ({range_pct:.2f}%)，低于 min_range_pct={g['min_range_pct']}"
+        if range_pct > g["max_range_pct"]:
+            return False, f"区间过宽 ({range_pct:.2f}%)，高于 max_range_pct={g['max_range_pct']}"
     
-    # 规则3：价格必须在合理区间
+    # 规则3：相对 PRICE_RANGES 的合理区间
     if symbol in PRICE_RANGES:
         expected_min = PRICE_RANGES[symbol]['min']
         expected_max = PRICE_RANGES[symbol]['max']
+        low_bound = expected_min * g["expected_low_margin"]
+        high_bound = expected_max * g["expected_high_margin"]
         
-        if lower < expected_min * 0.8:
-            return False, f"下轨过低: {lower} < {expected_min * 0.8}"
-        if upper > expected_max * 1.2:
-            return False, f"上轨过高: {upper} > {expected_max * 1.2}"
+        if lower < low_bound:
+            return False, f"下轨过低: {lower} < {low_bound}"
+        if upper > high_bound:
+            return False, f"上轨过高: {upper} > {high_bound}"
     
     # 规则4：当前价格应在区间内或附近
     if current_price > 0:
-        if current_price < lower * 0.95:
-            return False, f"当前价格远低于区间: {current_price} < {lower * 0.95}"
-        if current_price > upper * 1.05:
-            return False, f"当前价格远高于区间: {current_price} > {upper * 1.05}"
+        bl = g["band_low_factor"]
+        bh = g["band_high_factor"]
+        if current_price < lower * bl:
+            return False, f"当前价格远低于区间: {current_price} < {lower * bl}"
+        if current_price > upper * bh:
+            return False, f"当前价格远高于区间: {current_price} > {upper * bh}"
     
     return True, "通过质量门禁"
 
@@ -214,10 +240,14 @@ def process_prediction(
     upper: float,
     lower: float,
     current_price: float,
-    symbol: str
+    symbol: str,
+    quality_gate: Optional[Mapping[str, Any]] = None,
 ) -> Tuple[float, float, float, bool, str]:
     """
     处理预测值：标准化 + 质量门禁
+    
+    Args:
+        quality_gate: config['prediction_quality']，可选。
     
     Returns:
         Tuple: (标准化上轨, 标准化下轨, 标准化当前价, 是否通过, 消息)
@@ -229,7 +259,7 @@ def process_prediction(
         
         # 2. 质量门禁
         passed, msg = validate_prediction_quality(
-            norm_upper, norm_lower, norm_current, symbol
+            norm_upper, norm_lower, norm_current, symbol, quality_gate=quality_gate
         )
         
         return norm_upper, norm_lower, norm_current, passed, msg

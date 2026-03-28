@@ -63,6 +63,23 @@ realtime_full_fetch_cache:
   # 缺省：开启；TTL 秒数建议 30-60，平衡实时性与成本
   enabled: true
   ttl_seconds: 45
+
+# 预测落库质量门禁（src/prediction_normalizer.validate_prediction_quality）
+prediction_quality:
+  min_range_pct: 0.5
+  max_range_pct: 10.0
+  band_low_factor: 0.95
+  band_high_factor: 1.05
+  expected_low_margin: 0.8
+  expected_high_margin: 1.2
+
+# 周报与异常检测（scripts/prediction_metrics_weekly.py）
+prediction_monitoring:
+  rolling_days: 20
+  baseline_rolling_days: 20
+  min_samples_for_alert: 8
+  hit_rate_drop_alert_pp: 25.0
+
 signal_params:
   # 原有参数（保留兼容）
   rsi_oversold: 40

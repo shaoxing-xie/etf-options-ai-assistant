@@ -15,6 +15,8 @@
 | `intraday_analysis.yaml` | 工作日 9–15 点每 15 分钟 | 日内：分钟/期权/Greeks、指标、波动、区间、信号、风控、告警 |
 | `after_close_analysis_enhanced.yaml` | 工作日 15:30 | **唯一**盘后工作流：实时行情、盘后分析、历史波动率、信号、效果记录、日报（已替代原精简版 `after_close_analysis.yaml`） |
 | `prediction_verification.yaml` | 工作日 15:35 | 收盘后对照 parquet 校验 `prediction_records`，写 `verified` / `actual_range`，可选 `--report`；与 `src/prediction_recorder` 标准化配套 |
+| （脚本）`scripts/prediction_metrics_weekly.py` | 按需 / 例：周五 18:05 | 滚动命中率按 `(symbol, method)` 对比近两窗，`prediction_monitoring` 配置相对基线下滑告警 |
+| （脚本）`scripts/prediction_fusion_experiment.py` | 仅手动 | 多模型区间融合离线试验；契约见 `docs/research/prediction_fusion_contract.md` |
 | `signal_generation.yaml` | 工作日 9–15 点每 30 分钟 | 读 **ETF 日线缓存** + 指标/波动/区间/信号/风控/告警 |
 | `signal_generation_on_demand.yaml` | `schedule: null`（仅手动） | 按需信号：实时 ETF、指标、信号、风控、仓位、告警 |
 | `etf_510300_intraday_monitor.yaml` | 工作日 9–15 点每 5 分钟（错开采集） | **仅读本地缓存** 510300/000300 分钟线；建议级提醒支持 **call/put 双向同发（研究级）**，阈值与日线过滤见 `config.yaml` |

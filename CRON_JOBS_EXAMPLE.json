@@ -47,6 +47,15 @@
       "channel": "main"
     },
     {
+      "id": "prediction-weekly-metrics",
+      "name": "预测命中周报（滚动对比+相对基线告警）",
+      "description": "周五 18:05：python scripts/prediction_metrics_weekly.py；读 config prediction_monitoring",
+      "schedule": "5 18 * * 5",
+      "enabled": false,
+      "message": "在仓库根执行：python scripts/prediction_metrics_weekly.py（可选 --end-date YYYYMMDD）。输出 data/verification_reports/weekly_metrics_*.md；告警为「较自身前窗下降≥hit_rate_drop_alert_pp」，非全局50%。",
+      "channel": "main"
+    },
+    {
       "id": "prediction-verification",
       "name": "预测记录收盘验证",
       "description": "工作日 15:35：对照行情缓存填充 verified / actual_range（默认验证当日 JSON 内全部标的）",

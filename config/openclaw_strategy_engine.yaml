@@ -47,3 +47,9 @@ prediction_verification:
   workflow_yaml: "workflows/prediction_verification.yaml"
   script: "scripts/verify_predictions.py"
   note: "Agent 若汇报「预测已验证」，须能指向上述脚本 RAW 或 verification_reports 产物路径。"
+
+prediction_monitoring:
+  weekly_script: "scripts/prediction_metrics_weekly.py"
+  fusion_contract: "docs/research/prediction_fusion_contract.md"
+  fusion_experiment_script: "scripts/prediction_fusion_experiment.py"
+  note: "质量门禁阈值见 config.yaml prediction_quality；周报见 prediction_monitoring；融合仅离线试验。"

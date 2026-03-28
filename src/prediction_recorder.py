@@ -20,7 +20,11 @@ PREDICTION_RECORDS_DIR = Path("data/prediction_records")
 PREDICTION_DB_PATH = PREDICTION_RECORDS_DIR / "prediction_records.db"
 
 
-def _apply_prediction_normalization(symbol: str, prediction: Dict[str, Any]) -> Dict[str, Any]:
+def _apply_prediction_normalization(
+    symbol: str,
+    prediction: Dict[str, Any],
+    quality_gate: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
     """
     对可识别标的的 upper/lower/current_price 做单位统一与质量门禁标记。
     未识别标的或非数值输入时原样返回（不附加 normalization）。
@@ -39,7 +43,7 @@ def _apply_prediction_normalization(symbol: str, prediction: Dict[str, Any]) -> 
         return out
 
     try:
-        nu, nl, nc, passed, msg = process_prediction(ru, rl, rc, symbol)
+        nu, nl, nc, passed, msg = process_prediction(ru, rl, rc, symbol, quality_gate=quality_gate)
     except Exception as e:
         logger.warning("预测标准化异常 symbol=%s: %s", symbol, e)
         out["normalization"] = {
@@ -112,7 +116,12 @@ def record_prediction(
         # 确保目录存在
         PREDICTION_RECORDS_DIR.mkdir(parents=True, exist_ok=True)
 
-        pred_payload = _apply_prediction_normalization(symbol, dict(prediction))
+        qgate: Optional[Dict[str, Any]] = None
+        if config and isinstance(config.get("prediction_quality"), dict):
+            qgate = config["prediction_quality"]
+        pred_payload = _apply_prediction_normalization(
+            symbol, dict(prediction), quality_gate=qgate
+        )
         pred_payload.setdefault("method", prediction.get("method", "未知"))
         if pred_payload.get("confidence") is None:
             pred_payload["confidence"] = prediction.get("confidence", 0.5)
