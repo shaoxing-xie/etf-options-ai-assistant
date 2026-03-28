@@ -736,65 +736,53 @@ TOP_ACTIONS=
 
 ---
 
-**示例 J：诊断 / 优化「某类分析报告」输出（通用两阶段；实例：etf 开盘行情分析）**
+**示例 J：诊断 / 优化「某类分析报告」输出（同会话连续两拍；实例：etf 开盘行情分析）**
 
-适用：**任意**定时或按需任务——只要交付物是**可读的分析/研报类长文本**（盘前、盘中、盘后、专题等），你都可通过同一套路先做「证据化诊断 + 综合网上方法论」，**经本人确认**后再进入「只改允许路径内的文档/模板」或人工改工作流。
+适用：**任意**交付物为**可读分析/研报类长文本**的任务。默认套路：**拍 A** = 证据化诊断 + 网上对标 + 优化建议（不写仓库）；**拍 B** = 你在**同一会话**里**简短确认**后，立即实跑「允许路径内的文档/模板」并走 **`ai-evolve/report-*` PR**。两拍由**同一编排逻辑**串起来，**不必**新开线程、也**不必**重贴下文长模板；机器侧约定见 **`config/evolution_invariants.yaml` → `user_facing.chained_report_diagnosis_to_doc_pr`**。
 
-**通用占位（下次换任务时只改花括号内）**
+**通用占位（换任务时改花括号）**
 
 | 占位符 | 含义 | 本例填写 |
 |--------|------|----------|
-| `{TASK_LABEL}` | 任务显示名（钉钉/Cron/自述） | `etf：开盘行情分析` |
-| `{TASK_ANCHOR}` | 仓库内锚点：工作流文件名、相关文档路径、或 Agent 说明 | 如 `workflows/before_open_analysis.yaml`（若与现网一致）；不知则可写「待 Builder 在 repo 内检索 before_open / opening」 |
-| `{PAIN_SUMMARY}` | 你对当前报告的不满意点 | 如：「章节千篇一律 / 缺风险情景 / 与昨收数据衔接弱 / 太长或太短」 |
+| `{TASK_LABEL}` | 任务显示名 | `etf：开盘行情分析` |
+| `{TASK_ANCHOR}` | 工作流/文档/关键词锚点 | 如 `workflows/before_open_analysis.yaml` 或「Builder 自搜 before_open / opening」 |
+| `{PAIN_SUMMARY}` | 不满意点 / 目标 | 如：更全面隔夜与全球、有引领、可预测当日热点等 |
+| `{TARGET_DOC}` | 拍 B 要改的文档（拍 A 结束后可再定） | 如 `docs/research/xxx.md` |
 
-**阶段一 — 诊断 + 网上对标 + 优化建议（默认不写仓库、不建 PR）**
-
-```text
-@机器人 etf_main
-
-任务：报告输出诊断（三 Skill 干跑）— {TASK_LABEL}。
-关联锚点：{TASK_ANCHOR}；痛点：{PAIN_SUMMARY}。
-
-【编排】sessions_spawn 或等价：Builder → Reviewer → Evolver；须 read config/evolution_invariants.yaml、evolver_scope、execution_contract。
-
-【Builder】四段证据；[RAW_OUTPUT] 须含：
-- [LOCAL_EVIDENCE]：**优先由 Builder 自行查找并 read 近期报告正文**（用户本条消息可不粘贴全文）：
-  1) 按 `{TASK_LABEL}` / `{TASK_ANCHOR}` 在仓库内 **rg** `before_open`、`opening_market`、`opening_analysis`、工作流 `structured_message` 等，锁定产出链路与目录约定（例：`config.yaml` 中 `before_open_dir`、`opening_market` 对应的数据路径，常为 `data/trend_analysis/before_open`、`data/trend_analysis/opening` 或同类；以你 read 到的实际配置为准）。
-  2) **exec ls -la**（或等价）浏览上述目录及 `data/**` 下与趋势/开盘相关的最新 `*.md` / `*.txt` / `*.json`，**至少 read 最近 1～2 份**带时间戳或日期的文件，把可读段落摘入 RAW（附文件路径与修改时间）。
-  3) 若报告只存在于 OpenClaw 侧：在允许的前提下 **检索** `~/.openclaw/cron/runs`、会话/网关日志、或 `memory/**` 中近期与 `{TASK_LABEL}` 相关的输出片段（路径写进 EVIDENCE_REF）。
-  4) 补充 read `docs/research/**`、`docs/openclaw/**` 中与该任务相关的模板或说明（allowed_paths）。
-  5) **仅在 1)～3) 均无法取得任何报告片段时**，在 TOP_ACTIONS 写明已搜索的路径，并请用户粘贴或指明日期的**单次**补样；不得虚构报告内容。
-- [EXTERNAL_REFS]：至少一次 web 检索，主题与「同类报告怎么写」相关（例：盘前策略简报结构、ETF 晨会要素、风险披露清单）；每条标题 + https:// + 一句话可挪用点；外部仅作假设与表述升级。
-
-【Reviewer】对照 dual_evidence；评价：结构、数据衔接、可复核性、风险与合规表述；本阶段 AUTOFIX_ALLOWED=false，PR_CREATED=false。
-
-【Evolver】ERROR_CLASS 可归 REPORT_STRUCTURE_GAP / DOC_GAP；CHECKLIST_UPDATE、PROMPT_PATCH 给出可复制的改进条目。
-
-最后只输出 8 行键值：ORCH_STATUS … TOP_ACTIONS。（本阶段 EVIDENCE_REF 须含本地锚点 + https://；本地锚点含「报告文件路径或日志路径」）
-
-（**可选**：若你已在外部另有成稿，仍可追加粘贴一段作为交叉核对，非必填。）
-```
-
-**阶段二 — 经你确认后，再改文档/模板（允许路径内自动 PR）**
-
-仅在你在钉钉**明确回复**「同意按阶段一的第 … 条建议落地」或「同意实跑 checklist 演化」后，再发下一轮（可新开线程引用阶段一的 `TOP_ACTIONS`）：
+**一拍汇总模板（可整段发一次；也可拆成口语 + 本段）**
 
 ```text
 @机器人 etf_main
 
-任务：workflows/research_checklist_evolution_on_demand.yaml 实跑（若只想先要草案可改「干跑」）。
-target_doc=<你在阶段一确认的文档，如 docs/research/xxx.md 或 docs/openclaw/xxx.md>
-gap_summary=将阶段一建议收敛为：①…②…；（可选）对齐 [EXTERNAL_REFS] 中某某链接的表述层级。
+任务：报告输出 — **同会话连续两拍**。
+拍 A：三 Skill 诊断 + 网上对标 + 优化建议，**不写仓库、不建 PR**（AUTOFIX_ALLOWED=false，PR_CREATED=false）。
+拍 B：**仅当**我在**本群下一条**用口语确认实跑后，你立即接着做 `research_checklist_evolution_on_demand` 实跑，
+改 `{TARGET_DOC}`（若首轮未定 doc，拍 A 的 TOP_ACTIONS 里写明建议路径，我确认时可一并指定），
+gap_summary 收敛自拍 A 的 CHECKLIST_UPDATE / PROMPT_PATCH；须 TEAM_OK + RISK=LOW + allowed_paths + **ai-evolve/report-*** + PR_REF。
 
-须满足 TEAM_OK + RISK=LOW + AUTOFIX_ALLOWED=true + 仅 allowed_paths；分支 ai-evolve/report-*；最后 8 行键值。
+—— 拍 A 的取证要求（与旧「阶段一」相同）——
+关联：{TASK_LABEL}；锚点：{TASK_ANCHOR}；痛点：{PAIN_SUMMARY}。
+read evolution_invariants、evolver_scope、execution_contract；Builder→Reviewer→Evolver。
+[LOCAL_EVIDENCE]：自检索 data/**、config 目录约定、cron runs、memory；至少 read 最近 1～2 份报告文件；[EXTERNAL_REFS] 含 https://。
+拍 A 结束前：人话摘要 + **8 行键值**；并**单行**提示我下一条可回：「确认阶段二」或「确认实跑，doc=…」。
+
+（可选：外部成稿粘贴，非必填。）
 ```
+
+**第二拍 — 你只发短确认（同一会话，不重贴模板）**
+
+```text
+确认阶段二。doc=docs/research/xxx.md（或：按你上轮 TOP_ACTIONS 里建议的路径实跑）
+```
+
+Agent 应**接着上文诊断**执行拍 B，再给出**新一轮** 8 行键值（可含 `PR_CREATED=true` 与 `PR_REF`）。若模型仍在对话内，**须自载上一轮**的 `TOP_ACTIONS` / `EVIDENCE_REF`，勿虚构 gap_summary。
 
 **边界说明（避免期望错位）**
 
 - **允许自动 PR 的**通常是：`docs/research/**`、研究向 `docs/openclaw/**`、以及 `evolver_scope.allowed_paths` 内与**文案/Checklist/指标说明**相关的调整。  
-- **工作流 YAML、采集、通知、脚本**等若在 `denied_paths` 或不在 allow-list：阶段一仍可诊断与给出**建议 diff**；实跑自动改仓库须**人工**另提 PR，或先调整 `evolver_scope`（本方案不默认扩权）。  
-- 与 **示例 I** 区分：**示例 I** 侧重「复盘某次 OpenClaw 输出与 8 行键值是否一致」；**示例 J** 侧重「报告正文由 Builder **自检索** `data/**` / 配置指向目录 / OpenClaw 运行痕迹为主 + 双轨证据 + 网上对标 → 确认后再落文档」。
+- **工作流 YAML、采集、通知、脚本**等若在 `denied_paths`：拍 A 仍可诊断 + **建议 diff**；拍 B 自动改仓库须**人工**另 PR 或扩 `evolver_scope`。  
+- 与 **示例 I** 区分：**示例 I** 复盘键值与聊天输出；**示例 J** 以**自检索报告正文** + 双轨 + 网上对标为主，**确认后同会话落地文档**。  
+- **只做诊断、不要拍 B**：首条消息写明「仅拍 A、不要等我确认实跑」即可；或你始终不回复「确认阶段二」，Agent 不得擅自拍 B。
 
 ---
 

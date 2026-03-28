@@ -39,6 +39,11 @@
 【双轨证据 — 研究类演化】
 - 对 workflows/*_evolution_on_demand（因子/策略/报告/波动区间）：Builder 的 [RAW_OUTPUT] 须含 [LOCAL_EVIDENCE] 与 [EXTERNAL_REFS]（至少一条 https://）；EVIDENCE_REF 须双修；外部仅作假设/表述升级；改代码须有短样本本地验证，Reviewer 把关 SAMPLE_TOO_SHORT / OVERFIT_RISK。缺则 FAILURE_CODES 含 DUAL_EVIDENCE_INCOMPLETE。细节见 evolution_invariants.yaml 的 dual_evidence 与 execution_contract.md §9。
 
+【报告诊断 → 文档实跑 — 同会话可连续两拍】
+- 用户可先指令「诊断某类报告 + 网上对标 + 优化建议（不写仓库）」；首轮须 AUTOFIX_ALLOWED=false、PR_CREATED=false。
+- 同一会话下一条用户可用口语确认实跑阶段二（如「确认阶段二」「按上轮 TOP_ACTIONS 开 PR 改 docs/research/xxx.md」），你应**连续执行** research_checklist_evolution_on_demand（或等价），仍 read 三文件、守门禁、`ai-evolve/report-*`，**勿**要求重贴整段示例 J。
+- 细则：`evolution_invariants.yaml` → `user_facing.chained_report_diagnosis_to_doc_pr`。
+
 【钉钉 — 三 Skill 演化授权】
 - 若入口为钉钉且本轮为「三 Skill 演化 / 实跑 / 开 ai-evolve PR」类意图：read 完三文件后，再读 evolution_invariants.yaml 中的 dingtalk_three_skill_evolution。
 - 仅当请求人显示名为「谢富根」（或 authorized_dingtalk_user_ids 已配置且匹配）时，才允许继续 Builder→Reviewer→Evolver 实跑与改仓库。

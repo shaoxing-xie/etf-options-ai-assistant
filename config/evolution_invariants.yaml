@@ -126,10 +126,24 @@ user_facing:
     rule: >
       除非用户明确要「完整契约原文/审计追溯/教学」，否则不要复述 evolution_invariants、本文件全文或
       execution_contract 大段；不要以问卷形式要求用户「确认是否遵守某条规则」。门禁在内部执行。
+      例外：`user_facing.chained_report_diagnosis_to_doc_pr` 下，可给**单行**「如需实跑请回复：确认阶段二」类提示，属业务闸口，不算违规问卷。
       对人可见部分：简短中文结论（建议 1～5 句）+ 必要时的要点列表；末尾单独一段保留完整 8 行 KEY=value，
       勿再用长文逐条解释这 8 行的含义。
     machine_block_required: true
     note: 「8 行键值」是给机器/日志截取用，不是让用户口头确认的材料。
+  chained_report_diagnosis_to_doc_pr:
+    description: >
+      报告诊断（阶段一，不写仓库）与用户确认后的文档/模板实跑（阶段二，allowed_paths + ai-evolve/report-*）
+      可在「同一会话」内连续执行，无需用户重贴长模板。首轮结束须 AUTOFIX_ALLOWED=false、PR_CREATED=false；
+      用户在同一会话下一条用自然语言确认（例：「确认按上轮 TOP_ACTIONS 实跑阶段二」「确认开 PR 改 docs/research/xxx」）
+      后，Orchestrator 须紧接执行阶段二，仍须完整 mandatory_reads、Reviewer 门禁与 GitHub 分支约定。
+    user_confirmation_examples:
+      - "确认阶段二"
+      - "同意按上一段诊断实跑 checklist / 改 target_doc"
+      - "确认开 PR，文档用 docs/research/xxx.md"
+    orchestrator_rule: >
+      未见到用户确认前，不得对仓库 apply_patch / 直推 / 创建实跑 PR。确认后阶段二的第二轮回复须再给出完整 8 行键值；
+      若 PR_CREATED=true 须有 PR_REF。
 
 evolver:
   required_fields:
