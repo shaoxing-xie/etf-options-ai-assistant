@@ -736,49 +736,35 @@ TOP_ACTIONS=
 
 ---
 
-**示例 J：诊断 / 优化「某类分析报告」输出（同会话连续两拍；实例：etf 开盘行情分析）**
-
-适用：**任意**交付物为**可读分析/研报类长文本**的任务。默认套路：**拍 A** = 证据化诊断 + 网上对标 + 优化建议（不写仓库）；**拍 B** = 你在**同一会话**里**简短确认**后，立即实跑「允许路径内的文档/模板」并走 **`ai-evolve/report-*` PR**。两拍由**同一编排逻辑**串起来，**不必**新开线程、也**不必**重贴下文长模板；机器侧约定见 **`config/evolution_invariants.yaml` → `user_facing.chained_report_diagnosis_to_doc_pr`**。
-
-**通用占位（换任务时改花括号）**
-
-| 占位符 | 含义 | 本例填写 |
-|--------|------|----------|
-| `{TASK_LABEL}` | 任务显示名 | `etf：开盘行情分析` |
-| `{TASK_ANCHOR}` | 工作流/文档/关键词锚点 | 如 `workflows/before_open_analysis.yaml` 或「Builder 自搜 before_open / opening」 |
-| `{PAIN_SUMMARY}` | 不满意点 / 目标 | 如：更全面隔夜与全球、有引领、可预测当日热点等 |
-| `{TARGET_DOC}` | 拍 B 要改的文档（拍 A 结束后可再定） | 如 `docs/research/xxx.md` |
-
-**一拍汇总模板（可整段发一次；也可拆成口语 + 本段）**
+**示例 J：分析报告诊断 → 确认后改文档（钉钉原文，复制即发）**
 
 ```text
 @机器人 etf_main
 
-任务：报告输出 — **同会话连续两拍**。
-拍 A：三 Skill 诊断 + 网上对标 + 优化建议，**不写仓库、不建 PR**（AUTOFIX_ALLOWED=false，PR_CREATED=false）。
-拍 B：**仅当**我在**本群下一条**用口语确认实跑后，你立即接着做 `research_checklist_evolution_on_demand` 实跑，
-改 `{TARGET_DOC}`（若首轮未定 doc，拍 A 的 TOP_ACTIONS 里写明建议路径，我确认时可一并指定），
-gap_summary 收敛自拍 A 的 CHECKLIST_UPDATE / PROMPT_PATCH；须 TEAM_OK + RISK=LOW + allowed_paths + **ai-evolve/report-*** + PR_REF。
-
-—— 拍 A 的取证要求（与旧「阶段一」相同）——
-关联：{TASK_LABEL}；锚点：{TASK_ANCHOR}；痛点：{PAIN_SUMMARY}。
-read evolution_invariants、evolver_scope、execution_contract；Builder→Reviewer→Evolver。
-[LOCAL_EVIDENCE]：自检索 data/**、config 目录约定、cron runs、memory；至少 read 最近 1～2 份报告文件；[EXTERNAL_REFS] 含 https://。
-拍 A 结束前：人话摘要 + **8 行键值**；并**单行**提示我下一条可回：「确认阶段二」或「确认实跑，doc=…」。
-
-（可选：外部成稿粘贴，非必填。）
+开盘行情分析我想升级成机构晨报那种水平：前一天 A 股、夜盘美股和全球财经要写全，要有引领性，最好能说清当天大盘大概怎么走、热点可能怎么换。你先自己把仓库里最近的开盘分析产物、定时任务日志翻一遍，再上网找几篇像样的盘前/晨报对着看，告诉我差在哪、怎么改。这一轮只出诊断和建议，不要动仓库、不要开 PR。说完用简短中文总结一下，最后附上你们约定的 8 行键值。我下一句会回「确认阶段二」让你再改文档。
 ```
-
-**第二拍 — 你只发短确认（同一会话，不重贴模板）**
 
 ```text
-确认阶段二。doc=docs/research/xxx.md（或：按你上轮 TOP_ACTIONS 里建议的路径实跑）
+@机器人 etf_main
+
+确认阶段二。请按你刚才的诊断，直接改 docs/openclaw/工作流参考手册.md，该提 PR 就按你们规范提。
 ```
 
-Agent 应**接着上文诊断**执行拍 B，再给出**新一轮** 8 行键值（可含 `PR_CREATED=true` 与 `PR_REF`）。若模型仍在对话内，**须自载上一轮**的 `TOP_ACTIONS` / `EVIDENCE_REF`，勿虚构 gap_summary。
+```text
+@机器人 etf_main
+
+盘后增强那条线也帮我看看：结论要能核对来源，风险单独一段。你先自己找最近产物和日志，再上网看优质收盘复盘怎么写，只诊断不改仓库，结尾简短总结 + 8 行键值。我要实跑时再 @ 你。
+```
+
+```text
+@机器人 etf_main
+
+确认阶段二。改 docs/research/factor_research_checklist.md，按你上条说的办。
+```
 
 **边界说明（避免期望错位）**
 
+- 换任务时：照上面四段，改掉任务描述和「确认阶段二」里的文件路径即可。  
 - **允许自动 PR 的**通常是：`docs/research/**`、研究向 `docs/openclaw/**`、以及 `evolver_scope.allowed_paths` 内与**文案/Checklist/指标说明**相关的调整。  
 - **工作流 YAML、采集、通知、脚本**等若在 `denied_paths`：拍 A 仍可诊断 + **建议 diff**；拍 B 自动改仓库须**人工**另 PR 或扩 `evolver_scope`。  
 - 与 **示例 I** 区分：**示例 I** 复盘键值与聊天输出；**示例 J** 以**自检索报告正文** + 双轨 + 网上对标为主，**确认后同会话落地文档**。  
