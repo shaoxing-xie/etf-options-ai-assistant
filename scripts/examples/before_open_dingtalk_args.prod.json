@@ -1,0 +1,34 @@
+{
+  "mode": "prod",
+  "report_data": {
+    "report_type": "before_open",
+    "analysis": {
+      "final_trend": "震荡",
+      "final_strength": 0.6,
+      "a50_change": null,
+      "hxc_change": null,
+      "overnight_overlay_degraded": true,
+      "opening_strategy": {
+        "direction": "观望",
+        "position_size": "低"
+      }
+    },
+    "policy_news": {
+      "items": [
+        {
+          "title": "测试要闻",
+          "url": "https://example.com"
+        }
+      ]
+    },
+    "capital_flow": {
+      "northbound": {
+        "status": "success",
+        "date": "2026-03-28",
+        "data": { "total_net": 10.5 },
+        "statistics": { "consecutive_days": 2 },
+        "signal": { "description": "测试描述" }
+      }
+    }
+  }
+}

@@ -1,42 +1,150 @@
-# 盘前分析工作流
-# 执行时间：工作日 9:00
-# 功能：盘前市场分析、全球指数、A50期货、开盘数据、趋势分析、波动率预测
+# 9:20 盘前机构晨报 — 契约全文见文末 structured_message（勿读 research.md）
+# 仓库内唯一盘前工作流 YAML（由原 before_open_analysis_enhanced 重命名合并）。
 
 name: before_open_analysis
-description: 盘前分析工作流，在交易日开盘前进行市场分析和策略准备
+description: 盘前机构晨报工作流（采集 + 分析 + 波动 + 日内区间 + 预测回顾 + 钉钉）
 
-schedule: "0 9 * * 1-5"  # 工作日 9:00（Cron格式：分钟 小时 日 月 星期）
+schedule: "20 9 * * 1-5"
+timezone: "Asia/Shanghai"
 
 steps:
-  - name: check_trading_status
-    tool: tool_check_trading_status
-    description: 检查交易状态，确认是否为交易日
-    
-  - name: fetch_global_indices
-    tool: tool_fetch_global_index_spot
-    description: 获取全球指数数据（美股、港股等）
-    
-  - name: fetch_a50_futures
-    tool: tool_fetch_a50_data
-    description: 获取A50期货数据
-    
   - name: fetch_index_opening
+    agent: data_collector_agent
     tool: tool_fetch_index_opening
-    description: 获取指数开盘数据
-    
-  - name: trend_analysis
+    description: 指数开盘数据（早市若有则近似）
+    params: {}
+    continue_on_failure: true
+
+  - name: fetch_global_index_spot
+    agent: data_collector_agent
+    tool: tool_fetch_global_index_spot
+    description: 全球指数
+    params: {}
+    continue_on_failure: true
+
+  - name: fetch_northbound
+    agent: data_collector_agent
+    tool: tool_fetch_northbound_flow
+    description: 北向资金
+    params:
+      lookback_days: 5
+    continue_on_failure: true
+
+  - name: fetch_policy_news
+    agent: data_collector_agent
+    tool: tool_fetch_policy_news
+    description: 政策要闻 Tavily
+    params:
+      max_items: 5
+    continue_on_failure: true
+
+  - name: fetch_macro_commodities
+    agent: data_collector_agent
+    tool: tool_fetch_macro_commodities
+    description: 原油/黄金/铜
+    params: {}
+    continue_on_failure: true
+
+  - name: fetch_overnight_digest
+    agent: data_collector_agent
+    tool: tool_fetch_overnight_futures_digest
+    description: A50/金龙检索摘要
+    params: {}
+    continue_on_failure: true
+
+  - name: fetch_announcement_digest
+    agent: data_collector_agent
+    tool: tool_fetch_announcement_digest
+    description: 重大公告线索
+    params:
+      max_items: 5
+    continue_on_failure: true
+
+  - name: fetch_sector_heat
+    agent: data_collector_agent
+    tool: tool_sector_heat_score
+    description: 板块热度
+    params: {}
+    continue_on_failure: true
+
+  - name: compute_key_levels
+    agent: analysis_agent
+    tool: tool_compute_index_key_levels
+    description: 沪深300 关键位
+    params:
+      index_code: "000300"
+    continue_on_failure: true
+
+  - name: analyze_before_open
+    agent: analysis_agent
     tool: tool_analyze_before_open
-    description: 进行盘前趋势分析，预测当日市场走势
-    
-  - name: volatility_prediction
+    description: 盘前趋势分析
+    params: {}
+    depends_on: [fetch_global_index_spot]
+
+  - name: predict_volatility
+    agent: analysis_agent
     tool: tool_predict_volatility
-    description: 预测当日波动率区间
+    description: 波动率预测
     params:
       underlying: "510300"
-    
-  - name: send_analysis_result
+    depends_on: [analyze_before_open]
+
+  - name: predict_intraday_range
+    agent: analysis_agent
+    tool: tool_predict_intraday_range
+    description: 日内区间
+    params:
+      symbol: "510300"
+    depends_on: [predict_volatility]
+
+  - name: prediction_review
+    agent: analysis_agent
+    tool: tool_get_yesterday_prediction_review
+    description: 昨日预测粗检
+    params: {}
+    continue_on_failure: true
+
+  - name: send_daily_report
+    agent: notification_agent
     tool: tool_send_analysis_report
-    description: 发送盘前分析报告到钉钉群
-    depends_on: [trend_analysis, volatility_prediction]
+    description: 钉钉盘前晨报
     params:
       report_type: "before_open"
+    depends_on:
+      [
+        analyze_before_open,
+        predict_volatility,
+        predict_intraday_range,
+        prediction_review,
+      ]
+
+structured_message: |
+  【9:20 盘前机构晨报 — 执行说明（全文自包含，勿再读外部 research.md）】
+
+  **目标**：按下列顺序调用工具，合并为**一份** `report_data`，`report_type` **"before_open"**，再 `tool_send_analysis_report`（生产 `mode=prod`）。`tool_send_daily_report` 在本仓库映射同上。
+
+  **字段映射**
+  1) `tool_fetch_index_opening` → 并入 `market_overview` / 竞价相关摘要。
+  2) `tool_fetch_global_index_spot` → `report_data.market_overview.indices`。
+  3) `tool_fetch_northbound_flow` lookback_days=5 → `report_data.capital_flow.northbound`（正文标注 **T-1 / 昨日收盘后**）。
+  4) `tool_fetch_policy_news` → `report_data.policy_news`（`data`）。
+  5) `tool_fetch_macro_commodities` → `report_data.macro_snapshot`。
+  6) `tool_fetch_overnight_futures_digest` → `report_data.overnight_digest`。
+  7) `tool_fetch_announcement_digest` → `report_data.announcement_digest`。
+  8) `tool_sector_heat_score` → `report_data.sector_rotation`（可写 `summary` 文本）。
+  9) `tool_compute_index_key_levels` index_code=000300 → `report_data.key_levels`。
+  10) `tool_analyze_before_open` → `report_data.analysis`；汇总 `overall_trend`、`trend_strength` 与 `final_trend`/`final_strength`。
+  11) `tool_predict_volatility` underlying=510300 → `report_data.volatility`。
+  12) `tool_predict_intraday_range` symbol=510300 → `report_data.intraday_range`。
+  13) `tool_get_yesterday_prediction_review` → `report_data.prediction_review`（可选）。
+
+  **评估与可达性（内嵌口径）**
+  - 日内区间、波动预测须说明依赖的数据时点与是否可能滞后。
+  - 若 `overnight_overlay_degraded` 为 true：保留 `overnight_digest` 与全球指数，**禁止**用网页检索数字替代官方期货涨跌幅。
+
+  **钉钉**
+  - `OPENCLAW_DINGTALK_CUSTOM_ROBOT_WEBHOOK_URL` / `SECRET` 来自 `~/.openclaw/.env`；cron `delivery=none` 时须自行工具投递。
+  - 禁止 `tool_send_feishu_message` 扇出同文；禁止以 `test` 冒充已发生产。
+
+  **最后**：`tool_send_analysis_report(report_data=..., report_type="before_open")`。

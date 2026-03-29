@@ -909,23 +909,27 @@ def analyze_market_before_open(
             logger.info("未提供盘后分析结果，执行盘后分析...")
             after_close_report = analyze_daily_market_after_close(config)
         
-        # 2. 获取外盘数据
+        # 2. 获取外盘数据（change_pct 缺省不得用 0，否则误判阈值分支）
         a50_data = fetch_a50_futures_data()
-        a50_change = a50_data.get('change_pct', 0)
-        
+        a50_change = a50_data.get("change_pct")
+
         hxc_data = fetch_nasdaq_golden_dragon()
-        hxc_change = hxc_data.get('change_pct', 0)
-        
-        # 3. 综合判断（结合盘后+外盘）
+        hxc_change = hxc_data.get("change_pct")
+
+        # 3. 综合判断（结合盘后+外盘）；优先 A50，缺失时用金龙指数同阈值
         after_close_trend = after_close_report.get('overall_trend', '震荡')
         after_close_strength = after_close_report.get('trend_strength', 0.5)
-        
+
+        effective_overnight = a50_change
+        if effective_overnight is None and hxc_change is not None:
+            effective_overnight = hxc_change
+
         # 外盘影响分析
-        if a50_change is None:
-            logger.warning("A50期指数据获取失败，仅使用盘后分析结果")
+        if effective_overnight is None:
+            logger.warning("A50/金龙隔夜涨跌幅均不可用，仅使用盘后分析结果（可依赖工作流 tavily 摘要合并 report_data）")
             final_trend = after_close_trend
             final_strength = after_close_strength * 0.8
-        elif a50_change > 0.5:
+        elif effective_overnight > 0.5:
             if after_close_trend == "强势":
                 final_trend = "强势"
                 final_strength = 1.0
@@ -935,7 +939,7 @@ def analyze_market_before_open(
             else:
                 final_trend = "震荡"
                 final_strength = 0.6
-        elif a50_change < -0.5:
+        elif effective_overnight < -0.5:
             if after_close_trend == "弱势":
                 final_trend = "弱势"
                 final_strength = 1.0
@@ -948,15 +952,18 @@ def analyze_market_before_open(
         else:
             final_trend = after_close_trend
             final_strength = after_close_strength * 0.9
-        
+
         # 4. 生成开盘策略建议
         strategy_suggestion = generate_opening_strategy(final_trend, final_strength)
-        
+
+        overnight_overlay_degraded = effective_overnight is None
+
         result: Dict[str, Any] = {
             "date": today,
             "after_close_trend": after_close_trend,
             "a50_change": a50_change,
             "hxc_change": hxc_change,
+            "effective_overnight_change": effective_overnight,
             "a50_status": a50_data.get("status"),
             "hxc_status": hxc_data.get("status"),
             "a50_reason": a50_data.get("reason"),
@@ -964,6 +971,7 @@ def analyze_market_before_open(
             "final_trend": final_trend,
             "final_strength": final_strength,
             "opening_strategy": strategy_suggestion,
+            "overnight_overlay_degraded": overnight_overlay_degraded,
         }
 
         # 5. LLM增强（盘前分析）

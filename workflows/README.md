@@ -9,14 +9,18 @@
 
 | 文件 | 调度（摘要） | 用途 |
 |------|----------------|------|
-| `before_open_analysis.yaml` | 工作日 9:00 | 盘前：交易状态、全球指数、A50、开盘、盘前分析、波动率、日报 |
-| `before_open_analysis_enhanced.yaml` | 工作日 9:20 | 增强盘前：开盘数据、全球指数、分析、波动率、日内区间、日报 |
-| `opening_analysis.yaml` | 工作日 9:30 | 开盘：指数/ETF 实时、指标、日内区间、开盘分析、信号 |
+| `before_open_analysis.yaml` | 工作日 9:20 | **盘前机构晨报**（唯一盘前 YAML）；**`structured_message` 自包含**（不读 research.md） |
+| `opening_analysis.yaml` | 工作日 **9:28**（Cron 常见） | **开盘独立完整版**：含轻量开盘链路 + 机构晨报级采集 + 波动/预测回顾；`report_type=opening` |
 | `intraday_analysis.yaml` | 工作日 9–15 点每 15 分钟 | 日内：分钟/期权/Greeks、指标、波动、区间、信号、风控、告警 |
 | `after_close_analysis_enhanced.yaml` | 工作日 15:30 | **唯一**盘后工作流：实时行情、盘后分析、历史波动率、信号、效果记录、日报（已替代原精简版 `after_close_analysis.yaml`） |
+| `daily_market_report.yaml` | **工作日 17:30** | **每日市场分析报告**（钉钉）；与 `~/.openclaw/cron/jobs.json`「etf: 每日市场分析报告」对齐；章节对标见 [`docs/research/daily_market_report_web_benchmark.md`](../docs/research/daily_market_report_web_benchmark.md) |
+| `limitup_pullback_after_close.yaml` | 工作日 **15:40** | **涨停回马枪盘后**（`report_type=limitup_after_close_enhanced`，钉钉）；先读 `research.md` 第七节/第十节；与 [`plugins/analysis/scenario_analysis.py`](../plugins/analysis/scenario_analysis.py) 等工具配合 |
+| `etf_rotation_research_agent.yaml` | 工作日 **18:10** | **ETF 轮动研究（agentTurn）**：按 `research.md` + 钉钉；与下方 `etf_rotation_research.yaml`（工具管道版）**并存**，择一绑定 Cron |
+| `strategy_research_playback.yaml` | 周五 **19:10** | **策略研究与回放（agentTurn）**：按 `research.md` + 钉钉；与 `strategy_research.yaml`（工具管道版）**并存** |
 | `prediction_verification.yaml` | 工作日 15:35 | 收盘后对照 parquet 校验 `prediction_records`，写 `verified` / `actual_range`，可选 `--report`；与 `src/prediction_recorder` 标准化配套 |
 | （脚本）`scripts/prediction_metrics_weekly.py` | 按需 / 例：周五 18:05 | 滚动命中率按 `(symbol, method)` 对比近两窗，`prediction_monitoring` 配置相对基线下滑告警 |
 | （脚本）`scripts/prediction_fusion_experiment.py` | 仅手动 | 多模型区间融合离线试验；契约见 `docs/research/prediction_fusion_contract.md` |
+| `signal_risk_inspection.yaml` | 见 `~/.openclaw/cron/jobs.json`（如 9:15/9:45 等） | **宽基 ETF 巡检快报** + `tool_portfolio_risk_snapshot` 第四节；钉钉 `tool_send_dingtalk_message`；排查见 `docs/ops/cron_signal_inspection_triage.md` |
 | `signal_generation.yaml` | 工作日 9–15 点每 30 分钟 | 读 **ETF 日线缓存** + 指标/波动/区间/信号/风控/告警 |
 | `signal_generation_on_demand.yaml` | `schedule: null`（仅手动） | 按需信号：实时 ETF、指标、信号、风控、仓位、告警 |
 | `etf_510300_intraday_monitor.yaml` | 工作日 9–15 点每 5 分钟（错开采集） | **仅读本地缓存** 510300/000300 分钟线；建议级提醒支持 **call/put 双向同发（研究级）**，阈值与日线过滤见 `config.yaml` |
@@ -40,18 +44,19 @@
 ## 按场景分组
 
 **交易日主链路（采集 + 分析）**  
-`before_open_analysis` / `opening_analysis` / `intraday_analysis` / `after_close_analysis_enhanced` — 以 **`tool_fetch_*`** 拉行情为主（盘后仅保留增强版 YAML）。
+`before_open_analysis`（盘前） / `opening_analysis`（开盘） / `intraday_analysis` / `after_close_analysis_enhanced` — 以 **`tool_fetch_*`** 拉行情为主（盘后仅保留增强版 YAML）。
 
 **依赖「读缓存」的工作流**（底层见 `plugins/data_access` → `read_cache_data` / `tool_read_market_data`）  
 - `signal_generation.yaml`：`tool_read_etf_daily`  
 - `etf_510300_intraday_monitor.yaml`：`tool_read_etf_minute`、`tool_read_index_minute`  
 
 **增强 / 按需**  
-- `before_open_analysis_enhanced.yaml`：相对基础盘前步骤更多。  
+- `before_open_analysis.yaml`：**唯一**盘前工作流 YAML（`structured_message` 自包含；**不再有** `before_open_analysis_enhanced.yaml`，已移除）。  
 - `signal_generation_on_demand.yaml`：无定时，适合手动触发。
 
 **研究 / 策略运维**  
-- `etf_rotation_research`、`strategy_research`：研究输出 + 日报。  
+- `etf_rotation_research`、`strategy_research`：研究输出 + 日报（工具管道版）。  
+- `etf_rotation_research_agent`、`strategy_research_playback`：`research.md` 口径 + 钉钉长文（agentTurn 版，见上表）。  
 - `strategy_evaluation`、`strategy_weight_adjustment`：周期性评分与权重（YAML 内为 **结构化 `schedule`**，见下节）。
 
 **三 Skill 自动修复与兜底（新增）**

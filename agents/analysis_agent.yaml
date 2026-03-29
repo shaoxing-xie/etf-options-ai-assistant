@@ -20,6 +20,9 @@ agent:
     - tool_predict_volatility
     - tool_calculate_historical_volatility
     - tool_predict_intraday_range
+    - tool_compute_index_key_levels
+    - tool_record_before_open_prediction
+    - tool_get_yesterday_prediction_review
     
     # 信号生成
     - tool_generate_signals

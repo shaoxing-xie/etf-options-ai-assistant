@@ -338,6 +338,20 @@ result = tool_send_daily_report(
 如果你的钉钉机器人启用了「关键词安全校验」，但你没有显式传入 `keyword`：
 - 可把 `keyword` 写入 `~/.openclaw/workspaces/shared/alert_webhook.json`（tool 内部会尽量读取）
 
+### 盘前晨报钉钉自测（避免 shell 多行 JSON 损坏）
+
+1. **从文件读参数**（`tool_runner` 支持以 `@` 开头传入 JSON 路径）：
+   - `python3 tool_runner.py tool_send_analysis_report @scripts/examples/before_open_dingtalk_args.test.json`
+   - 真发：先确认 `~/.openclaw/.env` 中 Webhook / SEC / 关键词正确，再：
+   - `python3 tool_runner.py tool_send_analysis_report @scripts/examples/before_open_dingtalk_args.prod.json`
+2. **一键脚本**：`bash scripts/dingtalk_before_open_smoke.sh test` 或 `... prod`
+
+3. **信号+风控巡检（与 `tool_send_dingtalk_message` 一致）**：
+   - `bash scripts/dingtalk_signal_inspection_smoke.sh test` — dry-run
+   - `bash scripts/dingtalk_signal_inspection_smoke.sh prod` — 短文本真发，正文含「巡检」关键词占位；确认 `OPENCLAW_DINGTALK_CUSTOM_ROBOT_WEBHOOK_URL` / `SECRET` / `DINGTALK_KEYWORD` 与钉钉后台一致
+
+若出现 **310000**，说明加签密钥与钉钉机器人「SEC」不一致，需核对 `OPENCLAW_DINGTALK_CUSTOM_ROBOT_SECRET`。
+
 ## 依赖包
 
 - `requests`: HTTP 请求

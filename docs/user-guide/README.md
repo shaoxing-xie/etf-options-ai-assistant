@@ -12,6 +12,8 @@
   - `docs/architecture/strategy_engine_and_signal_fusion.md`：工具 `tool_strategy_engine`、Journal、与风控边界。  
   - 调度：仓库 `agents/analysis_agent.yaml` 的 **`strategy_fusion`**（交易时段 **每 30 分钟**）；OpenClaw 实操见 `docs/openclaw/工作流参考手册.md`「策略引擎与信号融合」、`config/openclaw_strategy_engine.yaml`。
 - **通知与日报**  
-  - 结合工具手册中的飞书工具以及相应工作流配置文档。
+  - 结合工具手册中的飞书/钉钉工具以及相应工作流配置文档；每日市场报告见 `workflows/daily_market_report.yaml` 与 `docs/research/daily_market_report_web_benchmark.md`。
+- **研究与长文（research.md 驱动）**  
+  - ETF 轮动 / 策略回放 agent 工作流：`workflows/etf_rotation_research_agent.yaml`、`workflows/strategy_research_playback.yaml`；涨停回马枪盘后：`workflows/limitup_pullback_after_close.yaml`（索引见 `workflows/README.md`）。
 
 在你已经完成 `docs/getting-started/` 中的快速开始后，建议从这里继续深入，逐步把工作流和信号/风控流程融入到自己的研究与盘中节奏中。

@@ -37,6 +37,7 @@
 ### 2. OpenClaw 插件：`plugins/`
 
 - `plugins/data_collection/`：数据采集插件
+  - `morning_brief_fetchers.py`：盘前晨报（政策、大宗、隔夜期货摘要、公告、行业要闻等，依赖 Tavily 时须配置密钥）。
   - `README.md`：OpenClaw 工具索引（标的物 → 数据域 → 周期）与 `TOOL_MAP` 对照。
   - `ROADMAP.md`：路线图、双层降级（多 Provider × 包内多路由）、附录 DTO/标的映射等。
   - `config/`：静态配置（如 `symbol_mapping.yaml`）。
@@ -52,9 +53,11 @@
   - `trend_analysis.py`：盘后/盘前/开盘趋势分析的插件封装。
   - `volatility_prediction.py`：波动率预测工具。
   - `intraday_range.py` / `historical_volatility.py` 等：日内区间、历史波动率分析。
+  - `key_levels.py` / `accuracy_tracker.py` / `overnight_calibration.py` / `scenario_analysis.py`：指数关键位、盘前预测落盘与回顾、隔夜校准、涨停情景结构化输出。
   - `etf_trend_tracking.py`：ETF-指数趋势一致性与趋势跟随信号。
   - `etf_position_manager.py` / `etf_risk_manager.py` / `risk_assessment.py`：仓位管理、止盈止损、整体风险评估。
   - `strategy_tracker.py` / `strategy_evaluator.py` / `strategy_weight_manager.py`：策略效果记录、评分与权重管理（`get_strategy_weights` 可优先读 `data/strategy_fusion_effective_weights.json`）。  
+- `plugins/risk/`：组合与机构向风控辅助（`tool_portfolio_risk_snapshot`、合规/止损线/压力测试占位等）；说明见 [`plugins/risk/README.md`](../plugins/risk/README.md)。
 - `plugins/strategy_engine/`：**策略引擎与信号融合**（`SignalCandidate`、Fusion v1/v1.1/v1.2、`tool_strategy_engine`）；说明见 [`plugins/strategy_engine/README.md`](../plugins/strategy_engine/README.md)。
 - `plugins/notification/`：通知类插件
   - `send_feishu_message.py`：飞书文本/卡片消息发送。
@@ -64,6 +67,7 @@
   - `read_cache_data.py`：统一从本地缓存读取指数/ETF/期权数据（支持 DataFrame / JSON）。
   - 其他 `README.md`：说明各数据访问工具的使用方式。
 - `plugins/utils/`：通用工具
+  - `env_loader.py`：`.env` 加载（供采集子模块与脚本在未经 Gateway 时注入环境变量）。
   - `trading_day.py`：交易日判断与节假日配置支持。
   - `logging_utils.py`：统一日志封装，兼容原系统日志配置。
 - `plugins/merged/`：合并工具

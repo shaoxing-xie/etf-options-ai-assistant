@@ -12,7 +12,8 @@
   - **策略引擎与信号融合**：工具 `tool_strategy_engine`；仓库定时 **`strategy_fusion`**（交易时段 **每 30 分钟**）；详见 `docs/architecture/strategy_engine_and_signal_fusion.md`、`config/openclaw_strategy_engine.yaml`、`workflows/strategy_fusion_routine.yaml`；本机 Cron 以 `~/.openclaw/cron/jobs.json` 为准。
   - `Strategy_Research_Loop.md`：策略研究闭环设计与相关工作流说明。
   - `ETF_Rotation_Research_Workflow.md`：ETF 轮动研究工作流的设计与调度建议。
-  - `信号与风控巡检工作流.md`：巡检工作流与风控检查流程。
+  - `信号与风控巡检工作流.md`：巡检工作流与风控检查流程（落地 YAML：`workflows/signal_risk_inspection.yaml`；组合快照 `tool_portfolio_risk_snapshot`；排错：`docs/ops/cron_signal_inspection_triage.md`）。
+  - `workflows/README.md`：工作流一览（含 `daily_market_report`、`limitup_pullback_after_close`、`etf_rotation_research_agent`、`strategy_research_playback` 等与 `research.md` 口径相关的定时定义）。
   - `宽基ETF巡检快报-日内波动区间收敛说明.md`：缓存口径收敛、字段含义与验证方式。
   - `OpenClaw与Cursor协作代码维护执行通道CMEC实施方案.md`：OpenClaw 与 Cursor 的代码维护执行通道（CMEC）共享目录协作实施方案文档。
   - **三 Skill 驱动 ETF 研究自动进化（总纲，已实施并验证）**：`三Skill驱动ETF研究自动进化实施方案.md` — 说明如何把 **GitHub + agent-team-orchestration + capability-evolver** 收敛为「研究友好、采集保守」的自动进化流水线；机器可读边界见 `config/evolution_invariants.yaml`、`config/evolver_scope.yaml`。

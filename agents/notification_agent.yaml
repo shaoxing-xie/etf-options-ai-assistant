@@ -14,6 +14,7 @@ role: |
 capabilities:
   - tool_send_signal_alert
   - tool_send_daily_report
+  - tool_send_analysis_report
   - tool_send_risk_alert
   - tool_send_feishu_message
 
@@ -21,6 +22,7 @@ tools:
   - tool_send_feishu_message
   - tool_send_signal_alert
   - tool_send_daily_report
+  - tool_send_analysis_report
   - tool_send_risk_alert
   
   # 通知agent可能需要读取数据来生成报告

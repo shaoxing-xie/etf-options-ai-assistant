@@ -1,0 +1,38 @@
+# 涨停回马枪：盘后流程 — OpenClaw cron 契约（agentTurn）
+
+name: limitup_pullback_after_close
+description: 涨停回马枪盘后（research.md 第七节+第十节 + 钉钉，机构化增强）
+schedule: "40 15 * * 1-5"
+timezone: "Asia/Shanghai"
+
+structured_message: |
+  执行涨停回马枪盘后流程（机构化增强版）。先读 /home/xie/.openclaw/prompts/research.md 第七节「涨停回马枪」及第十节「涨停回马枪盘后」：五技能、三段式时间线、口径A/B；再按下列顺序采集并写入 `report_data`，最后 `tool_send_analysis_report`（或 `tool_send_daily_report`），参数含 `report_type=limitup_after_close_enhanced`、`split_markdown_sections=true`。
+
+  【0）外盘与大盘（亚欧优先，A股约15:00已收）】
+  - `tool_fetch_global_index_spot`，显式 `index_codes`：`^N225,^HSI,^KS11,^GDAXI,^STOXX50E,^FTSE,^GSPC,^IXIC,^DJI`（亚洲与欧股早盘代表+昨夜美股背景；单项失败跳过并注明）。
+  - `tool_fetch_macro_commodities`；`tool_fetch_a50_data`（期货补充，非外盘唯一叙事）。
+  - API 缺口：`tavily_search` 或 `tool_fetch_overnight_futures_digest`，正文标注 numeric_unverified。
+  - `tool_compute_index_key_levels`，`index_code=000300`。
+  - `tool_fetch_etf_realtime`，`etf_code=510300`（失败则 `tool_fetch_etf_historical` 取最近一日收盘供回顾）。
+
+  【1）要闻与公告】`tool_fetch_policy_news`；`tool_fetch_industry_news_brief`；`tool_fetch_announcement_digest`。
+  - **行业要闻（Agent 精选）**：`tool_fetch_industry_news_brief` 返回的是 Tavily 检索 + 规则过滤（`_industry_noise` 硬规则/软规则、时效、相关性等）后的候选，**不在工具内再做 LLM 精选**。你在成稿前须对返回的 `items`（及可选 `brief_answer`）自行**精选**：按本报告需要删减、排序、合并表述，去掉与盘后复盘无关、明显旧稿或标题党，再写入 `report_data.industry_news` 与「要闻与公告」正文。
+
+  【2）资金】`tool_fetch_northbound_flow`，`lookback_days=5`。
+
+  【3）校准与情景】`tool_overnight_calibration`；`tool_build_limitup_scenarios`（传入 global/macro/a50/northbound/calibration/key_levels 等已得字段；禁止编造未返回数值）。
+
+  【4）回顾】`tool_get_yesterday_prediction_review`（若已有510300收盘则 `underlying_close=`）；`tool_record_limitup_watch_outcome`（龙头观察落盘，见 research.md）。
+
+  【5）第七节五技能】1) `tool_dragon_tiger_list`；2) `tool_limit_up_daily_flow`，`write_json=true`，`write_report=true`，`send_feishu=false`；3) `tool_capital_flow`（龙头代码，`lookback_days=3`）；4) 北向已在【2】；5) 可选 `tool_quantitative_screening`。
+
+  【6）终稿结构】`report_data` 含 market_overview、policy_news、industry_news、announcements、northbound、key_levels、overnight_calibration、scenarios、prediction_review、limitup_record、涨停龙虎与流向等；`llm_summary` 建议二级标题顺序：## 外盘与大宗 → ## 要闻与公告 → ## 资金与关键位 → ## 隔夜校准与情景 → ## 昨日预判回顾 → ## 涨停回马枪专题。
+
+  【钉钉投递（硬约束）】
+  - cron delivery=none：须工具推送钉钉自定义机器人；`tool_send_analysis_report(..., mode=prod, split_markdown_sections=true)`。
+  - 环境变量：OPENCLAW_DINGTALK_CUSTOM_ROBOT_WEBHOOK_URL、OPENCLAW_DINGTALK_CUSTOM_ROBOT_SECRET（进程加载 ~/.openclaw/.env）。
+  - **禁止**：`tool_send_feishu_message` 对同一份长文扇出。
+  - 群备注：cid0dqwAYvqu94+QEoODXL1uw==（以 webhook 为准）。
+  - 失败勿令任务 error；输出末尾记原因与重试建议（可重试 1 次）。
+
+  【通知要求】delivery.mode 保持 none。

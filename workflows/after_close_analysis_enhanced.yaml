@@ -73,8 +73,22 @@ steps:
       # 将从analyze_after_close步骤和generate_signals步骤的输出中构建
     depends_on: [analyze_after_close, generate_signals]
 
-# 结构化消息模板（用于OpenClaw cron任务）
+# OpenClaw cron（etf_analysis_agent）：research.md 第十节「盘后完整分析」+ 钉钉（与 jobs.json 对齐）
 structured_message: |
+  执行盘后完整分析流程（增强版）。先读取并严格遵循 /home/xie/.openclaw/prompts/research.md 第一至六节及第十节「盘后完整分析」步骤与口径，按序执行并输出完整 Markdown 报告。
+
+  【钉钉投递（硬约束）】
+  - cron delivery=none：禁止依赖调度器；须用工具推到钉钉自定义机器人。
+  - **优先** tool_send_daily_report（report_data 与 /home/xie/.openclaw/prompts/research.md 第十节一致；本工作区映射为钉钉 webhook，非飞书）。若不便拼 report_data，则用 tool_send_dingtalk_message：message=完整 Markdown 正文，title 可选，**mode 必须为 prod**（禁止用 test 当作已发送）。
+  - 环境变量：OPENCLAW_DINGTALK_CUSTOM_ROBOT_WEBHOOK_URL、OPENCLAW_DINGTALK_CUSTOM_ROBOT_SECRET（OpenClaw/Gateway 进程须加载 ~/.openclaw/.env）。
+  - **禁止**：tool_send_feishu_message、飞书 webhook 扇出同一份长文、message 工具做多通道/飞书投递（避免与「仅钉钉」冲突）。
+  - 群备注：cid0dqwAYvqu94+QEoODXL1uw==（实际落群以 webhook 绑定为准）。
+  - 失败勿令任务以 error 结束；在输出末尾记录原因与重试建议（可重试 1 次）。
+
+  【通知要求】delivery.mode 保持 none。
+
+# 历史：工具链逐步执行（测试模式）说明，供对照；定时任务以 structured_message 为准
+structured_message_legacy_test: |
   执行盘后完整分析流程（测试模式）。请按以下步骤顺序执行：
   
   步骤1：使用 data_collector_agent 的 tool_fetch_etf_realtime 工具获取ETF实时数据，参数：etf_code="510300,510050,510500", mode="test"。如果失败，继续执行下一步。

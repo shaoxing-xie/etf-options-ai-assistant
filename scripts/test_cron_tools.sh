@@ -134,6 +134,14 @@ default_args_for_tool() {
     tool_limit_up_daily_flow) echo '{"write_json":true,"write_report":true,"send_feishu":false}' ;;
     tool_capital_flow) echo '{"symbols":"600000,000001,300750","lookback_days":3}' ;;
     tool_fetch_northbound_flow) echo '{"lookback_days":5}' ;;
+    tool_fetch_policy_news) echo '{"disable_network":true}' ;;
+    tool_fetch_macro_commodities) echo '{"disable_network":true}' ;;
+    tool_fetch_overnight_futures_digest) echo '{"disable_network":true}' ;;
+    tool_conditional_overnight_futures_digest) echo '{"overnight_overlay_degraded":true,"disable_network":true}' ;;
+    tool_fetch_announcement_digest) echo '{"disable_network":true}' ;;
+    tool_compute_index_key_levels) echo '{"index_code":"000300"}' ;;
+    tool_record_before_open_prediction) echo '{"report_data":{"report_type":"before_open"}}' ;;
+    tool_get_yesterday_prediction_review) echo '{}' ;;
 
     # 通知类：默认会跳过（除非 --include-send）
     tool_send_daily_report) echo '{"message":"[TEST] skip sending by default"}' ;;

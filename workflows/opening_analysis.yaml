@@ -1,39 +1,191 @@
-# 开盘分析工作流
-# 执行时间：工作日 9:30（开盘后30分钟）
-# 功能：开盘实时分析、技术指标、日内波动区间预测、开盘信号生成
+# 9:28 开盘独立完整版工作流（集合竞价后、与盘前晨报同结构）
+# 三线参照：盘前 before_open_analysis.yaml（9:20）/ 本文件（9:28 开盘）
+# 执行时间：工作日 9:28（与 config.yaml opening_analysis.scheduler 及常见 Cron 对齐）
+# 功能：复用增强盘前全部机构级采集 + 指数/ETF 实时 + 技术 + 波动 + 日内区间 + 开盘分析 + 信号；report_type=opening
+#
+# 已覆盖历史轻量开盘链路（实时/ETF/技术/日内区间/开盘分析/信号）；本文件另含机构晨报采集、predict_volatility、prediction_review。
+# 钉钉正文见 send_daily_report：opening 与 before_open 共用章节顺序（独立完整版，非盘前增量）。
 
 name: opening_analysis
-description: 开盘分析工作流，在开盘后30分钟内进行实时分析和信号生成
+description: 9:28 开盘机构晨报级独立完整版（采集对齐增强盘前 + 开盘分析 + 信号）
 
-schedule: "30 9 * * 1-5"  # 工作日 9:30（Cron格式：分钟 小时 日 月 星期）
+schedule: "28 9 * * 1-5"
+timezone: "Asia/Shanghai"
 
 steps:
-  - name: fetch_realtime_data
+  - name: fetch_index_opening
+    agent: data_collector_agent
+    tool: tool_fetch_index_opening
+    description: 指数开盘/竞价相关数据
+    params: {}
+    continue_on_failure: true
+
+  - name: fetch_global_index_spot
+    agent: data_collector_agent
+    tool: tool_fetch_global_index_spot
+    description: 全球指数（道指/纳指/标普/恒指等）
+    params: {}
+    continue_on_failure: true
+
+  - name: fetch_northbound
+    agent: data_collector_agent
+    tool: tool_fetch_northbound_flow
+    description: 北向资金（多为 T-1 收盘后口径）
+    params:
+      lookback_days: 5
+    continue_on_failure: true
+
+  - name: fetch_policy_news
+    agent: data_collector_agent
+    tool: tool_fetch_policy_news
+    description: 政策要闻 Tavily
+    params:
+      max_items: 5
+    continue_on_failure: true
+
+  - name: fetch_macro_commodities
+    agent: data_collector_agent
+    tool: tool_fetch_macro_commodities
+    description: 原油/黄金/铜
+    params: {}
+    continue_on_failure: true
+
+  - name: fetch_overnight_digest
+    agent: data_collector_agent
+    tool: tool_fetch_overnight_futures_digest
+    description: A50/金龙检索摘要（主源失败时兜底）
+    params: {}
+    continue_on_failure: true
+
+  - name: fetch_announcement_digest
+    agent: data_collector_agent
+    tool: tool_fetch_announcement_digest
+    description: 重大公告线索
+    params:
+      max_items: 5
+    continue_on_failure: true
+
+  - name: fetch_sector_heat
+    agent: data_collector_agent
+    tool: tool_sector_heat_score
+    description: 板块热度
+    params: {}
+    continue_on_failure: true
+
+  - name: compute_key_levels
+    agent: analysis_agent
+    tool: tool_compute_index_key_levels
+    description: 沪深300 关键位
+    params:
+      index_code: "000300"
+    continue_on_failure: true
+
+  - name: fetch_index_realtime
+    agent: data_collector_agent
     tool: tool_fetch_index_realtime
-    description: 获取实时指数数据
-    
+    description: 主要指数实时（开盘时段）
+    params:
+      index_code: "000300,000016,000001,399006"
+    continue_on_failure: true
+
   - name: fetch_etf_realtime
+    agent: data_collector_agent
     tool: tool_fetch_etf_realtime
-    description: 获取ETF实时数据
-    
+    description: 宽基 ETF 实时
+    params:
+      etf_code: "510300,510050,510500"
+    continue_on_failure: true
+
   - name: technical_indicators
+    agent: analysis_agent
     tool: tool_calculate_technical_indicators
-    description: 计算技术指标（MA、MACD、RSI、布林带等）
+    description: 技术指标（日线缓存）
     params:
       symbol: "510300"
       data_type: "etf_daily"
-    
-  - name: intraday_range_prediction
+    continue_on_failure: true
+
+  - name: analyze_opening_market
+    agent: analysis_agent
+    tool: tool_analyze_opening_market
+    description: 开盘市场分析（moment=opening）
+    params: {}
+    depends_on: [fetch_global_index_spot]
+
+  - name: predict_volatility
+    agent: analysis_agent
+    tool: tool_predict_volatility
+    description: 波动率预测
+    params:
+      underlying: "510300"
+    depends_on: [analyze_opening_market]
+
+  - name: predict_intraday_range
+    agent: analysis_agent
     tool: tool_predict_intraday_range
-    description: 预测日内波动区间
+    description: 日内区间
     params:
       symbol: "510300"
-    
-  - name: opening_analysis
-    tool: tool_analyze_opening_market
-    description: 执行开盘市场分析
-    
+    depends_on: [predict_volatility]
+
+  - name: prediction_review
+    agent: analysis_agent
+    tool: tool_get_yesterday_prediction_review
+    description: 昨日预测粗检（可选）
+    params: {}
+    continue_on_failure: true
+
   - name: generate_opening_signals
+    agent: analysis_agent
     tool: tool_generate_signals
-    description: 生成开盘交易信号
-    depends_on: [technical_indicators, intraday_range_prediction, opening_analysis]
+    description: 生成开盘交易信号 → 写入 report_data.signals
+    params:
+      underlying: "510300"
+    depends_on: [technical_indicators, predict_intraday_range, analyze_opening_market]
+    continue_on_failure: true
+
+  - name: send_opening_report
+    agent: notification_agent
+    tool: tool_send_analysis_report
+    description: 发送开盘独立完整版晨报（钉钉）
+    params:
+      report_type: "opening"
+    depends_on:
+      [
+        analyze_opening_market,
+        predict_volatility,
+        predict_intraday_range,
+        prediction_review,
+        generate_opening_signals,
+      ]
+
+structured_message: |
+  【自包含】勿读外部 research.md；以本 YAML 步骤与下文字段为准。
+  （本工作流含历史「轻量开盘」链路：实时/ETF/技术/日内区间/开盘分析/信号，并增加机构晨报级采集与波动/预测回顾。）
+
+  执行 9:28 开盘独立完整版机构晨报。须合并全部工具 JSON 为**一份** report_data，调用 tool_send_analysis_report（report_type="opening"，mode 按环境）。
+
+  **采集（与增强盘前一致）**
+  1) tool_fetch_index_opening → 并入 market_overview / 或 analysis 中竞价快照字段
+  2) tool_fetch_global_index_spot → report_data.market_overview.indices
+  3) tool_fetch_northbound_flow lookback_days=5 → report_data.capital_flow.northbound
+  4) tool_fetch_policy_news → report_data.policy_news（使用返回 data）
+  5) tool_fetch_macro_commodities → report_data.macro_snapshot
+  6) tool_fetch_overnight_futures_digest → report_data.overnight_digest
+  7) tool_fetch_announcement_digest → report_data.announcement_digest
+  8) tool_sector_heat_score → report_data.sector_rotation
+  9) tool_compute_index_key_levels index_code=000300 → report_data.key_levels
+
+  **开盘专用**
+  10) tool_fetch_index_realtime / tool_fetch_etf_realtime → 可摘要写入 market_overview 或单独 realtime 摘要，勿与 indices 冲突
+  11) tool_calculate_technical_indicators symbol=510300 → 如需可写入 report_data 扩展字段
+  12) tool_analyze_opening_market → report_data.analysis（主分析；含 A50/金龙等若工具有返回）
+  13) tool_predict_volatility underlying=510300 → report_data.volatility
+  14) tool_predict_intraday_range symbol=510300 → report_data.intraday_range
+  15) tool_get_yesterday_prediction_review → report_data.prediction_review（可选）
+  16) tool_generate_signals → report_data.signals（列表；供「信号（开盘）」一节）
+
+  17) 汇总 overall_trend / trend_strength 与 analysis 内字段一致
+  18) tool_send_analysis_report(report_data=..., report_type="opening")
+
+  若 analysis 中 overnight_overlay_degraded 为 true，须保留 overnight_digest 与全球指数；勿用检索数字替代期货精确涨跌幅。

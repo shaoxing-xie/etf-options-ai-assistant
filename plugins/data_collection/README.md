@@ -52,6 +52,7 @@ ETF ↔ 指数 ↔ 期权标的的静态对照见 [config/symbol_mapping.yaml](.
 
 | 场景 | 主要入口 |
 |------|----------|
+| 盘前晨报 / 政策·大宗·公告 / 行业要闻（Tavily） | `morning_brief_fetchers.py`（`tool_fetch_policy_news`、`tool_fetch_macro_commodities`、`tool_fetch_overnight_futures_digest`、`tool_fetch_announcement_digest`、`tool_fetch_industry_news_brief` 等） |
 | 指数 / ETF / 期权 / A50 期货行情 | `index/`、`etf/`、`option/`、`futures/`；或根目录 `fetch_*_data.py` 简版工具 |
 | 个股实时、日线、分钟、聚合拉取 | `stock/`、`financials.py` |
 | 涨停、板块热度、盘后 JSON / 报告 | `limit_up/`、`sector.py` |
@@ -94,6 +95,7 @@ data_collection/
 │   ├── fetch_limit_up.py       # 涨停池
 │   ├── sector_heat.py            # 板块热度评分
 │   └── daily_report.py           # 盘后 JSON / Markdown 报告
+├── morning_brief_fetchers.py    # 盘前晨报：政策/大宗/隔夜期货摘要/公告/行业要闻（依赖 TAVILY_API_KEY，见模块 docstring）
 ├── tick/
 │   └── fetch_tick.py             # Tick + 质量报告（依赖 tick_client）
 └── utils/

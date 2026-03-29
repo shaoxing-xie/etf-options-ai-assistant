@@ -1,0 +1,6 @@
+# 复制为 compliance_rules.yaml；持仓明细需另提供时再接入校验
+schema_version: 1
+max_single_name_pct: 10.0
+max_sector_pct: 30.0
+blacklist_symbols: []
+notes: "机构合规占位：与真实账户/行业数据对接前仅作规则展示"

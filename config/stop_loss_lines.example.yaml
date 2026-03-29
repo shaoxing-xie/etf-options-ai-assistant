@@ -1,0 +1,9 @@
+# 复制为 stop_loss_lines.yaml；成本价为研究/模拟口径
+schema_version: 1
+positions:
+  - symbol: "510300"
+    cost: 4.70
+    stop_loss_pct: 8.0
+  - symbol: "510500"
+    cost: 6.20
+    stop_loss_pct: 8.0

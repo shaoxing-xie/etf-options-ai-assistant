@@ -34,6 +34,9 @@ cd /path/to/etf-options-ai-assistant
 | `cleanup_unused_openclaw_agents.py` | 根据 `openclaw.json` 中已注册 agent，清理未引用的 agent 定义目录（**先备份**） | `python3 scripts/cleanup_unused_openclaw_agents.py` |
 | `check_cron_token_usage.py` | 汇总 `~/.openclaw/cron/runs/*.jsonl` 中近期 `finished` 的 token 用量 | `python3 scripts/check_cron_token_usage.py --days 7 --top 20` |
 | `test_cron_tools.sh` | 从 `jobs.json` 抽取 `tool_*` 并对 `tool_runner.py` 冒烟（默认跳过 `tool_send_*`） | `./scripts/test_cron_tools.sh --help` |
+| `dingtalk_before_open_smoke.sh` | 盘前晨报钉钉冒烟：`tool_send_analysis_report` + JSON 示例（`test` / `prod`） | `bash scripts/dingtalk_before_open_smoke.sh test` |
+| `dingtalk_signal_inspection_smoke.sh` | 信号+风控巡检钉钉冒烟（与 `tool_send_dingtalk_message` 一致） | `bash scripts/dingtalk_signal_inspection_smoke.sh test` |
+| `triage_cron_signal_inspection.py` | 解析 Cron 运行日志，辅助巡检任务分流（配合 `docs/ops/cron_signal_inspection_triage.md`） | `python3 scripts/triage_cron_signal_inspection.py --help` |
 | `check_third_party_skills.sh` | 检查推荐/可选 OpenClaw 第三方技能是否已安装 | `./scripts/check_third_party_skills.sh` |
 
 ---
@@ -74,5 +77,9 @@ cd /path/to/etf-options-ai-assistant
 
 - **`scripts/`**：运维、发布、预警、配置生成；可带环境变量与机器路径。
 - **`tests/`**：见 `tests/README.md`（`pytest` 冒烟 + `tests/integration/` 长耗时集成脚本）。
+
+## 示例参数（JSON）
+
+`scripts/examples/` 下提供钉钉等工具的 **JSON 参数模板**（含 `before_open_dingtalk_args.*.json`、`signal_inspection_dingtalk_smoke.*.json`），供 `python3 tool_runner.py tool_xxx @scripts/examples/....json` 调用，避免 shell 多行 JSON 损坏。
 
 更完整的项目结构说明见：`docs/PROJECT_LAYOUT.md`。

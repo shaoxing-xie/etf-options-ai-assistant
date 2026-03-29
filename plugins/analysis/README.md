@@ -533,6 +533,21 @@ result = tool_assess_risk(
 
 ---
 
+## 补充模块（关键位、预测落盘、隔夜校准、涨停情景）
+
+与上表 `tool_*` 并列注册于 `tool_runner.py` / `config/tools_manifest.yaml`，多用于盘前晨报、盘后长文与涨停回马枪专题。
+
+| 模块 | `tool_*` | 说明 |
+|------|-----------|------|
+| `key_levels.py` | `tool_compute_index_key_levels` | 沪深300 等指数日线近似支撑/压力（MA20、近窗高低、整数关口）。 |
+| `accuracy_tracker.py` | `tool_record_before_open_prediction`、`tool_get_yesterday_prediction_review`、`tool_record_limitup_watch_outcome` | 盘前预测写入 `data/prediction_records/`、上一交易日回顾、涨停观察落盘。 |
+| `overnight_calibration.py` | `tool_overnight_calibration` | 隔夜信息校准摘要，供 `research.md` 驱动报告与 `limitup_pullback_after_close` 等流程引用。 |
+| `scenario_analysis.py` | `tool_build_limitup_scenarios` | 涨停回马枪多情景结构化输出（输入字段来自已采集数据，禁止编造未返回数值）。 |
+
+组合级 VaR/回撤、合规与压力测试占位见 **`plugins/risk/README.md`**（`tool_portfolio_risk_snapshot` 等）。
+
+---
+
 ## 数据流
 
 ```

@@ -1,0 +1,20 @@
+# 策略研究与回放评估（研究级）— OpenClaw cron 契约（agentTurn）
+# 与 workflows/strategy_research.yaml（工具管道版）并存；本文件为 research.md 驱动口径。
+
+name: strategy_research_playback
+description: 策略研究与回放评估（research.md + 钉钉；研究级）
+schedule: "10 19 * * 5"
+timezone: "Asia/Shanghai"
+
+structured_message: |
+  执行策略研究与回放评估。先读取并严格遵循 /home/xie/.openclaw/prompts/research.md 第一至六节及第十节「策略研究与回放」步骤与口径，按序执行并输出完整 Markdown 报告（研究级+免责声明）。
+
+  【钉钉投递（硬约束）】
+  - cron delivery=none：禁止依赖调度器；须用工具推到钉钉自定义机器人。
+  - **优先** tool_send_daily_report（report_data 与 /home/xie/.openclaw/prompts/research.md 第十节一致；本工作区映射为钉钉 webhook，非飞书）。若不便拼 report_data，则用 tool_send_dingtalk_message：message=完整 Markdown 正文，title 可选，**mode 必须为 prod**（禁止用 test 当作已发送）。
+  - 环境变量：OPENCLAW_DINGTALK_CUSTOM_ROBOT_WEBHOOK_URL、OPENCLAW_DINGTALK_CUSTOM_ROBOT_SECRET（OpenClaw/Gateway 进程须加载 ~/.openclaw/.env）。
+  - **禁止**：tool_send_feishu_message、飞书 webhook 扇出同一份长文、message 工具做多通道/飞书投递（避免与「仅钉钉」冲突）。
+  - 群备注：cid0dqwAYvqu94+QEoODXL1uw==（实际落群以 webhook 绑定为准）。
+  - 失败勿令任务以 error 结束；在输出末尾记录原因与重试建议（可重试 1 次）。
+
+  【通知要求】delivery.mode 保持 none。

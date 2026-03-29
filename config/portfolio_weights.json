@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "comment": "复制为 portfolio_weights.json 后按实际调整；权重和宜为 1.0",
+  "weights": {
+    "510300": 0.34,
+    "510500": 0.33,
+    "159915": 0.33
+  },
+  "current_position_pct": 45.0,
+  "cash_pct": 55.0
+}

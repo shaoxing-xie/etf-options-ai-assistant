@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, Optional
 
-from .send_dingtalk_message import tool_send_dingtalk_message
+from .send_dingtalk_message import _split_markdown_for_dingtalk, tool_send_dingtalk_message
 from .send_daily_report import _format_daily_report
 
 
@@ -21,6 +21,8 @@ def tool_send_analysis_report(
     secret: Optional[str] = None,
     keyword: Optional[str] = None,
     mode: str = "prod",
+    split_markdown_sections: bool = False,
+    max_chars_per_message: int = 1750,
     **kwargs: Any,
 ) -> Dict[str, Any]:
     """
@@ -38,15 +40,22 @@ def tool_send_analysis_report(
     title, structured_message = _format_daily_report(report_data=report_data, report_date=report_date)
 
     if str(mode).lower() != "prod":
+        parts = (
+            _split_markdown_for_dingtalk(structured_message, max_chars_per_message)
+            if split_markdown_sections
+            else [structured_message]
+        )
         return {
             "success": True,
             "skipped": True,
             "message": f"dry-run: {title}",
             "data": {
                 "title": title,
-                # 钉钉自定义机器人正文长度限制较严格，保守截断
                 "preview": structured_message[:1800],
                 "report_type": report_data.get("report_type"),
+                "split_markdown_sections": split_markdown_sections,
+                "multipart_parts": len(parts),
+                "multipart_previews": [p[:320] for p in parts[:5]],
             },
         }
 
@@ -58,5 +67,7 @@ def tool_send_analysis_report(
         secret=secret,
         keyword=keyword,
         mode=mode,
+        split_markdown_sections=split_markdown_sections,
+        max_chars_per_message=max_chars_per_message,
     )
 

@@ -1,0 +1,42 @@
+# 每日市场分析报告 — OpenClaw cron 契约（agentTurn）
+# 执行须结合 /home/xie/.openclaw/prompts/research.md 第一至六节及第十节「每日市场分析报告」
+# 调度与 ~/.openclaw/cron/jobs.json「etf: 每日市场分析报告」对齐：工作日 17:30
+
+name: daily_market_report
+description: 每日市场分析报告（research.md + 钉钉投递约束；章节对标见 docs/research/daily_market_report_web_benchmark.md）
+schedule: "30 17 * * 1-5"
+timezone: "Asia/Shanghai"
+
+structured_message: |
+  发送每日市场分析报告。先读取并严格遵循 /home/xie/.openclaw/prompts/research.md 第一至六节及第十节「每日市场分析报告」步骤与口径，按序执行并输出完整 Markdown 报告。
+
+  【章节对标（非早盘）】
+  - 正文结构应对齐「网上交易日收盘复盘 / 当日市场综述」类公开报告（大盘与量能、板块、资金、要闻、外围、展望等），详见仓库 docs/research/daily_market_report_web_benchmark.md；勿与 9:15 早盘采集或 9:28 开盘晨报产物混为一谈。
+
+  【核心步骤（必选）】
+  1. 可选：从 config/symbols.json 补采 priority=low 标的（按需 *minute/*historical）。
+  2. tool_analyze_after_close → 将返回的 data（含可能存在的 daily_report_overlay：北向/全球指数/关键位等）并入 report_data。
+  3. tool_send_daily_report（report_type=daily，含 llm_summary；report_data 尽量包含 analysis、market_overview、northbound、news_brief、key_levels 等字段，便于对齐网上复盘结构）。
+
+  【可选增强（逐项失败则记警告并继续，勿令任务 error）】
+  在发送前可按需调用（与 research.md 涨停盘后/开盘增强同源工具，仅取与「收盘复盘」相关的子集）：
+  - tool_fetch_global_index_spot（index_codes 建议含亚欧与美股代表，如 ^N225,^HSI,^KS11,^GDAXI,^STOXX50E,^FTSE,^GSPC,^IXIC,^DJI）
+  - tool_fetch_macro_commodities
+  - tool_fetch_northbound_flow(lookback_days=5)
+  - tool_fetch_policy_news、tool_fetch_industry_news_brief、tool_fetch_announcement_digest（max_items 自控）
+  - tool_compute_index_key_levels(index_code=000300)
+  - tool_sector_heat_score
+  将成功结果写入 report_data 对应字段，便于终稿分节；与 tool_analyze_after_close 已含字段去重合并。
+
+  【钉钉投递（硬约束）】
+  - cron delivery=none：禁止依赖调度器；须用工具推到钉钉自定义机器人。
+  - **优先** tool_send_daily_report（report_data 与 /home/xie/.openclaw/prompts/research.md 第十节一致；本工作区映射为钉钉 webhook，非飞书）。若不便拼 report_data，则用 tool_send_dingtalk_message：message=完整 Markdown 正文，title 可选，**mode 必须为 prod**（禁止用 test 当作已发送）。
+  - 环境变量：OPENCLAW_DINGTALK_CUSTOM_ROBOT_WEBHOOK_URL、OPENCLAW_DINGTALK_CUSTOM_ROBOT_SECRET（OpenClaw/Gateway 进程须加载 ~/.openclaw/.env）。
+  - **禁止**：tool_send_feishu_message、飞书 webhook 扇出同一份长文、message 工具做多通道/飞书投递（避免与「仅钉钉」冲突）。
+  - 群备注：cid0dqwAYvqu94+QEoODXL1uw==（实际落群以 webhook 绑定为准）。
+  - 失败勿令任务以 error 结束；在输出末尾记录原因与重试建议（可重试 1 次）。
+
+  【通知要求】delivery.mode 保持 none。
+
+  【Evolver 边界】
+  - 分析逻辑与编排演化：plugins/analysis/**、docs/**、workflows/*.yaml；勿将 plugins/notification/send_daily_report.py 的展示层改动作为自动演化默认项（见 docs/openclaw/三Skill驱动ETF研究自动进化实施方案.md denied_paths）。

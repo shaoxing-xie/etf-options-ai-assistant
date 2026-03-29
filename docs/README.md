@@ -128,13 +128,23 @@
 
 - `docs/ops/常见问题库.md`
 - `docs/ops/RISK_CONTROL_AND_ROLLBACK.md`
+- `docs/ops/cron_signal_inspection_triage.md`（信号+风控巡检 Cron 排错）
 - 以及其他 ops 相关文档（如交易日跳过参数清单等）
 
 索引见：`docs/ops/README.md`。
 
 ---
 
-## 8. 历史归档（Legacy）
+## 8. 研究与报告口径（Research）
+
+- 索引：`docs/research/README.md`
+- 每日市场报告章节基准：`docs/research/daily_market_report_web_benchmark.md`（配合 `workflows/daily_market_report.yaml`）
+- 开盘晨报路线图：`docs/research/opening_morning_brief_roadmap.md`
+- 预测融合试验：`docs/research/prediction_fusion_contract.md`
+
+---
+
+## 9. 历史归档（Legacy）
 
 `docs/legacy/` 下保留了历史设计文档、迁移方案与测试报告，仅供参考：
 

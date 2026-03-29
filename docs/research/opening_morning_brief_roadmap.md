@@ -7,7 +7,7 @@
 | 说明 | 路径 |
 |------|------|
 | 盘前/趋势落盘（配置键 `before_open_dir`） | `data/trend_analysis/before_open/`（**不是** `workflows/data/...`） |
-| 工作流定义 | `workflows/before_open_analysis.yaml`、`workflows/before_open_analysis_enhanced.yaml`、`workflows/opening_analysis.yaml` |
+| 工作流定义 | `before_open_analysis.yaml`（9:20 盘前）、`opening_analysis.yaml`（9:28 开盘独立完整版）；契约均在各 YAML 的 `structured_message`，不依赖 research.md |
 | Cron / 执行痕迹 | `~/.openclaw/cron/jobs.json`、`~/.openclaw/cron/runs/*.jsonl` |
 | 本规范与路线图 | `docs/research/**`（**allowed_paths**，可经 `ai-evolve/report-*` PR 修改） |
 
@@ -48,7 +48,16 @@
 
 若已发「确认阶段二」仍无 PR：检查 Agent 是否挂载 **写仓库 + gh**、`etf_main` 是否贴齐 **预检片段**、钉钉路由是否到 **`etf_main`**；模型须输出 **`AUTOFIX_BLOCKED_ENV`** 而非伪成功。若本轮为 **详案自改** 模式，勿按「必须有 PR」排查。
 
-## 7. 修订记录
+## 7. `report_data` 字段契约（实施落地）
+
+与 `docs/openclaw/工作流参考手册.md`「盘前三线与 report_data」一致，核心键：
+
+`market_overview`，`policy_news`，`capital_flow.northbound`，`macro_snapshot`，`overnight_digest`，`announcement_digest`，`sector_rotation`，`key_levels`，`analysis`，`volatility`，`intraday_range`，`prediction_review`，`report_type`，`overall_trend`，`trend_strength`。
+
+失败降级：工具失败时仍保留章节标题；检索类必须带链接，不将摘要中的数字当作精确行情。
+
+## 8. 修订记录
 
 - 2026-03-28：初稿，承接钉钉诊断与仓库 evolver_scope 边界。
 - 2026-03-28：§6 闭环说明。
+- 2026-03-29：§7 report_data 契约与工具清单（policy_news、macro、overnight_digest、key_levels、accuracy 等）。

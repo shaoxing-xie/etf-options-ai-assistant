@@ -13,6 +13,7 @@
 - `RISK_CONTROL_AND_ROLLBACK.md`  
   - 当引入新的 Agent / 插件 / 工作流后，如何在出现问题时进行风险控制与快速回滚。
 - 其他运维相关清单与指南（例如需要添加交易日判断跳过参数的工具清单等）。
+- [`cron_signal_inspection_triage.md`](cron_signal_inspection_triage.md) — **宽基 ETF 信号+风控巡检**（`workflows/signal_risk_inspection.yaml`）Cron 失败时的排查与分流（含钉钉 `310000` 加签、工具冒烟脚本索引）。
 
 在出现异常行为（如工具持续失败、Cron 任务执行异常、Gateway 无法启动等）时，建议优先查阅本目录文档。
 

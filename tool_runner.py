@@ -22,6 +22,23 @@ if plugins_dir.exists():
     sys.path.insert(0, str(plugins_dir))
 sys.path.insert(0, str(project_root))
 
+
+def _load_dotenv_for_tools() -> None:
+    """
+    与 OpenClaw Gateway 对齐：从项目根 .env 与 ~/.openclaw/.env 注入环境变量。
+    使用 plugins/utils/env_loader：无 python-dotenv 时仍可解析 KEY=VALUE。
+    override=False：已在 shell 中 export 的值优先。
+    """
+    try:
+        from utils.env_loader import load_env_file
+    except ImportError:
+        return
+    load_env_file(project_root / ".env", override=False)
+    load_env_file(Path.home() / ".openclaw" / ".env", override=False)
+
+
+_load_dotenv_for_tools()
+
 # 旧工具名 -> (新工具名, 注入参数) 用于兼容 cron/工作流
 ALIASES = {
     "tool_fetch_index_realtime": ("tool_fetch_index_data", {"data_type": "realtime"}),
@@ -308,6 +325,54 @@ TOOL_MAP: Dict[str, ToolSpec] = {
         module_path="plugins.data_collection.northbound",
         function_name="tool_fetch_northbound_flow",
     ),
+    "tool_fetch_policy_news": ToolSpec(
+        module_path="plugins.data_collection.morning_brief_fetchers",
+        function_name="tool_fetch_policy_news",
+    ),
+    "tool_fetch_macro_commodities": ToolSpec(
+        module_path="plugins.data_collection.morning_brief_fetchers",
+        function_name="tool_fetch_macro_commodities",
+    ),
+    "tool_fetch_overnight_futures_digest": ToolSpec(
+        module_path="plugins.data_collection.morning_brief_fetchers",
+        function_name="tool_fetch_overnight_futures_digest",
+    ),
+    "tool_conditional_overnight_futures_digest": ToolSpec(
+        module_path="plugins.data_collection.morning_brief_fetchers",
+        function_name="tool_conditional_overnight_futures_digest",
+    ),
+    "tool_fetch_announcement_digest": ToolSpec(
+        module_path="plugins.data_collection.morning_brief_fetchers",
+        function_name="tool_fetch_announcement_digest",
+    ),
+    "tool_fetch_industry_news_brief": ToolSpec(
+        module_path="plugins.data_collection.morning_brief_fetchers",
+        function_name="tool_fetch_industry_news_brief",
+    ),
+    "tool_overnight_calibration": ToolSpec(
+        module_path="plugins.analysis.overnight_calibration",
+        function_name="tool_overnight_calibration",
+    ),
+    "tool_build_limitup_scenarios": ToolSpec(
+        module_path="plugins.analysis.scenario_analysis",
+        function_name="tool_build_limitup_scenarios",
+    ),
+    "tool_compute_index_key_levels": ToolSpec(
+        module_path="plugins.analysis.key_levels",
+        function_name="tool_compute_index_key_levels",
+    ),
+    "tool_record_before_open_prediction": ToolSpec(
+        module_path="plugins.analysis.accuracy_tracker",
+        function_name="tool_record_before_open_prediction",
+    ),
+    "tool_get_yesterday_prediction_review": ToolSpec(
+        module_path="plugins.analysis.accuracy_tracker",
+        function_name="tool_get_yesterday_prediction_review",
+    ),
+    "tool_record_limitup_watch_outcome": ToolSpec(
+        module_path="plugins.analysis.accuracy_tracker",
+        function_name="tool_record_limitup_watch_outcome",
+    ),
     "tool_fetch_sector_data": ToolSpec(
         module_path="plugins.data_collection.sector",
         function_name="tool_fetch_sector_data",
@@ -329,16 +394,50 @@ TOOL_MAP: Dict[str, ToolSpec] = {
         module_path="backtest.limit_up_pullback",
         function_name="tool_backtest_limit_up_sensitivity",
     ),
+    # 组合风险（VaR / 回撤 / 仓位）
+    "tool_portfolio_risk_snapshot": ToolSpec(
+        module_path="risk.portfolio_risk_snapshot",
+        function_name="tool_portfolio_risk_snapshot",
+    ),
+    "tool_compliance_rules_check": ToolSpec(
+        module_path="risk.institutional_risk",
+        function_name="tool_compliance_rules_check",
+    ),
+    "tool_stop_loss_lines_check": ToolSpec(
+        module_path="risk.institutional_risk",
+        function_name="tool_stop_loss_lines_check",
+    ),
+    "tool_stress_test_linear_scenarios": ToolSpec(
+        module_path="risk.institutional_risk",
+        function_name="tool_stress_test_linear_scenarios",
+    ),
+    "tool_risk_attribution_stub": ToolSpec(
+        module_path="risk.institutional_risk",
+        function_name="tool_risk_attribution_stub",
+    ),
 }
 
 def main():
     if len(sys.argv) < 2:
-        print(json.dumps({"error": "缺少工具名称", "usage": "python3 tool_runner.py <tool_name> [args_json]"}))
+        print(
+            json.dumps(
+                {
+                    "error": "缺少工具名称",
+                    "usage": "python3 tool_runner.py <tool_name> [args_json|@path/to/args.json]",
+                }
+            )
+        )
         sys.exit(1)
-    
+
     tool_name = sys.argv[1]
     args_json = sys.argv[2] if len(sys.argv) > 2 else "{}"
-    
+    if isinstance(args_json, str) and args_json.startswith("@"):
+        arg_path = Path(args_json[1:]).expanduser()
+        if not arg_path.is_file():
+            print(json.dumps({"error": f"参数文件不存在: {arg_path}"}, ensure_ascii=False))
+            sys.exit(1)
+        args_json = arg_path.read_text(encoding="utf-8")
+
     # 解析参数
     try:
         args = json.loads(args_json) if args_json else {}

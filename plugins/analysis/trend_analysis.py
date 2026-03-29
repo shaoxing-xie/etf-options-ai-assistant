@@ -57,6 +57,50 @@ except ImportError as e:
     ORIGINAL_SYSTEM_AVAILABLE = False
     IMPORT_ERROR = str(e)
 
+
+def _attach_daily_report_overlay(analysis_result: Dict[str, Any]) -> None:
+    """
+    为每日市场报告附加结构化字段（北向、全球指数现货、沪深300关键位、板块热度）。
+    任一步失败则跳过，不抛异常。
+    """
+    overlay: Dict[str, Any] = {}
+    try:
+        from plugins.data_collection.northbound import tool_fetch_northbound_flow
+
+        nb = tool_fetch_northbound_flow(lookback_days=5)
+        if isinstance(nb, dict) and nb.get("status") == "success":
+            overlay["northbound"] = nb
+    except Exception:
+        pass
+    try:
+        from plugins.data_collection.index.fetch_global import tool_fetch_global_index_spot
+
+        codes = "^N225,^HSI,^KS11,^GDAXI,^STOXX50E,^FTSE,^GSPC,^IXIC,^DJI"
+        g = tool_fetch_global_index_spot(index_codes=codes)
+        if isinstance(g, dict) and g.get("success"):
+            overlay["global_index_spot"] = g
+    except Exception:
+        pass
+    try:
+        from plugins.analysis.key_levels import tool_compute_index_key_levels
+
+        kl = tool_compute_index_key_levels(index_code="000300")
+        if isinstance(kl, dict) and kl.get("success"):
+            overlay["key_levels_000300"] = kl
+    except Exception:
+        pass
+    try:
+        from plugins.data_collection.limit_up.sector_heat import tool_sector_heat_score
+
+        sh = tool_sector_heat_score()
+        if isinstance(sh, dict) and sh.get("success", True) and not sh.get("error"):
+            overlay["sector_heat"] = sh
+    except Exception:
+        pass
+    if overlay:
+        analysis_result["daily_report_overlay"] = overlay
+
+
 def trend_analysis(
     analysis_type: str = "after_close",  # "after_close", "before_open", "opening_market"
     api_base_url: str = "http://localhost:5000",
@@ -194,6 +238,9 @@ def trend_analysis(
                 'message': '分析函数返回 None',
                 'data': None
             }
+
+        if analysis_type == "after_close" and isinstance(analysis_result, dict):
+            _attach_daily_report_overlay(analysis_result)
         
         # ========== LLM 增强（使用原系统的 llm_enhancer）==========
         # 注意：原系统的分析函数内部可能已经调用了 LLM 增强

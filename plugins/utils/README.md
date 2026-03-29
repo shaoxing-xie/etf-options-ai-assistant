@@ -27,7 +27,24 @@
 - **请求上下文**：支持请求ID和工作流ID追踪
 - **工具调用日志**：自动记录工具调用和结果摘要
 
-### 4. 性能监控功能 (`performance_monitor.py`)
+### 4. 环境变量加载 (`env_loader.py`)
+
+在独立脚本或未经过 OpenClaw Gateway 时，将 `.env` 注入 `os.environ`：
+
+- **优先**使用 `python-dotenv` 的 `load_dotenv`；未安装时回退为极简 `KEY=VALUE` 行解析。  
+- 默认 **`override=False`**：已存在的环境变量不被覆盖（与常见 dotenv 行为一致）。  
+
+典型用法：数据采集子模块在读取 `TAVILY_API_KEY` 等密钥前，对项目根 `/.env` 与 `~/.openclaw/.env` 调用 `load_env_file`。
+
+```python
+from pathlib import Path
+from plugins.utils.env_loader import load_env_file
+
+load_env_file(Path("/path/to/repo/.env"), override=False)
+load_env_file(Path.home() / ".openclaw" / ".env", override=False)
+```
+
+### 5. 性能监控功能 (`performance_monitor.py`)
 
 提供工具执行时间统计和系统资源监控：
 

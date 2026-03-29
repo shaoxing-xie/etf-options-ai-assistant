@@ -60,6 +60,11 @@ agent:
     - tool_dragon_tiger_list
     - tool_capital_flow
     - tool_fetch_northbound_flow
+    - tool_fetch_policy_news
+    - tool_fetch_macro_commodities
+    - tool_fetch_overnight_futures_digest
+    - tool_conditional_overnight_futures_digest
+    - tool_fetch_announcement_digest
 
     # ---------- 数据访问（缓存读取，别名亦指向 tool_read_market_data） ----------
     - tool_read_index_daily

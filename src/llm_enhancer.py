@@ -102,6 +102,15 @@ def _build_prompts(
         # 回退：尽量保证不会因为 dumps 失败导致整体失败
         analysis_json = str(analysis_data)
 
+    # 盘前晨报：硬性约束叠加（与 Prompt_config 中 before_open 条目配合）
+    if analysis_type == "before_open":
+        system_prompt = (
+            system_prompt
+            + "\n\n【硬性规则】仅根据 JSON 中出现的字段撰写；禁止编造涨跌幅、资金净流入等未在 JSON 中出现的数值。"
+            "若「政策要闻/隔夜摘要」来自检索，须提示可能滞后且数值未经核验。"
+            "技术面若未提供关键位，不要编造点位。"
+        )
+
     # 为避免格式化冲突，这里仅替换约定占位符，其它花括号保持原样
     user_prompt = user_template.replace("{analysis_json}", analysis_json)
     if "{history_summaries}" in user_template:

@@ -1,0 +1,6 @@
+# 复制为 risk_thresholds.yaml 可选加载
+var_confidence: 0.95
+drawdown_warn_pct: 10.0
+drawdown_alert_pct: 15.0
+position_warn_pct: 80.0
+position_alert_pct: 90.0

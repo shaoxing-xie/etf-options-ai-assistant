@@ -236,8 +236,13 @@ bash install_plugin.sh
 - **运维与排错（Ops）**：  
   - `docs/ops/常见问题库.md`  
   - `docs/ops/RISK_CONTROL_AND_ROLLBACK.md`  
+  - `docs/ops/cron_signal_inspection_triage.md`（宽基 ETF 信号+风控巡检 Cron 排错）  
   - `docs/ops/需要添加交易日判断跳过参数的工具清单.md`  
   - 以及后续归档的钉钉 / 飞书排错文档
+
+- **研究与报告口径（Research）**：  
+  - `docs/research/README.md`  
+  - `docs/research/daily_market_report_web_benchmark.md`、`docs/research/opening_morning_brief_roadmap.md`
 
 - **历史归档（Legacy）**：  
   - `docs/legacy/` 下的设计草稿、测试报告与迁移方案，仅供参考。
@@ -258,8 +263,10 @@ etf-options-ai-assistant/
 ├── config/openclaw_strategy_engine.yaml  # OpenClaw 路由、策略融合与预测验证指针
 ├── config/evolution_invariants.yaml  # 三 Skill 演化不变量（机器可读）
 ├── config/evolver_scope.yaml         # 允许/禁止自动修改的路径边界
+├── config/portfolio_weights.json     # 组合权重（可选；配合 tool_portfolio_risk_snapshot）
+├── config/risk_thresholds.yaml         # 组合风控阈值（可选）
 ├── src/                 # 核心业务逻辑；含 prediction_recorder / prediction_normalizer
-├── plugins/             # OpenClaw 插件层（含 plugins/strategy_engine 策略融合）
+├── plugins/             # OpenClaw 插件层（含 strategy_engine、risk、analysis、data_collection…）
 ├── workflows/           # 工作流：交易链路 + *_evolution_on_demand + 质量兜底等
 ├── docs/                # 含 docs/openclaw/三Skill驱动ETF研究自动进化实施方案.md
 ├── scripts/             # 安装、诊断、verify_predictions、prediction_metrics_weekly 等

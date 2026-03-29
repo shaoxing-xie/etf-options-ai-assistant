@@ -1325,7 +1325,7 @@
           },
           "title": {
             "type": "string",
-            "description": "消息标题"
+            "description": "消息标题（可选）"
           },
           "webhook_url": {
             "type": "string",
@@ -2102,6 +2102,159 @@
             "type": "number",
             "description": "回溯天数",
             "default": 1
+          }
+        }
+      }
+    },
+    {
+      "id": "tool_fetch_policy_news",
+      "label": "盘前政策要闻",
+      "description": "Tavily 检索宏观/监管要闻，带本地缓存（data/cache/policy_news_*.json）。",
+      "description_short": "政策要闻 Tavily+缓存。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "max_items": {
+            "type": "number",
+            "description": "条数上限",
+            "default": 5
+          },
+          "use_cache": {
+            "type": "boolean",
+            "description": "是否读缓存",
+            "default": true
+          },
+          "disable_network": {
+            "type": "boolean",
+            "description": "禁用联网",
+            "default": false
+          }
+        }
+      }
+    },
+    {
+      "id": "tool_fetch_macro_commodities",
+      "label": "大宗商品现货涨跌",
+      "description": "WTI/黄金/铜 yfinance；失败需 Tavily 降级。",
+      "description_short": "原油黄金铜 yfinance。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "disable_network": {
+            "type": "boolean",
+            "default": false
+          }
+        }
+      }
+    },
+    {
+      "id": "tool_fetch_overnight_futures_digest",
+      "label": "A50与金龙隔夜检索摘要",
+      "description": "主源失败时定性摘要，numeric_unverified。",
+      "description_short": "A50/金龙 tavily 摘要。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "disable_network": {
+            "type": "boolean",
+            "default": false
+          }
+        }
+      }
+    },
+    {
+      "id": "tool_conditional_overnight_futures_digest",
+      "label": "条件性A50金龙摘要",
+      "description": "仅当 overnight_overlay_degraded 为 true 时调用 Tavily，节省配额。",
+      "description_short": "条件性隔夜摘要。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "overnight_overlay_degraded": {
+            "type": "boolean",
+            "default": false
+          },
+          "before_open_analysis": {
+            "type": "object",
+            "description": "tool_analyze_before_open 的 data"
+          },
+          "disable_network": {
+            "type": "boolean",
+            "default": false
+          }
+        }
+      }
+    },
+    {
+      "id": "tool_fetch_announcement_digest",
+      "label": "重大公告速览",
+      "description": "Tavily 检索 cninfo/东财等公告线索。",
+      "description_short": "公告 Tavily。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "max_items": {
+            "type": "number",
+            "default": 5
+          },
+          "disable_network": {
+            "type": "boolean",
+            "default": false
+          }
+        }
+      }
+    },
+    {
+      "id": "tool_compute_index_key_levels",
+      "label": "指数关键位",
+      "description": "沪深300等日线近似支撑/压力（MA20、近窗高低、整数关口）。",
+      "description_short": "指数关键位。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "index_code": {
+            "type": "string",
+            "description": "指数代码",
+            "default": "000300"
+          },
+          "lookback_days": {
+            "type": "number",
+            "description": "拉取日线跨度",
+            "default": 120
+          }
+        }
+      }
+    },
+    {
+      "id": "tool_record_before_open_prediction",
+      "label": "落盘盘前预测记录",
+      "description": "写入 data/prediction_records/{date}.json 供回溯。",
+      "description_short": "盘前预测落盘。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "report_data": {
+            "type": "object",
+            "description": "与发送钉钉相同的 report_data"
+          },
+          "trade_date": {
+            "type": "string",
+            "description": "YYYYMMDD，可空"
+          }
+        }
+      }
+    },
+    {
+      "id": "tool_get_yesterday_prediction_review",
+      "label": "昨日预测回顾",
+      "description": "读取上一交易日 prediction_records，可选对比现价。",
+      "description_short": "昨日预测回顾。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "underlying_close": {
+            "type": "number",
+            "description": "标的收盘价，可空"
           }
         }
       }
