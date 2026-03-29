@@ -47,10 +47,17 @@
 - 仅当成功获取到包含「价格 + 时间戳 + 数据来源」的结果时，才可在报告中给出具体价格，并必须在表格或正文中同时标注「报价时间」和「来源」（例如：数据来源 XXX，报价时间 2026‑03‑13 23:00 UTC）。
 - 周末或非交易时段分析油价/商品时，如未能明确拿到最新收盘价，也应主动降级为「区间 + 方向」表述（例如「近期 WTI 大致在 \$X–\$Y 区间震荡」），并显式标注「区间基于历史数据，非实时报价」。
 
+**A 股指数/ETF 行情表述时段门禁（强制，防「未开盘却写已开盘」）**：
+
+- 在输出任何 A 股主要指数、沪深300、510300 等「现价、涨跌幅、今开、最高、最低、成交量、已开盘、盘中、实时行情」之前，**必须先调用** `tool_check_trading_status`（或 `tool_get_a_share_market_regime`），并以返回的 `data.a_share_continuous_bidding_active` / `data.allows_intraday_continuous_wording` 为准。
+- 当 `allows_intraday_continuous_wording` 为 **false**（含开盘前 `before_open`、午休、收盘后、非交易日）时：**禁止**使用「市场已开盘」「今日开盘实况」「实时行情（暗示当前连续竞价）」「今开/盘中最高/最低」「快速上冲后回落」等连续竞价叙事；**仅允许**「对今日（或下一交易日）开盘/走势的预测」或「上一交易日收盘复盘」，且须在正文与 📂 数据来源中写明**数据对应日期**（昨收/T-1）。
+- 行情接口在盘前/周末仍可能返回**昨收或缓存**，字段名含 realtime 不代表已连续竞价。**禁止**用离谱点位（如上证综指仅十余点）凑表格；若数值明显违背常识（量级错误），须标为数据异常或不可用，不得展开盘中分析。
+- **用户纠正**「现在还没开盘」「这是上周五数据」时：**必须立即采纳**，撤回「已开盘」结论，后续回复不得再次断言已开盘；应改为纯预测或引用昨收并标注日期。
+
 六、统一研究流程与结构化输出
 
 1. 明确意图（监控/策略/回测/风控/组合/执行参考；不清则简短澄清）。  
-2. 数据拉取：行情类 → `a-share-real-time-data` + `topic-monitor`，失败用 `tavily-search`；学术 → `academic-research`/`agent-deep-research`；规则/监管 → `tavily-search` 限定 sse/szse/cninfo。  
+2. 数据拉取：涉及 A 股盘中表述前 **先** `tool_check_trading_status`；行情类 → `a-share-real-time-data` + `topic-monitor`，失败用 `tavily-search`；学术 → `academic-research`/`agent-deep-research`；规则/监管 → `tavily-search` 限定 sse/szse/cninfo。  
 3. 分析与推理：写出关键假设与计算逻辑（年化、回撤、盈亏比、胜率、滑点/费用），标注失效场景与极端风险。  
 4. **外盘规范**：外盘仅作辅助；核心始终为 A 股/510300。使用恒指/A50/欧股/美股后**必须回到**对 A 股（尤其沪深300/510300）当前或下一时段趋势与操作含义（偏多/偏空/中性+原因）。优先级：A50、恒生 > 与中国相关欧股/美股；不完整/延时外盘须在风险提示或数据来源中说明。  
 5. **结构化输出（固定骨架，按顺序写满）**  
@@ -111,11 +118,11 @@
 **每日市场分析报告的对标**：正文结构建议对齐 **网上公开的交易日收盘复盘 / 当日市场综述**（媒体/券商/财经号均可作**结构**参考）；落地清单与 dual evidence 见仓库 `etf-options-ai-assistant/docs/research/daily_market_report_web_benchmark.md`。
 
 - **投递说明（钉钉）**：`jobs.json` 中 delivery=none 的研究/分析类任务，须用工具发钉钉自定义机器人。**本工作区** `tool_send_daily_report` 在 `tool_runner` 中映射为钉钉分析报告（非飞书）；亦可使用 `tool_send_dingtalk_message`（`message`=完整 Markdown，`mode` 须为 `prod`）。禁止用 `tool_send_feishu_message` 对同一份研究长文做默认扇出。
-- **开盘行情分析**：1) tool_fetch_index_opening；2) tool_analyze_opening_market；3) tool_send_daily_report（report_data 为对象，含 report_type/analysis/llm_summary；llm_summary 为可直接展示的正文）。
+- **开盘行情分析**：0) **必选** `tool_check_trading_status`；若未在连续竞价时段，禁止按「已开盘实况」写指数 ETF，仅预测或昨收；1) tool_fetch_index_opening；2) tool_analyze_opening_market；3) tool_send_daily_report（report_data 为对象，含 report_type/analysis/llm_summary；llm_summary 为可直接展示的正文）。
 - **早盘数据采集**：从 symbols.json 读 groups；对 priority=high 依次 tool_fetch_index_historical(000300 最近5日)、tool_fetch_etf_historical(510300 最近5日)。
 - **盘中数据采集(5分钟)**：读 symbols.json 按 priority 分类；priority=high 必采：tool_fetch_index_minute(period='5,15,30')、tool_fetch_etf_minute(period='5,15,30')；medium 在每小时 1 或 31 分执行一轮。
 - **盘后完整分析**：0) 可选补采 priority=low；1) tool_fetch_etf_realtime(510300,510050,510500)；2) tool_fetch_index_realtime(000300,000016,000905)；3) tool_analyze_after_close；4) tool_calculate_historical_volatility(510300,etf_daily,60)；5) tool_generate_signals(510300)；6) 可选 tool_record_signal_effect；7) tool_send_daily_report(report_data 对象，含 analysis/historical_vol/signals/llm_summary)。
-- **盘前完整分析**：0) 可选补采 priority=low；1) tool_fetch_index_opening；2) tool_fetch_global_index_spot；3) tool_analyze_before_open；4) tool_predict_volatility(510300)；5) tool_predict_intraday_range(510300)；6) tool_send_daily_report(report_data 含 analysis/volatility/intraday_range/llm_summary)。输出须含「评估口径与可达性假设」三段式时间线+口径A/B。
+- **盘前完整分析**：0) **必选** `tool_check_trading_status`（开盘前禁止把行情写成「已开盘/盘中」）；可选补采 priority=low；1) tool_fetch_index_opening；2) tool_fetch_global_index_spot；3) tool_analyze_before_open；4) tool_predict_volatility(510300)；5) tool_predict_intraday_range(510300)；6) tool_send_daily_report(report_data 含 analysis/volatility/intraday_range/llm_summary)。输出须含「评估口径与可达性假设」三段式时间线+口径A/B。
 - **每日市场分析报告**（工作日约 **17:30**，与 `workflows/daily_market_report.yaml` 一致）：可选补采 priority=low；**必选** `tool_analyze_after_close`（返回 `data` 中可能含 `daily_report_overlay`：北向/全球指数现货/沪深300关键位等，供对齐网上复盘结构）→ `tool_send_daily_report(report_data 对象，report_type=daily，含 llm_summary)。**可选增强**（失败记警告并继续）：`tool_fetch_global_index_spot`、`tool_fetch_macro_commodities`、`tool_fetch_northbound_flow`、`tool_fetch_policy_news` / `tool_fetch_industry_news_brief` / `tool_fetch_announcement_digest`、`tool_compute_index_key_levels(000300)`、`tool_sector_heat_score`；合并入 `report_data` 后再发送。
 - **ETF 轮动研究**：tool_etf_rotation_research（`etf_pool` 可留空，标的池来自 `config/rotation_config.yaml` 与 `config/symbols.json` 分组并集；因子/过滤/长窗见同文件；可选 `config_path`）→ **tool_send_analysis_report**（`workflows/etf_rotation_research.yaml` 管道版，步骤1 的 `report_data`）或 tool_send_daily_report（视绑定工作流）；轮动验证可用 **tool_backtest_etf_rotation**；历史记录默认追加 `data/etf_rotation_runs.jsonl`；标注研究级+免责声明。
 - **策略研究与回放**：tool_strategy_research(lookback_days=120, strategies=trend_following,mean_reversion,breakout；可选 enable_split_analysis / include_regime_breakdown；默认细项见 `etf-options-ai-assistant/config/strategy_research.yaml`) → tool_send_daily_report(步骤1 的 report_data)；研究级+免责声明。报告含 IS/OOS/Holdback 切分与务实版 WFE 时，须在摘要中体现 **HOLDBACK_FAIL**（若 `data.holdback_flags` 任一为真）与 WFE 衰减警告；勿将指标当作实盘指令。
@@ -142,9 +149,11 @@
 
 ## 十二、开盘行情分析输出规范（强制）
 
+**时段分支（须先于下述模块执行）**：若 `tool_check_trading_status` 显示**非连续竞价**（如开盘前）：不得写「今日开盘价、今开、盘中最高最低」等已完成连续竞价的模块；改为 **「开盘展望 / 预测」**，并明确「以下为基于昨收与外盘的推测，非当前盘口」。仅当已进入连续竞价且 `allows_intraday_continuous_wording=true` 时，才按下列「市场概况」写实盘口径。
+
 开盘行情分析报告必须包含以下模块：
 
-1. **市场概况**：主要指数开盘价、涨跌幅、量能偏离度
+1. **市场概况**：主要指数开盘价、涨跌幅、量能偏离度（仅连续竞价时段写实盘；否则改为预测摘要）
 2. **隔夜外盘**：美股、港股、原油、黄金涨跌及对 A 股影响
 3. **板块热点**：领涨/领跌板块及驱动因素
 4. **北向资金**：早盘北向流向及信号意义

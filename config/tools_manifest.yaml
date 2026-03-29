@@ -206,8 +206,11 @@ tools:
 
   - id: tool_check_trading_status
     label: 判断交易时间状态
-    description: 判断当前是否是交易时间。
-    description_short: 判断当前是否是交易时间。
+    description: |
+      判断 A 股当前是否处于连续竞价等。返回 data.allows_intraday_continuous_wording：为 false 时（开盘前/午休/收盘后/非交易日）
+      禁止将指数/ETF 行情写成「已开盘、今日今开、盘中最高最低」；须遵守 data.quote_narration_rule_cn。
+      Agent 在写 A 股「实时/盘中」正文前**必须先调用**本工具。
+    description_short: 交易时段判断；写A股盘中表述前必调，见 quote_narration_rule_cn。
     parameters: { type: object, properties: {} }
 
   # ---------- 时段/编排 ----------

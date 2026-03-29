@@ -95,6 +95,9 @@ result = tool_check_trading_status()
         "market_status_cn": "交易中",
         "is_trading_time": True,
         "is_trading_day": True,
+        "a_share_continuous_bidding_active": True,   # 连续竞价进行中
+        "allows_intraday_continuous_wording": True,  # Agent 是否允许写「盘中/今开」等
+        "quote_narration_rule_cn": "…",              # 中文门禁说明（开盘前为预测-only）
         "current_time": "2025-01-15 14:30:00",
         "next_trading_time": "2025-01-15 15:00:00",
         "remaining_minutes": 30,

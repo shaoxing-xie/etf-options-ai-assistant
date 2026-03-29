@@ -132,7 +132,35 @@ def check_trading_status(
             remaining_minutes = int(remaining)
         
         market_status_cn = status_map.get(status, status)
-        
+
+        # Agent 门禁：连续竞价未进行时，禁止把行情接口返回值叙述成「已开盘/盘中实况」
+        a_share_continuous_bidding_active = bool(is_trading_time and status == "trading")
+        if not is_trading_day_flag:
+            quote_narration_rule_cn = (
+                "非交易日：A 股连续竞价未进行。指数/ETF「实时」类接口多返回上一交易日收盘或空数据。"
+                "禁止写「市场已开盘」「今日开盘实况」「今开/最高/最低/盘中」等连续竞价表述；"
+                "若需展望下一交易日，须明确为预测并标注数据为历史收盘。"
+            )
+        elif status == "before_open":
+            quote_narration_rule_cn = (
+                "开盘前（距 09:30 连续竞价尚未开始）：禁止写「市场已开盘」「今日实时行情」「今日开盘实况」"
+                "「今开/最高/最低」「盘中上冲/回落」等。仅允许：① 对当日开盘/走势的**预测**；"
+                "② 引用**上一交易日收盘**或工具明确标注的盘前静态价，并写明「昨收/数据日期」。"
+                "用户若指出数据为上周五或昨收，必须采纳，不得再断言已开盘。"
+            )
+        elif status == "lunch_break":
+            quote_narration_rule_cn = (
+                "午休：上午已收市、下午未开盘。禁止编造下午盘中走势；勿将上午数据说成「当前盘中」。"
+            )
+        elif status == "after_close":
+            quote_narration_rule_cn = (
+                "收盘后：连续竞价已结束。禁止将收盘数据叙述为「当前盘中」；可复盘或预测次日。"
+            )
+        else:
+            quote_narration_rule_cn = (
+                "连续竞价时段：可使用盘中表述，但仍须标注数据时间与来源，并注意接口延迟。"
+            )
+
         # 构建返回结果
         result = {
             "success": True,
@@ -141,13 +169,16 @@ def check_trading_status(
                 "market_status_cn": market_status_cn,
                 "is_trading_time": is_trading_time,
                 "is_trading_day": is_trading_day_flag,
+                "a_share_continuous_bidding_active": a_share_continuous_bidding_active,
+                "allows_intraday_continuous_wording": a_share_continuous_bidding_active,
+                "quote_narration_rule_cn": quote_narration_rule_cn,
                 "current_time": now.strftime('%Y-%m-%d %H:%M:%S'),
                 "next_trading_time": next_trading_time,
                 "remaining_minutes": remaining_minutes,
                 "timezone": timezone
             }
         }
-        
+
         return result
     
     except Exception as e:
