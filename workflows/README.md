@@ -24,8 +24,8 @@
 | `signal_generation.yaml` | 工作日 9–15 点每 30 分钟 | 读 **ETF 日线缓存** + 指标/波动/区间/信号/风控/告警 |
 | `signal_generation_on_demand.yaml` | `schedule: null`（仅手动） | 按需信号：实时 ETF、指标、信号、风控、仓位、告警 |
 | `etf_510300_intraday_monitor.yaml` | 工作日 9–15 点每 5 分钟（错开采集） | **仅读本地缓存** 510300/000300 分钟线；建议级提醒支持 **call/put 双向同发（研究级）**，阈值与日线过滤见 `config.yaml` |
-| `etf_rotation_research.yaml` | 工作日 18:00 | ETF 轮动研究 + 日报 |
-| `strategy_research.yaml` | 周五 19:00 | 策略研究/回放报告 + 日报 |
+| `etf_rotation_research.yaml` | 工作日 18:00 | ETF 轮动研究 + 通知：`tool_etf_rotation_research`（`etf_pool` 空则读 `rotation_config.yaml` + `symbols.json`）→ `tool_send_analysis_report` |
+| `strategy_research.yaml` | 周五 19:00 | 策略研究/回放：`tool_strategy_research`（默认读 **`config/strategy_research.yaml`**：切分、务实版 WFE、成本、Holdback 门禁）→ 日报/钉钉 |
 | `strategy_evaluation.yaml` | 周五 18:00（`schedule.cron` + `timezone`） | 多策略 `tool_calculate_strategy_score` |
 | `strategy_weight_adjustment.yaml` | 周五 18:00（与上同时段） | 读权重并 `tool_adjust_strategy_weights`（依赖评分结果时请避免与 evaluation 步骤冲突或错开时间） |
 | `strategy_fusion_routine.yaml` | 无内置 cron（随 Agent / 手动） | `tool_strategy_engine` → 可选风控/通知；与 `agents/analysis_agent.yaml` 的 `strategy_fusion` 呼应（交易时段 **每 30 分钟** `*/30 9-15 * * 1-5`） |

@@ -1589,19 +1589,19 @@
     {
       "id": "tool_etf_rotation_research",
       "label": "ETF轮动研究",
-      "description": "ETF轮动研究（研究级）。从缓存读ETF日线，计算动量/波动/回撤，输出排名与研究报告。",
+      "description": "ETF轮动研究（研究级）。从缓存读ETF日线，按 rotation_config 计算动量/波动/回撤/相关性等，输出排名与研究报告。",
       "description_short": "ETF轮动研究（研究级）。",
       "parameters": {
         "type": "object",
         "properties": {
           "etf_pool": {
             "type": "string",
-            "description": "逗号分隔ETF代码列表",
-            "default": "510300,510500,159915,512100,512880,512690"
+            "description": "逗号分隔ETF代码；留空则用 config/rotation_config.yaml + symbols.json",
+            "default": ""
           },
           "lookback_days": {
             "type": "number",
-            "description": "回看天数",
+            "description": "回看天数下限（与长窗取 max）",
             "default": 120
           },
           "top_k": {
@@ -1613,6 +1613,10 @@
             "type": "string",
             "description": "prod|test",
             "default": "prod"
+          },
+          "config_path": {
+            "type": "string",
+            "description": "可选，rotation 配置文件路径"
           }
         }
       }
@@ -1644,6 +1648,32 @@
             "type": "string",
             "description": "prod|test",
             "default": "prod"
+          },
+          "enable_split_analysis": {
+            "type": "boolean",
+            "description": "是否做 IS/OOS/Holdback 与务实版 WFE（默认读 config/strategy_research.yaml）",
+            "default": null
+          },
+          "include_regime_breakdown": {
+            "type": "boolean",
+            "description": "是否按 signal_regime_labels 分组统计",
+            "default": false
+          }
+        }
+      }
+    },
+    {
+      "id": "tool_get_strategy_research_history",
+      "label": "策略研究运行历史",
+      "description": "读取策略研究工具写入的 JSONL 回测/运行摘要（路径见 config/strategy_research.yaml → backtest_log.path）。",
+      "description_short": "读取策略研究 JSONL 运行记录。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "limit": {
+            "type": "number",
+            "description": "最近条数",
+            "default": 20
           }
         }
       }
@@ -2325,6 +2355,56 @@
           },
           "data_dir": {
             "type": "string"
+          }
+        }
+      }
+    },
+    {
+      "id": "tool_backtest_etf_rotation",
+      "label": "ETF轮动回测",
+      "description": "月度调仓、等权 Top-K，与 tool_etf_rotation_research 评分一致；研究级。",
+      "description_short": "ETF轮动策略回测",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "etf_pool": {
+            "type": "string",
+            "description": "逗号分隔；留空则用 rotation 配置",
+            "default": ""
+          },
+          "start_date": {
+            "type": "string",
+            "description": "YYYYMMDD",
+            "default": "20190101"
+          },
+          "end_date": {
+            "type": "string",
+            "description": "YYYYMMDD；默认今日",
+            "default": ""
+          },
+          "rebalance": {
+            "type": "string",
+            "description": "M=月末",
+            "default": "M"
+          },
+          "top_k": {
+            "type": "number",
+            "description": "持有只数",
+            "default": 3
+          },
+          "commission_bps": {
+            "type": "number",
+            "description": "调仓成本 bps",
+            "default": 0
+          },
+          "lookback_days": {
+            "type": "number",
+            "description": "传给评分管道",
+            "default": 120
+          },
+          "config_path": {
+            "type": "string",
+            "description": "可选 rotation 配置路径"
           }
         }
       }

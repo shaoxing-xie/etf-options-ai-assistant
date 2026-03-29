@@ -10,7 +10,7 @@ import json
 import sqlite3
 import logging
 from pathlib import Path
-from typing import Dict, Optional, Any
+from typing import Dict, List, Optional, Any, Tuple
 from datetime import datetime, timedelta
 import pytz
 
@@ -243,77 +243,225 @@ def _save_to_database(record: dict):
         logger.debug("SQLite save failed, ignore", exc_info=True)
 
 
+def _validate_yyyymmdd(s: str) -> str:
+    s = (s or "").strip()
+    if len(s) != 8 or not s.isdigit():
+        raise ValueError(f"date must be YYYYMMDD, got {s!r}")
+    return s
+
+
+def _resolve_date_bounds(
+    lookback_days: int,
+    start_date: Optional[str],
+    end_date: Optional[str],
+    tz_shanghai: Any,
+) -> Tuple[str, str]:
+    """Resolve inclusive [start_date, end_date] as YYYYMMDD strings."""
+    now = datetime.now(tz_shanghai)
+    today_s = now.strftime("%Y%m%d")
+    end_s = _validate_yyyymmdd(end_date) if (end_date and str(end_date).strip()) else today_s
+    if start_date and str(start_date).strip():
+        start_s = _validate_yyyymmdd(str(start_date))
+    else:
+        end_dt = datetime.strptime(end_s, "%Y%m%d")
+        start_dt = end_dt - timedelta(days=int(lookback_days))
+        start_s = start_dt.strftime("%Y%m%d")
+    if start_s > end_s:
+        start_s, end_s = end_s, start_s
+    return start_s, end_s
+
+
+def _span_calendar_days(start_s: str, end_s: str) -> int:
+    a = datetime.strptime(start_s, "%Y%m%d")
+    b = datetime.strptime(end_s, "%Y%m%d")
+    return max(1, (b - a).days + 1)
+
+
+def _per_trade_cost_pct(trading_costs: Optional[Dict[str, Any]]) -> float:
+    if not trading_costs or not isinstance(trading_costs, dict):
+        return 0.0
+    if not trading_costs.get("enabled", False):
+        return 0.0
+    c = float(trading_costs.get("commission") or 0.0)
+    s = float(trading_costs.get("slippage") or 0.0)
+    return 2.0 * c + s
+
+
+def _sharpe_like(returns: List[float]) -> float:
+    if len(returns) < 2:
+        return 0.0
+    m = sum(returns) / len(returns)
+    var = sum((x - m) ** 2 for x in returns) / (len(returns) - 1)
+    std = var ** 0.5
+    if std < 1e-12:
+        return 0.0
+    return m / std
+
+
+def _ensure_regime_labels_table(cursor: sqlite3.Cursor) -> None:
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS signal_regime_labels (
+            signal_id TEXT PRIMARY KEY NOT NULL,
+            market_regime TEXT NOT NULL
+        )
+        """
+    )
+
+
 def get_strategy_performance(
     strategy: str,
-    lookback_days: int = 60
+    lookback_days: int = 60,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    trading_costs: Optional[Dict[str, Any]] = None,
+    by_regime: bool = False,
 ) -> Dict[str, Any]:
     """
     获取策略表现
-    
+
     Args:
         strategy: 策略名称
-        lookback_days: 回看天数
-    
+        lookback_days: 回看天数（当未指定 start_date 时，从 end_date 或今天向前回溯）
+        start_date: 可选，起始日 YYYYMMDD（含）
+        end_date: 可选，结束日 YYYYMMDD（含）；默认今天（上海时区）
+        trading_costs: 可选 {"enabled": bool, "commission": float, "slippage": float}，对闭合交易按笔扣减
+        by_regime: 为 True 时按 signal_regime_labels 表 JOIN 分组（无标签则为 unlabeled）
+
     Returns:
-        dict: 策略表现统计
+        dict: 策略表现统计（含 gross/net 与 sharpe_like 等研究级字段）
     """
     try:
-        tz_shanghai = pytz.timezone('Asia/Shanghai')
-        end_date = datetime.now(tz_shanghai)
-        start_date = end_date - timedelta(days=lookback_days)
-        
-        # 从数据库查询
+        tz_shanghai = pytz.timezone("Asia/Shanghai")
+        start_s, end_s = _resolve_date_bounds(
+            lookback_days, start_date, end_date, tz_shanghai
+        )
+        span_days = _span_calendar_days(start_s, end_s)
+        cost_pct = _per_trade_cost_pct(trading_costs)
+
         conn = sqlite3.connect(SIGNAL_DB_PATH)
         cursor = conn.cursor()
-        
-        cursor.execute('''
-            SELECT 
+
+        cursor.execute(
+            """
+            SELECT
                 COUNT(*) as total,
                 SUM(CASE WHEN status = 'closed' THEN 1 ELSE 0 END) as closed,
-                SUM(CASE WHEN profit_loss_pct > 0 THEN 1 ELSE 0 END) as wins,
-                AVG(profit_loss_pct) as avg_return,
-                AVG(signal_strength) as avg_strength
+                SUM(CASE WHEN status = 'closed' AND profit_loss_pct IS NOT NULL
+                    AND (profit_loss_pct - ?) > 0 THEN 1 ELSE 0 END) as wins,
+                AVG(CASE WHEN status = 'closed' AND profit_loss_pct IS NOT NULL THEN profit_loss_pct ELSE NULL END) as avg_gross,
+                AVG(signal_strength) as avg_strength,
+                SUM(CASE WHEN status = 'closed' AND profit_loss_pct IS NOT NULL THEN profit_loss_pct ELSE 0 END) as sum_gross,
+                SUM(CASE WHEN status = 'closed' AND profit_loss_pct IS NOT NULL THEN (profit_loss_pct - ?) ELSE 0 END) as sum_net
             FROM signal_records
-            WHERE strategy = ? 
-            AND date >= ? 
+            WHERE strategy = ?
+            AND date >= ?
             AND date <= ?
-        ''', (strategy, start_date.strftime('%Y%m%d'), end_date.strftime('%Y%m%d')))
-        
-        result = cursor.fetchone()
+            """,
+            (cost_pct, cost_pct, strategy, start_s, end_s),
+        )
+        row = cursor.fetchone()
+        total, closed, wins, avg_gross, avg_strength, sum_gross, sum_net = row
+
+        cursor.execute(
+            """
+            SELECT profit_loss_pct FROM signal_records
+            WHERE strategy = ? AND date >= ? AND date <= ?
+            AND status = 'closed' AND profit_loss_pct IS NOT NULL
+            ORDER BY date ASC, id ASC
+            """,
+            (strategy, start_s, end_s),
+        )
+        gross_returns = [float(r[0]) for r in cursor.fetchall()]
+        net_returns = [r - cost_pct for r in gross_returns]
+
+        gross_sharpe_like = _sharpe_like(gross_returns)
+        net_sharpe_like = _sharpe_like(net_returns) if cost_pct > 0 else gross_sharpe_like
+
+        closed_n = int(closed or 0)
+        sum_g = float(sum_gross or 0.0)
+        sum_n = float(sum_net or 0.0)
+        annualized_return_proxy_gross = (sum_g / float(span_days)) * 365.0
+        annualized_return_proxy_net = (sum_n / float(span_days)) * 365.0
+
+        regime_breakdown: Optional[List[Dict[str, Any]]] = None
+        if by_regime:
+            _ensure_regime_labels_table(cursor)
+            cursor.execute(
+                """
+                SELECT COALESCE(l.market_regime, 'unlabeled') AS rg,
+                    COUNT(*) AS total,
+                    SUM(CASE WHEN sr.status = 'closed' THEN 1 ELSE 0 END) AS closed_cnt,
+                    SUM(CASE WHEN sr.status = 'closed' AND sr.profit_loss_pct IS NOT NULL
+                        AND (sr.profit_loss_pct - ?) > 0 THEN 1 ELSE 0 END) AS wins_c,
+                    AVG(CASE WHEN sr.status = 'closed' AND sr.profit_loss_pct IS NOT NULL
+                        THEN sr.profit_loss_pct ELSE NULL END) AS avg_g
+                FROM signal_records sr
+                LEFT JOIN signal_regime_labels l ON sr.signal_id = l.signal_id
+                WHERE sr.strategy = ? AND sr.date >= ? AND sr.date <= ?
+                GROUP BY rg
+                ORDER BY rg
+                """,
+                (cost_pct, strategy, start_s, end_s),
+            )
+            regime_breakdown = []
+            for rg, t, cl, wn, av in cursor.fetchall():
+                cl = int(cl or 0)
+                regime_breakdown.append(
+                    {
+                        "regime": rg,
+                        "total_signals": int(t or 0),
+                        "closed_signals": cl,
+                        "win_rate": float(wn) / cl if cl > 0 else 0.0,
+                        "avg_return": float(av) if av is not None else 0.0,
+                    }
+                )
+
         conn.close()
-        
-        if result and result[0] > 0:
-            total, closed, wins, avg_return, avg_strength = result
-            win_rate = wins / closed if closed > 0 else 0.0
-            
-            return {
-                'success': True,
-                'strategy': strategy,
-                'total_signals': total,
-                'closed_signals': closed,
-                'win_rate': float(win_rate),
-                'avg_return': float(avg_return) if avg_return else 0.0,
-                'avg_signal_strength': float(avg_strength) if avg_strength else 0.0,
-                'lookback_days': lookback_days
-            }
-        else:
-            return {
-                'success': True,
-                'strategy': strategy,
-                'total_signals': 0,
-                'closed_signals': 0,
-                'win_rate': 0.0,
-                'avg_return': 0.0,
-                'avg_signal_strength': 0.0,
-                'lookback_days': lookback_days,
-                'message': '数据不足'
-            }
-    
-    except Exception as e:
-        return {
-            'success': False,
-            'error': str(e)
+
+        avg_ret = float(avg_gross) if avg_gross is not None else 0.0
+        avg_net = (sum_n / closed_n) if closed_n > 0 and cost_pct > 0 else avg_ret
+
+        base: Dict[str, Any] = {
+            "success": True,
+            "strategy": strategy,
+            "start_date": start_s,
+            "end_date": end_s,
+            "span_calendar_days": span_days,
+            "total_signals": int(total or 0),
+            "closed_signals": closed_n,
+            "win_rate": float(wins) / closed_n if closed_n > 0 else 0.0,
+            "avg_return": avg_ret,
+            "avg_signal_strength": float(avg_strength) if avg_strength is not None else 0.0,
+            "lookback_days": int(lookback_days),
+            "sum_closed_return_gross": sum_g,
+            "sum_closed_return_net": sum_n,
+            "annualized_return_proxy_gross": annualized_return_proxy_gross,
+            "annualized_return_proxy_net": annualized_return_proxy_net,
+            "gross_sharpe_like": gross_sharpe_like,
+            "net_sharpe_like": net_sharpe_like,
+            "trading_costs_applied": cost_pct > 0,
+            "trading_cost_per_trade_pct": cost_pct,
         }
+        if regime_breakdown is not None:
+            base["by_regime"] = regime_breakdown
+            base["regime_note"] = (
+                "按 signal_regime_labels 关联；无记录的标签为 unlabeled。"
+            )
+
+        if int(total or 0) == 0:
+            base["message"] = "数据不足"
+            base["win_rate"] = 0.0
+            base["avg_return"] = 0.0
+            base["gross_sharpe_like"] = 0.0
+            base["net_sharpe_like"] = 0.0
+            base["annualized_return_proxy_gross"] = 0.0
+            base["annualized_return_proxy_net"] = 0.0
+
+        return base
+
+    except Exception as e:
+        return {"success": False, "error": str(e)}
 
 
 # OpenClaw 工具函数接口
@@ -402,7 +550,18 @@ def tool_record_signal_effect(
 
 def tool_get_strategy_performance(
     strategy: str,
-    lookback_days: int = 60
+    lookback_days: int = 60,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    trading_costs: Optional[Dict[str, Any]] = None,
+    by_regime: bool = False,
 ) -> Dict[str, Any]:
-    """OpenClaw 工具：获取策略表现"""
-    return get_strategy_performance(strategy=strategy, lookback_days=lookback_days)
+    """OpenClaw 工具：获取策略表现（支持日期区间、交易成本、regime 分组）"""
+    return get_strategy_performance(
+        strategy=strategy,
+        lookback_days=lookback_days,
+        start_date=start_date,
+        end_date=end_date,
+        trading_costs=trading_costs,
+        by_regime=by_regime,
+    )

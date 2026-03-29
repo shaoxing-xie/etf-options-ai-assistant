@@ -15,6 +15,9 @@ steps:
       lookback_days: 120
       strategies: "trend_following,mean_reversion,breakout"
       adjustment_rate: 0.1
+      # 细项默认见 config/strategy_research.yaml；可在此覆盖：
+      # enable_split_analysis: true
+      # include_regime_breakdown: false
 
   - name: send_strategy_research_report
     tool: tool_send_analysis_report

@@ -236,6 +236,10 @@ TOOL_MAP: Dict[str, ToolSpec] = {
         module_path="analysis.strategy_research",
         function_name="tool_strategy_research",
     ),
+    "tool_get_strategy_research_history": ToolSpec(
+        module_path="analysis.strategy_research",
+        function_name="tool_get_strategy_research_history",
+    ),
     # 合并工具 - 风险控制
     "tool_position_limit": ToolSpec(
         module_path="merged.position_limit",
@@ -393,6 +397,10 @@ TOOL_MAP: Dict[str, ToolSpec] = {
     "tool_backtest_limit_up_sensitivity": ToolSpec(
         module_path="backtest.limit_up_pullback",
         function_name="tool_backtest_limit_up_sensitivity",
+    ),
+    "tool_backtest_etf_rotation": ToolSpec(
+        module_path="backtest.etf_rotation_backtest",
+        function_name="tool_backtest_etf_rotation",
     ),
     # 组合风险（VaR / 回撤 / 仓位）
     "tool_portfolio_risk_snapshot": ToolSpec(

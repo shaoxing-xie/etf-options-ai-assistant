@@ -548,6 +548,15 @@ result = tool_assess_risk(
 
 ---
 
+## 策略研究与回放评估（`tool_strategy_research`）
+
+- **配置**：[`config/strategy_research.yaml`](../../config/strategy_research.yaml) — 样本切分比例、可选交易成本、务实版 WFE 阈值、复杂度惩罚、Holdback 门禁、回测日志路径。
+- **数据**：[`plugins/analysis/strategy_tracker.py`](strategy_tracker.py) 从 `data/signal_records/signal_records.db` 聚合；支持 `start_date` / `end_date`（`YYYYMMDD`）、`trading_costs`、`by_regime`（需 `signal_regime_labels` 表为 `signal_id` 提供 `market_regime`）。
+- **务实版 WFE**：[`calculate_wfe_style_metrics`](strategy_evaluator.py) 比较 IS 与 OOS 窗口的**年化收益代理**（无样本内参数优化）。机构意义上的完整 Walk-Forward（多窗寻优 + 参数稳定性 CV）**尚未实现**，需后续引入参数网格与优化器后再接 `calculate_wfe_style_metrics` 的语义升级。
+- **工具参数**：`enable_split_analysis`、`include_regime_breakdown`（默认读配置）；回测运行摘要追加至 `data/backtest_logs/research_runs.jsonl`（可关）。查询最近记录：`tool_get_strategy_research_history(limit=20)`。
+
+---
+
 ## 数据流
 
 ```

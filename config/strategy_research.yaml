@@ -1,0 +1,38 @@
+# 策略研究与回放评估（研究级）— 工具默认配置
+# 完整 Walk-Forward（含 IS 内参数优化）尚未实现；见 plugins/analysis/README.md 说明。
+
+data_split:
+  is_ratio: 0.5
+  oos_ratio: 0.3
+  holdback_ratio: 0.2
+
+enable_split_analysis: true
+
+trading_costs:
+  enabled: true
+  commission: 0.0003
+  slippage: 0.0001
+
+wfe:
+  warn_threshold: 0.5
+  min_closed_is: 3
+  min_closed_oos: 3
+
+complexity_penalty:
+  enabled: true
+  per_param: 0.02
+  cap: 0.30
+
+# 各策略有效参数个数（启发式，用于复杂度惩罚）
+strategy_param_counts:
+  trend_following: 5
+  mean_reversion: 5
+  breakout: 4
+
+holdback_gate:
+  min_avg_return: 0.0
+  min_gross_sharpe_like: 0.0
+
+backtest_log:
+  enabled: true
+  path: data/backtest_logs/research_runs.jsonl
