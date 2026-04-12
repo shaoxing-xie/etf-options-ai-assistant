@@ -1,11 +1,11 @@
 # 数据采集 Agent 配置
-# 负责采集指数、ETF、期权、期货、A 股、板块、涨停/资金类数据，以及缓存读取与交易时段工具。
-# 工具列表与 plugins/data_collection/README.md、config/tools_manifest.yaml 对齐；OpenClaw 插件从 manifest 注册全部工具。
+# 行情与参考数据工具由 Gateway 插件 openclaw-data-china-stock 注册（见该扩展 config/tools_manifest.json）。
+# 本仓库 plugins/data_collection 为指向该仓库的符号链接，仅供 Python 内部 import；勿与 option-trading-assistant 的 manifest 重复理解。
 
 name: data_collector_agent
 description: |
-  数据采集 Agent：覆盖 data_collection 插件在 manifest 中的采集类能力
- （指数/ETF/期权/A50/个股/板块/涨停与资金/合并入口/缓存读取/合约与交易状态等）。
+  数据采集 Agent：在 Gateway 上调用 openclaw-data-china-stock 已注册的 tool_*（统一入口 tool_fetch_market_data、
+  各类 fetch/read、A 股 P0/P1 等）。下列 id 须与该插件 manifest 一致。
 
 agent:
   type: tool_agent
@@ -59,6 +59,8 @@ agent:
     - tool_limit_up_daily_flow
     - tool_dragon_tiger_list
     - tool_capital_flow
+    - tool_fetch_a_share_fund_flow
+    - tool_fetch_a_share_technical_screener
     - tool_fetch_northbound_flow
     - tool_fetch_policy_news
     - tool_fetch_macro_commodities

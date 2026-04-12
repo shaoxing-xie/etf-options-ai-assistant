@@ -1,0 +1,28 @@
+# Tool ids used in workflows/*.yaml but registered by the OpenClaw extension
+# openclaw-data-china-stock (or merged Gateway manifest), not listed in
+# config/tools_manifest.yaml. Keep in sync when adding new fetch/read_* steps.
+# Also list read_* tools that appear in agents/*.yaml (china-stock manifest).
+# Lines starting with # are ignored.
+
+tool_fetch_announcement_digest
+tool_fetch_etf_minute
+tool_fetch_etf_realtime
+tool_fetch_index_minute
+tool_fetch_index_opening
+tool_fetch_index_realtime
+tool_fetch_macro_commodities
+tool_fetch_northbound_flow
+tool_fetch_a_share_fund_flow
+tool_fetch_a_share_technical_screener
+tool_fetch_option_greeks
+tool_fetch_option_realtime
+tool_fetch_overnight_futures_digest
+tool_fetch_policy_news
+tool_check_trading_status
+tool_read_etf_daily
+tool_read_etf_minute
+tool_read_index_daily
+tool_read_index_minute
+tool_read_option_greeks
+tool_read_option_minute
+tool_sector_heat_score
