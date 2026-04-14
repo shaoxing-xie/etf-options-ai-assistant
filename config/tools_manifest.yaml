@@ -993,6 +993,13 @@ tools:
         type: string
         description: production|test（指数/ETF 实时采集；test 跳过交易日门禁，仅用于调试）
         default: production
+      debug_force_tail_section:
+        type: boolean
+        description: 仅 test 模式生效；强制展示“尾盘操作建议”模块，便于非交易时段联调。
+        default: false
+      debug_now:
+        type: string
+        description: 仅 test 模式生效；覆盖当前时间（格式 YYYY-MM-DD HH:MM[:SS]），用于时间门禁调试。
       webhook_url:
         type: string
         description: 可选：自定义机器人 webhook（包含 access_token）
@@ -1029,6 +1036,37 @@ tools:
       split_markdown_sections:
         type: boolean
         description: 是否按章节分条；默认 true（与每日市场分析报告一致）。
+        default: true
+      max_chars_per_message:
+        type: integer
+        description: 可选；单条目标字符上限，省略读 config notification.dingtalk_max_chars_per_message。
+- id: tool_run_tail_session_analysis_and_send
+  label: 尾盘多角度建议采集并发送
+  description: 进程内执行513880尾盘监控，生成分层建议（周期/节奏/风险）与用户决策选项，调用 tool_send_analysis_report 发送 tail_session 报告。
+  description_short: 尾盘监控采集+发送
+  parameters:
+    type: object
+    properties:
+      mode:
+        type: string
+        description: prod|test（钉钉发送）
+        default: prod
+      fetch_mode:
+        type: string
+        description: production|test（行情采集门禁）
+        default: production
+      webhook_url:
+        type: string
+        description: 可选：自定义机器人 webhook（包含 access_token）
+      secret:
+        type: string
+        description: 可选：安全模式 SEC 密钥（用于 sign）
+      keyword:
+        type: string
+        description: 可选：关键词安全校验用（如果机器人启用关键词）
+      split_markdown_sections:
+        type: boolean
+        description: 是否按章节分条；默认 true。
         default: true
       max_chars_per_message:
         type: integer

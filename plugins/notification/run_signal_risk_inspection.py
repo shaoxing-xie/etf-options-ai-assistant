@@ -25,6 +25,43 @@ def _now_sh() -> datetime:
     return datetime.now(pytz.timezone("Asia/Shanghai"))
 
 
+def _load_inspection_tail_cfg() -> Dict[str, Any]:
+    try:
+        from src.config_loader import load_system_config
+
+        cfg = load_system_config(use_cache=True)
+        seg = cfg.get("wide_inspection_tail_advice")
+        return seg if isinstance(seg, dict) else {}
+    except Exception:
+        return {}
+
+
+def _load_market_tail_cfg() -> Dict[str, Any]:
+    try:
+        from src.config_loader import load_system_config
+
+        cfg = load_system_config(use_cache=True)
+        seg = cfg.get("wide_inspection_overnight_refs")
+        return seg if isinstance(seg, dict) else {}
+    except Exception:
+        return {}
+
+
+def _parse_debug_now(debug_now: Optional[str]) -> Optional[datetime]:
+    s = str(debug_now or "").strip()
+    if not s:
+        return None
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M"):
+        try:
+            dt = datetime.strptime(s, fmt)
+            if pytz is not None:
+                return pytz.timezone("Asia/Shanghai").localize(dt)
+            return dt
+        except Exception:
+            continue
+    return None
+
+
 def _rows_from_payload(data: Any) -> List[Dict[str, Any]]:
     if data is None:
         return []
@@ -196,9 +233,14 @@ def _next_update_hint(phase: str, trading: bool, now: datetime) -> str:
         return "下一交易日"
     labels = {"morning": "早盘", "midday": "午间", "afternoon": "下午"}
     label = labels.get(phase, "盘中")
+    seg = _session_segment(now)
     # 盘前：避免写「约30分钟后」与真实时钟严重不符
-    if _session_segment(now) == "pre_open":
+    if seg == "pre_open":
         return f"开盘后可关注当日{label}巡检推送"
+    if seg == "lunch":
+        return "下午开盘后"
+    if seg == "after_close":
+        return "下一交易日"
     return f"约30分钟后（{label}巡检）"
 
 
@@ -308,6 +350,116 @@ def _action_line(pct: Optional[float]) -> str:
     return "持有观望"
 
 
+def _tail_view_opinion(pct: Optional[float], up_th: float = 0.35, dn_th: float = -0.35) -> Tuple[str, str]:
+    if pct is None:
+        return "持有", "数据不足，维持中性。"
+    if pct >= up_th:
+        return "持有", "趋势偏强，方向层面维持持有。"
+    if pct <= dn_th:
+        return "减仓", "趋势偏弱，方向层面建议减仓。"
+    return "持有", "趋势中性，维持持有观察。"
+
+
+def _build_tail_advice(report: Dict[str, Any], cfg: Dict[str, Any]) -> Dict[str, Any]:
+    def _p(k: str) -> Optional[float]:
+        try:
+            raw = str(report.get(k) or "")
+            m = re.search(r"(-?\d+(?:\.\d+)?)", raw)
+            return float(m.group(1)) if m else None
+        except Exception:
+            return None
+
+    hs = _p("hs300_change")
+    gem = _p("gem_change")
+    zz = _p("zz500_change")
+    var_pct = _p("var_snapshot")
+    cur_dd = _p("current_dd_snapshot")
+    trend_base = None
+    valid = [x for x in (hs, gem, zz) if x is not None]
+    if valid:
+        trend_base = sum(valid) / len(valid)
+
+    trend_cfg = cfg.get("trend") if isinstance(cfg.get("trend"), dict) else {}
+    timing_cfg = cfg.get("timing") if isinstance(cfg.get("timing"), dict) else {}
+    risk_cfg = cfg.get("risk") if isinstance(cfg.get("risk"), dict) else {}
+    paths_cfg = cfg.get("paths") if isinstance(cfg.get("paths"), dict) else {}
+
+    trend_up = float(trend_cfg.get("up_threshold_pct", 0.30))
+    trend_dn = float(trend_cfg.get("down_threshold_pct", -0.30))
+    trend_action, trend_reason = _tail_view_opinion(trend_base, up_th=trend_up, dn_th=trend_dn)
+    # 盘中涨幅过热近似替代：任一核心指数 > 1.5% 判作节奏偏热
+    timing_hot_th = float(timing_cfg.get("hot_change_pct", 1.5))
+    timing_hot = any((x is not None and x >= timing_hot_th) for x in (hs, gem, zz))
+    timing_gate_hit = False
+    if timing_hot:
+        timing_action, timing_reason = "减仓", "短线涨幅偏快，节奏层建议降速。"
+        timing_gate_hit = True
+    else:
+        timing_action, timing_reason = "持有", "未见明显过热，节奏层维持持有。"
+
+    risk_action, risk_reason = "持有", "风控指标在常规区间。"
+    risk_gate_hit = "none"
+    dd_exit = float(risk_cfg.get("drawdown_exit_pct_lte", -10.0))
+    dd_warn = float(risk_cfg.get("drawdown_warn_pct_lte", -5.0))
+    var_exit = float(risk_cfg.get("var_exit_pct_gte", 2.5))
+    var_warn = float(risk_cfg.get("var_warn_pct_gte", 2.0))
+    if (cur_dd is not None and cur_dd <= dd_exit) or (var_pct is not None and var_pct >= var_exit):
+        risk_action, risk_reason = "退出", "回撤/VaR 触发危险阈值。"
+        risk_gate_hit = "hard_risk_gate"
+    elif (cur_dd is not None and cur_dd <= dd_warn) or (var_pct is not None and var_pct >= var_warn):
+        risk_action, risk_reason = "减仓", "回撤/VaR 进入警戒区间。"
+        risk_gate_hit = "warn_risk_gate"
+
+    # 路径映射（门禁优先）
+    conservative = {"action": "持有", "cap": str(paths_cfg.get("conservative_cap", "20%"))}
+    neutral = {"action": "持有", "cap": str(paths_cfg.get("neutral_cap", "40%"))}
+    aggressive = {"action": "持有", "cap": str(paths_cfg.get("aggressive_cap", "60%"))}
+    if risk_action == "退出":
+        conservative, neutral, aggressive = (
+            {"action": "退出", "cap": "0%"},
+            {"action": "减仓", "cap": "10%"},
+            {"action": "减仓", "cap": "20%"},
+        )
+    elif risk_action == "减仓" or (trend_action == "减仓" and timing_action == "减仓"):
+        conservative, neutral, aggressive = (
+            {"action": "减仓", "cap": "10%"},
+            {"action": "减仓", "cap": "20%"},
+            {"action": "持有", "cap": "40%"},
+        )
+    elif timing_action == "减仓":
+        conservative, neutral, aggressive = (
+            {"action": "持有", "cap": "20%"},
+            {"action": "持有", "cap": "40%"},
+            {"action": "持有", "cap": "60%"},
+        )
+
+    focus_cfg = cfg.get("next_focus") if isinstance(cfg.get("next_focus"), list) else []
+    defaults = ["A50期货夜盘方向", "晚间重大政策/事件", "隔夜美股与中概指数波动"]
+    next_focus = [str(focus_cfg[i]) if i < len(focus_cfg) else defaults[i] for i in range(3)]
+
+    indicator_conclusion = "趋势与风控未冲突，按中性路径管理仓位。"
+    if risk_action == "退出":
+        indicator_conclusion = "风控门禁已触发，优先退出或显著降仓，不做激进动作。"
+    elif risk_action == "减仓" or timing_action == "减仓":
+        indicator_conclusion = "短线偏热或风险抬升，当前以持有/减仓为主，不建议追高。"
+
+    return {
+        "next_day_basis": "结合当日结构、风险快照与隔夜变量可用性进行次日预判。",
+        "trend": {"action": trend_action, "reason": trend_reason, "basis": f"核心指数均值变动 {trend_base:.2f}%" if trend_base is not None else "指数数据不足"},
+        "timing": {"action": timing_action, "reason": timing_reason, "basis": f"过热阈值 {timing_hot_th:.2f}%，当前命中={timing_gate_hit}"},
+        "risk": {"action": risk_action, "reason": risk_reason, "basis": f"VaR阈值 {var_warn:.2f}/{var_exit:.2f}%，回撤阈值 {dd_warn:.2f}/{dd_exit:.2f}%", "gate_hit": risk_gate_hit},
+        "paths": {
+            "conservative": conservative,
+            "neutral": neutral,
+            "aggressive": aggressive,
+            "default_path": "中性",
+        },
+        "indicator_conclusion": indicator_conclusion,
+        "gate_hits": [x for x in ["timing_overheat_gate" if timing_gate_hit else None, risk_gate_hit if risk_gate_hit != "none" else None] if x],
+        "next_focus": next_focus,
+    }
+
+
 def _resist_support_from_range(
     price: Optional[float], high: Optional[float], low: Optional[float],
 ) -> Tuple[str, str]:
@@ -324,19 +476,25 @@ def build_inspection_report(
     phase: str = "midday",
     *,
     fetch_mode: str = "production",
+    debug_force_tail_section: bool = False,
+    debug_now: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     采集并组装 tool_send_signal_risk_inspection 所需的 report 扁平字典。
     """
     from plugins.utils.trading_day import is_trading_day
 
-    now = _now_sh()
+    now = _parse_debug_now(debug_now) if fetch_mode == "test" else None
+    if now is None:
+        now = _now_sh()
     phase = (phase or "midday").strip().lower()
     if phase not in ("morning", "midday", "afternoon"):
         phase = "midday"
 
+    tail_cfg = _load_inspection_tail_cfg()
+    market_tail_cfg = _load_market_tail_cfg()
     trading = bool(is_trading_day(now))
-    if not trading:
+    if not trading and not (fetch_mode == "test" and debug_force_tail_section):
         return _build_non_trading_report(now)
 
     from plugins.merged.fetch_index_data import tool_fetch_index_data
@@ -453,6 +611,30 @@ def build_inspection_report(
         report["risk_level"] = "数据不足"
         report["position_suggest"] = "数据不足"
 
+    gate = str(tail_cfg.get("time_gate_after") or "14:00")
+    mm = re.search(r"^(\d{1,2}):(\d{2})$", gate)
+    gate_min = (int(mm.group(1)) * 60 + int(mm.group(2))) if mm else (14 * 60)
+    minutes = _ashare_minutes(now)
+    tail_enabled = bool(tail_cfg.get("enabled", True)) and (
+        bool(trading and minutes > gate_min) or bool(fetch_mode == "test" and debug_force_tail_section)
+    )
+    report["tail_section_enabled"] = tail_enabled
+    if tail_enabled:
+        report["tail_advice"] = _build_tail_advice(report, tail_cfg)
+        refs = market_tail_cfg.get("sources") if isinstance(market_tail_cfg.get("sources"), dict) else {}
+        ref_items = []
+        unavailable = []
+        for key, label in (("a50_futures", "A50夜盘"), ("usd_cny", "汇率"), ("us_equity_futures", "美股期货")):
+            info = refs.get(key) if isinstance(refs.get(key), dict) else {}
+            enabled = bool(info.get("enabled", False))
+            status = "available" if enabled else "unavailable"
+            ref_items.append({"name": label, "status": status})
+            if not enabled:
+                unavailable.append(label)
+        report["tail_advice"]["overnight_refs"] = ref_items
+        if unavailable:
+            report["tail_advice"]["degrade_reason"] = f"隔夜变量部分缺失（{','.join(unavailable)}），已降级为保守解释口径。"
+        report["tail_time_gate"] = "post_14_00" if (trading and minutes > gate_min) else "debug_forced"
     return report
 
 
@@ -460,6 +642,8 @@ def tool_run_signal_risk_inspection_and_send(
     phase: str = "midday",
     mode: str = "prod",
     fetch_mode: str = "production",
+    debug_force_tail_section: bool = False,
+    debug_now: Optional[str] = None,
     webhook_url: Optional[str] = None,
     secret: Optional[str] = None,
     keyword: Optional[str] = None,
@@ -474,7 +658,15 @@ def tool_run_signal_risk_inspection_and_send(
     """
     from plugins.notification.send_signal_risk_inspection import tool_send_signal_risk_inspection
 
-    report = build_inspection_report(phase=phase, fetch_mode=fetch_mode)
+    if str(mode).lower() != "test":
+        debug_force_tail_section = False
+        debug_now = None
+    report = build_inspection_report(
+        phase=phase,
+        fetch_mode=fetch_mode,
+        debug_force_tail_section=debug_force_tail_section,
+        debug_now=debug_now,
+    )
     out = tool_send_signal_risk_inspection(
         report=report,
         phase=phase,

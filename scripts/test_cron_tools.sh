@@ -500,6 +500,7 @@ def is_send_tool(name: str) -> bool:
         "tool_run_opening_analysis_and_send",
         "tool_run_before_open_analysis_and_send",
         "tool_run_signal_risk_inspection_and_send",
+        "tool_run_tail_session_analysis_and_send",
     ):
         return True
     return name.startswith("tool_send_")
@@ -632,6 +633,7 @@ if (
     and "tool_run_opening_analysis_and_send" not in tools_csv
     and "tool_run_signal_risk_inspection_and_send" not in tools_csv
     and "tool_run_before_open_analysis_and_send" not in tools_csv
+    and "tool_run_tail_session_analysis_and_send" not in tools_csv
 ):
     print("SKIP\tno send-related tool in message\t")
     sys.exit(0)

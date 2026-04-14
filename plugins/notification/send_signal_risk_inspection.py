@@ -346,7 +346,7 @@ def _build_message(phase: str, report: Dict[str, Any], run_status: str, degrade_
     if "%" in zz500_strength:
         zz500_strength = "中性"
     reason_line = f"降级原因：{degrade_reason}\n\n" if degrade_reason else ""
-    return (
+    msg = (
         f"【宽基ETF巡检快报】 {d('date', '日期待定')} {label} {time_text}\n\n"
         "一、当前时段市场快照\n\n"
         "| 指数 | 涨跌幅 | 强弱判定 |\n"
@@ -381,8 +381,48 @@ def _build_message(phase: str, report: Dict[str, Any], run_status: str, degrade_
         f"| 当前回撤（%） | {_normalize_drawdown_snapshot(report.get('current_dd_snapshot'), allow_positive=False)} |\n"
         f"| 参考仓位占比 / 仓位标志 | {d('position_risk_snapshot', '数据不足') if d('position_risk_snapshot', '数据不足').lower() != 'ok' else '数据不足'} |\n\n"
         f"{reason_line}"
-        f"INSPECTION_RUN_STATUS: {run_status}"
     )
+    tail_enabled = bool(report.get("tail_section_enabled"))
+    tail = report.get("tail_advice") if isinstance(report.get("tail_advice"), dict) else {}
+    if tail_enabled and tail:
+        trend = tail.get("trend") if isinstance(tail.get("trend"), dict) else {}
+        timing = tail.get("timing") if isinstance(tail.get("timing"), dict) else {}
+        risk = tail.get("risk") if isinstance(tail.get("risk"), dict) else {}
+        paths = tail.get("paths") if isinstance(tail.get("paths"), dict) else {}
+        overnight_refs = tail.get("overnight_refs") if isinstance(tail.get("overnight_refs"), list) else []
+        cons = paths.get("conservative") if isinstance(paths.get("conservative"), dict) else {}
+        neut = paths.get("neutral") if isinstance(paths.get("neutral"), dict) else {}
+        aggr = paths.get("aggressive") if isinstance(paths.get("aggressive"), dict) else {}
+        foci = tail.get("next_focus") if isinstance(tail.get("next_focus"), list) else []
+        msg += (
+            "五、尾盘操作建议（基于次日预判）\n\n"
+            f"| 次日预判逻辑 | {_clean_text(tail.get('next_day_basis'), '结合当日结构与风险快照进行预判。')} |\n"
+            "| 项目 | 内容 |\n"
+            "|---|---|\n"
+            f"| 趋势视角（大势） | 建议：{_clean_text(trend.get('action'), '持有')}；说明：{_clean_text(trend.get('reason'))} |\n"
+            f"| 择时视角（节奏） | 建议：{_clean_text(timing.get('action'), '持有')}；说明：{_clean_text(timing.get('reason'))} |\n"
+            f"| 风控视角（门槛） | 建议：{_clean_text(risk.get('action'), '持有')}；说明：{_clean_text(risk.get('reason'))} |\n"
+            f"| 指标结论 | {_clean_text(tail.get('indicator_conclusion'), '信号中性，按既定仓位纪律执行。')} |\n"
+            f"| 阈值命中说明 | 趋势依据={_clean_text(trend.get('basis'))}；择时依据={_clean_text(timing.get('basis'))}；风控依据={_clean_text(risk.get('basis'))} |\n"
+            f"| 保守路径 | {_clean_text(cons.get('action'), '持有')}（仓位上限 {_clean_text(cons.get('cap'), '20%')}） |\n"
+            f"| 中性路径 | {_clean_text(neut.get('action'), '持有')}（仓位上限 {_clean_text(neut.get('cap'), '40%')}） |\n"
+            f"| 积极路径 | {_clean_text(aggr.get('action'), '持有')}（仓位上限 {_clean_text(aggr.get('cap'), '60%')}） |\n"
+        )
+        if overnight_refs:
+            refs_text = " / ".join(
+                f"{_clean_text(x.get('name'))}:{'可用' if str(x.get('status')) == 'available' else '缺失'}"
+                for x in overnight_refs if isinstance(x, dict)
+            )
+            msg += f"| 隔夜变量可用性 | {refs_text} |\n"
+        if _clean_text(tail.get("degrade_reason"), ""):
+            msg += f"| 降级说明 | {_clean_text(tail.get('degrade_reason'))} |\n"
+        if foci:
+            f1 = _clean_text(foci[0]) if len(foci) > 0 else "数据不足"
+            f2 = _clean_text(foci[1]) if len(foci) > 1 else "数据不足"
+            f3 = _clean_text(foci[2]) if len(foci) > 2 else "数据不足"
+            msg += f"| 次日开盘关注 | 1) {f1}；2) {f2}；3) {f3} |\n\n"
+    msg += f"INSPECTION_RUN_STATUS: {run_status}"
+    return msg
 
 
 def tool_send_signal_risk_inspection(
@@ -416,7 +456,9 @@ def tool_send_signal_risk_inspection(
         webhook_url=webhook_url,
         secret=secret,
         keyword=keyword,
-        split_markdown_sections=True,
+        # 巡检快报默认整条发送，避免章节被分片打散导致标题/分组缺失。
+        # 若正文超长，底层仍会按长度自动分片兜底。
+        split_markdown_sections=False,
     )
 
     delivery = result.get("delivery") if isinstance(result, dict) else None

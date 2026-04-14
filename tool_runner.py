@@ -352,6 +352,10 @@ TOOL_MAP: Dict[str, ToolSpec] = {
         module_path="notification.run_opening_analysis",
         function_name="tool_run_opening_analysis_and_send",
     ),
+    "tool_run_tail_session_analysis_and_send": ToolSpec(
+        module_path="notification.run_tail_session_analysis",
+        function_name="tool_run_tail_session_analysis_and_send",
+    ),
     "tool_run_before_open_analysis_and_send": ToolSpec(
         module_path="notification.run_before_open_analysis",
         function_name="tool_run_before_open_analysis_and_send",

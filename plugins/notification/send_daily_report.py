@@ -49,6 +49,15 @@ def _fmt_num(v: Any, nd: int = 4) -> Optional[str]:
         return None
 
 
+def _safe_float(v: Any) -> Optional[float]:
+    try:
+        if v is None:
+            return None
+        return float(v)
+    except Exception:
+        return None
+
+
 def _detect_report_type(report_data: Dict[str, Any]) -> str:
     rt = report_data.get("report_type")
     if isinstance(rt, str) and rt.strip():
@@ -1495,6 +1504,156 @@ def _allows_intraday_wording(report_data: Dict[str, Any]) -> bool:
     return True
 
 
+def _tail_option_line(name: str, blob: Any) -> Optional[str]:
+    if not isinstance(blob, dict):
+        return None
+    action = str(blob.get("action") or "").strip()
+    cap = blob.get("max_position_pct")
+    if not action:
+        return None
+    try:
+        cap_txt = f"{float(cap):.0f}%"
+    except Exception:
+        cap_txt = str(cap) if cap is not None else "N/A"
+    return f"- **{name}：** {_tail_action_label(action)}（仓位上限 {cap_txt}）"
+
+
+def _tail_action_label(action: str) -> str:
+    m = {
+        "hold": "持有",
+        "buy_light": "轻仓买入",
+        "buy_split": "分批买入",
+        "reduce": "减仓",
+        "exit_wait": "退出观望",
+    }
+    return m.get(str(action).strip(), str(action))
+
+
+def _tail_layer_label(layer_name: str) -> str:
+    m = {
+        "cycle": "趋势判断（大势）",
+        "timing": "择时信号（节奏）",
+        "risk": "风控约束（门槛）",
+    }
+    return m.get(str(layer_name).strip(), str(layer_name))
+
+
+def _format_tail_session_report(
+    report_data: Dict[str, Any],
+    title: str,
+    now: str,
+) -> Tuple[str, str]:
+    analysis = report_data.get("analysis") if isinstance(report_data.get("analysis"), dict) else {}
+    snap = report_data.get("tail_session_snapshot") if isinstance(report_data.get("tail_session_snapshot"), dict) else {}
+    lines: List[str] = [title, "", "## 📊 14:40 尾盘多角度建议报告", f"**分析时间：** {now}", ""]
+
+    lines.append("### 一、尾盘快照")
+    lines.append(
+        f"- 513880 现价 {_fmt_num(snap.get('latest_price'), 3) or 'N/A'} / IOPV {_fmt_num(snap.get('iopv'), 3) or 'N/A'} / 溢价率 {_fmt_pct(snap.get('premium_pct')) or 'N/A'}"
+    )
+    lines.append(f"- 数据质量：{snap.get('data_quality') or 'N/A'}")
+    if snap.get("iopv_source"):
+        lines.append(f"- IOPV来源：{snap.get('iopv_source')}")
+    if snap.get("iopv_source") == "estimated":
+        lines.append(
+            f"- 估算通道：IOPV估算 {_fmt_num(snap.get('iopv_est'), 3) or 'N/A'} / 溢价估算 {_fmt_pct(snap.get('premium_est')) or 'N/A'} / 置信度 {_fmt_num(snap.get('est_confidence'), 2) or 'N/A'}"
+        )
+    if snap.get("iopv_source") == "manual":
+        lines.append(f"- 人工IOPV日期：{snap.get('manual_iopv_updated_date') or 'N/A'}")
+    amt = _safe_float(snap.get("amount"))
+    if amt is not None:
+        lines.append(f"- 成交额（代理流动性）：{amt/1e8:.2f} 亿元")
+    lines.append("")
+
+    lines.append("### 二、周期与技术状态")
+    lines.append(
+        f"- N225 收盘 {(_fmt_num(analysis.get('index_close'), 2) or 'N/A')}，日涨跌 {_fmt_pct(analysis.get('index_day_ret_pct')) or 'N/A'}"
+    )
+    streak_days = analysis.get("streak_days")
+    streak_ret_raw = _safe_float(analysis.get("streak_return_pct"))
+    streak_ret = _fmt_pct(streak_ret_raw)
+    streak_txt = "连平天数 N/A"
+    try:
+        sd = int(streak_days)
+        if sd > 0:
+            streak_txt = f"连涨天数 {sd}"
+            if streak_ret:
+                streak_txt += f"，累计涨 {streak_ret}"
+        elif sd < 0:
+            streak_txt = f"连跌天数 {abs(sd)}"
+            if streak_ret_raw is not None:
+                streak_txt += f"，累计跌 {_fmt_pct(abs(streak_ret_raw)) or 'N/A'}"
+        else:
+            streak_txt = "连平天数 0"
+    except Exception:
+        streak_txt = f"连涨跌天数 {streak_days}"
+    lines.append(
+        f"- MA25 偏离 {_fmt_pct(analysis.get('ma25_dev_pct')) or 'N/A'}，RSI14 {_fmt_num(analysis.get('rsi14'), 2) or 'N/A'}，{streak_txt}"
+    )
+    lines.append("")
+
+    lines.append("### 三、分层建议（不合成单一结论）")
+    layer_outputs = analysis.get("layer_outputs") if isinstance(analysis.get("layer_outputs"), list) else []
+    for it in layer_outputs:
+        if not isinstance(it, dict):
+            continue
+        layer_name = str(it.get("layer") or "layer")
+        opts = it.get("options") if isinstance(it.get("options"), list) else []
+        rs = it.get("reasons") if isinstance(it.get("reasons"), list) else []
+        hit = it.get("gate_hits") if isinstance(it.get("gate_hits"), list) else []
+        opts_txt = ", ".join(_tail_action_label(str(x)) for x in opts) if opts else "N/A"
+        lines.append(f"- **{_tail_layer_label(layer_name)}：** 选项 {opts_txt}")
+        if rs:
+            lines.append(f"  - 原因：{'; '.join(str(x) for x in rs[:3])}")
+        if hit:
+            lines.append(f"  - 闸门触发：{', '.join(str(x) for x in hit)}")
+    if isinstance(analysis.get("indicator_opinion"), str) and analysis.get("indicator_opinion").strip():
+        lines.append(f"- **指标结论：** {analysis.get('indicator_opinion').strip()}")
+    lines.append("")
+
+    lines.append("### 四、用户可选路径")
+    options = analysis.get("decision_options") if isinstance(analysis.get("decision_options"), dict) else {}
+    l1 = _tail_option_line("保守", options.get("conservative"))
+    l2 = _tail_option_line("中性", options.get("neutral"))
+    l3 = _tail_option_line("积极", options.get("aggressive"))
+    if l1:
+        lines.append(l1)
+    if l2:
+        lines.append(l2)
+    if l3:
+        lines.append(l3)
+    conflicts = options.get("layer_conflicts") if isinstance(options.get("layer_conflicts"), dict) else {}
+    if conflicts:
+        c_opts = conflicts.get("cycle_options") if isinstance(conflicts.get("cycle_options"), list) else []
+        t_opts = conflicts.get("timing_options") if isinstance(conflicts.get("timing_options"), list) else []
+        r_opts = conflicts.get("risk_options") if isinstance(conflicts.get("risk_options"), list) else []
+        lines.append("- 层间分歧：")
+        c_txt = ", ".join(_tail_action_label(str(x)) for x in c_opts) if c_opts else "N/A"
+        t_txt = ", ".join(_tail_action_label(str(x)) for x in t_opts) if t_opts else "N/A"
+        r_txt = ", ".join(_tail_action_label(str(x)) for x in r_opts) if r_opts else "N/A"
+        lines.append(f"  - 趋势判断（大势）: {c_txt}")
+        lines.append(f"  - 择时信号（节奏）: {t_txt}")
+        lines.append(f"  - 风控约束（门槛）: {r_txt}")
+    lines.append("")
+
+    lines.append("### 五、风险提示与执行摩擦")
+    notices = analysis.get("risk_notices") if isinstance(analysis.get("risk_notices"), list) else []
+    if notices:
+        for n in notices[:8]:
+            lines.append(f"- {n}")
+    else:
+        lines.append("- 暂无触发的额外风险提示。")
+    if amt is not None and amt <= 2e7:
+        lines.append("- 尾盘成交额偏低，存在滑点与成交冲击，建议被动挂单或缩小单次交易量。")
+    lines.append("")
+
+    lines.append("### 六、用户决策声明")
+    lines.append(f"- {analysis.get('user_decision_note') or '本系统仅提供多视角信息，不替代你的最终交易决策。'}")
+    lines.append("---")
+    lines.append(f"*分析完成时间：{now}*")
+    return title, _dingtalk_trim("\n".join(lines).strip())
+
+
 def _format_daily_report(report_data: Dict[str, Any], report_date: Optional[str]) -> Tuple[str, str]:
     rt = _detect_report_type(report_data)
 
@@ -1538,6 +1697,9 @@ def _format_daily_report(report_data: Dict[str, Any], report_date: Optional[str]
     elif rt == "after_close":
         title = "盘后市场复盘报告"
         subtitle = "## 📊 盘后市场复盘报告"
+    elif rt == "tail_session":
+        title = "日经225ETF尾盘监控报告"
+        subtitle = "## 📊 日经225ETF尾盘监控报告"
     else:
         title = "市场日报"
         subtitle = "## 📊 市场日报"
@@ -1788,6 +1950,9 @@ def _format_daily_report(report_data: Dict[str, Any], report_date: Optional[str]
         lines.append(f"*分析完成时间：{now}*")
         return title, _dingtalk_trim("\n".join(lines).strip())
 
+    if rt == "tail_session":
+        return _format_tail_session_report(report_data, title, now)
+
     # 开盘行情分析（opening）：legacy=盘前版式，realtime=实盘版式
     if rt in ("opening", "opening_market"):
         variant = str(report_data.get("opening_report_variant") or "legacy").strip().lower()
@@ -1795,7 +1960,11 @@ def _format_daily_report(report_data: Dict[str, Any], report_date: Optional[str]
             lines.append("### 一、晨间结论")
             lines.append(f"- **整体趋势：** {overall_trend if overall_trend is not None else 'N/A'}")
             try:
-                lines.append(f"- **趋势强度：** {float(strength):.2f}" if strength is not None else "- **趋势强度：** N/A")
+                lines.append(
+                    f"- **趋势强度：** {float(strength):.2f}"
+                    if strength is not None
+                    else "- **趋势强度：** N/A"
+                )
             except Exception:
                 lines.append(f"- **趋势强度：** {strength}")
             lines.append("")
@@ -1842,18 +2011,19 @@ def _format_daily_report(report_data: Dict[str, Any], report_date: Optional[str]
             lines.append("- **午前复核：** 若趋势强度回落或信号冲突，主动降仓并等待二次确认。")
             lines.append("")
 
-            lines.extend(_build_institutional_extras_lines(intraday_allowed=_allows_intraday_wording(report_data)))
+            lines.extend(
+                _build_institutional_extras_lines(
+                    intraday_allowed=_allows_intraday_wording(report_data)
+                )
+            )
             lines.append("")
-
             lines.append("### 热点与板块")
             hot_bo = _build_opening_hot_sector_bullets(report_data)
             if hot_bo:
-                for ln in hot_bo:
-                    lines.append(ln)
+                lines.extend(hot_bo)
             else:
                 lines.append("- （板块热度暂缺）")
             lines.append("")
-
             lines.append("---")
             lines.append(f"*分析完成时间：{now}*")
             return title, _dingtalk_trim("\n".join(lines).strip())
@@ -1906,18 +2076,6 @@ def _format_daily_report(report_data: Dict[str, Any], report_date: Optional[str]
         breadth = (sc / tc * 100.0) if tc > 0 else 0.0
         lines.append(f"- 市场广度：强势ETF {sc} / 弱势ETF {wc} / 样本 {tc}（强势占比 {breadth:.0f}%）")
         lines.append(f"- 资金风格：{ofs.get('flow_bias') or '中性'}（基于ETF强弱 + 板块热度的开盘近似）")
-        sec_top = ofs.get("sector_heat_top")
-        if isinstance(sec_top, list) and sec_top:
-            names = []
-            for x in sec_top[:3]:
-                if isinstance(x, dict):
-                    nm = str(x.get("name") or "").strip()
-                    if nm:
-                        names.append(nm)
-            if names:
-                lines.append("- 热点扩散：领先板块 " + " / ".join(names))
-        if tc > 0:
-            lines.append("- 交易提示：若强势占比<40%且主线不扩散，优先轻仓与等待二次确认。")
         note = ofs.get("note")
         if isinstance(note, str) and note.strip():
             lines.append(f"- {note.strip()[:120]}")
@@ -1931,7 +2089,9 @@ def _format_daily_report(report_data: Dict[str, Any], report_date: Optional[str]
                 if not isinstance(row, dict):
                     continue
                 nm = row.get("name") or row.get("code") or "ETF"
-                lines.append(f"- ETF {nm}：{row.get('strength') or '中'}（涨跌幅 {_fmt_pct(row.get('change_pct')) or 'N/A'}）")
+                lines.append(
+                    f"- ETF {nm}：{row.get('strength') or '中'}（涨跌幅 {_fmt_pct(row.get('change_pct')) or 'N/A'}）"
+                )
         else:
             lines.append("- ETF 跟踪快照暂缺。")
         lines.append("- 股票：默认未配置，按策略白名单扩展。")
@@ -1940,7 +2100,11 @@ def _format_daily_report(report_data: Dict[str, Any], report_date: Optional[str]
         lines.append("### 五、当日预判与执行")
         lines.append(f"- **整体趋势：** {overall_trend if overall_trend is not None else 'N/A'}")
         try:
-            lines.append(f"- **趋势强度：** {float(strength):.2f}" if strength is not None else "- **趋势强度：** N/A")
+            lines.append(
+                f"- **趋势强度：** {float(strength):.2f}"
+                if strength is not None
+                else "- **趋势强度：** N/A"
+            )
         except Exception:
             lines.append(f"- **趋势强度：** {strength}")
         lines.append("- **执行建议：** 先验证量价一致性，再决定是否追随主线；若分化加剧优先降仓。")
@@ -1959,19 +2123,7 @@ def _format_daily_report(report_data: Dict[str, Any], report_date: Optional[str]
         lo = _fmt_num(intraday.get("lower"), 3)
         if up and lo:
             lines.append(f"- 基准区间（510300）：{lo} ~ {up}（超区间需下调风险偏好）。")
-        tas = report_data.get("tracked_assets_snapshot") if isinstance(report_data.get("tracked_assets_snapshot"), dict) else {}
-        te = tas.get("etf") if isinstance(tas.get("etf"), list) else []
-        if te:
-            focus = []
-            for row in te[:3]:
-                if isinstance(row, dict):
-                    nm = str(row.get("name") or row.get("code") or "").strip()
-                    if nm:
-                        focus.append(nm)
-            if focus:
-                lines.append("- 跟踪对象：" + " / ".join(focus) + "（与基准同向再加仓，背离则降仓）。")
         lines.append("- 执行纪律：首30分钟不追单；放量背离、信号冲突或跌破关键位时先降仓后复核。")
-        lines.append("- 复核节点：09:35 / 10:00 / 10:30（按量价一致性滚动修正计划）。")
         lines.append("")
 
         lines.append("### 背景（隔夜）")
@@ -2123,11 +2275,11 @@ def _format_daily_report(report_data: Dict[str, Any], report_date: Optional[str]
                 lines.append(ln)
         else:
             sec_lines = _build_sector_rotation_lines(report_data)
-            if sec_lines:
-                for ln in sec_lines:
-                    lines.append(f"- {ln}")
-            else:
-                lines.append("- （可合并 tool_sector_heat_score + config/hot_sectors.json）")
+        if sec_lines:
+            for ln in sec_lines:
+                lines.append(f"- {ln}")
+        else:
+            lines.append("- （可合并 tool_sector_heat_score + config/hot_sectors.json）")
         lines.append("")
 
         ann = _build_announcement_lines(report_data)
@@ -2164,42 +2316,15 @@ def _format_daily_report(report_data: Dict[str, Any], report_date: Optional[str]
     lines.append("### 🔍 趋势分析结果")
     lines.append(f"- **整体趋势：** {overall_trend if overall_trend is not None else 'N/A'}")
     try:
-        if strength is not None:
-            lines.append(f"- **趋势强度：** {float(strength):.2f}")
-        else:
-            lines.append("- **趋势强度：** N/A")
+        lines.append(
+            f"- **趋势强度：** {float(strength):.2f}"
+            if strength is not None
+            else "- **趋势强度：** N/A"
+        )
     except Exception:
         lines.append(f"- **趋势强度：** {strength}")
-
-    a50_s = _fmt_pct(a50_change)
-    if a50_s is None:
-        if a50_status == "insufficient_data":
-            a50_display = "样本不足"
-        elif a50_status == "error":
-            a50_display = "接口异常"
-        else:
-            a50_display = "获取失败"
-        if isinstance(a50_reason, str) and a50_reason.strip():
-            a50_display = f"{a50_display}（{a50_reason.strip()}）"
-    else:
-        a50_display = a50_s
-    lines.append(f"- **A50期指数据：** {a50_display}")
-
-    hxc_s = _fmt_pct(hxc_change)
-    if hxc_s is None:
-        if hxc_status == "insufficient_data":
-            hxc_display = "样本不足"
-        elif hxc_status == "error":
-            hxc_display = "接口异常"
-        else:
-            hxc_display = "获取失败"
-        _ = hxc_reason  # 失败具体原因不在正文展开
-    else:
-        hxc_display = hxc_s
-    lines.append(f"- **纳斯达克中国金龙指数：** {hxc_display}")
     lines.append("")
 
-    # 外盘/指数概览（如有）
     mo_lines = _build_market_overview_lines(report_data)
     if mo_lines:
         lines.append("### 🌏 外盘/指数概览")
@@ -2207,7 +2332,6 @@ def _format_daily_report(report_data: Dict[str, Any], report_date: Optional[str]
             lines.append(f"- {ln}")
         lines.append("")
 
-    # 策略建议（如有）
     if opening_strategy:
         lines.append("### 🎯 开盘策略建议")
         direction = opening_strategy.get("direction")
@@ -2229,22 +2353,19 @@ def _format_daily_report(report_data: Dict[str, Any], report_date: Optional[str]
             lines.append(f"- **信号阈值：** {signal_threshold}")
         lines.append("")
 
-    # 波动区间（摘要）
     vol_lines = _build_volatility_lines(report_data)
     if vol_lines:
         lines.append("### 📈 波动/区间（摘要）")
         for ln in vol_lines[:30]:
-            lines.append(ln)
+            lines.append(f"- {ln}")
         lines.append("")
 
-    # 信号（盘后可能有）
     sig_lines = _build_signals_lines(report_data)
     if sig_lines:
         lines.append("### 📌 信号")
         lines.extend(sig_lines)
         lines.append("")
 
-    # 数据过期提示（如有）
     stale = report_data.get("data_stale_warning")
     if not stale and isinstance(analysis, dict):
         stale = analysis.get("data_stale_warning")
@@ -2255,7 +2376,6 @@ def _format_daily_report(report_data: Dict[str, Any], report_date: Optional[str]
 
     lines.append("---")
     lines.append(f"*分析完成时间：{now}*")
-
     return title, _dingtalk_trim("\n".join(lines).strip())
 
 

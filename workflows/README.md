@@ -13,6 +13,7 @@
 |------|----------------|------|
 | `before_open_analysis.yaml` | 工作日 9:20 | **盘前机构晨报**（唯一盘前 YAML）；**`structured_message` 自包含**（不读 research.md）；Cron 推荐单次 `tool_run_before_open_analysis_and_send` |
 | `opening_analysis.yaml` | 工作日 **9:28**（Cron 常见） | **开盘独立完整版**：含轻量开盘链路 + 机构晨报级采集 + 波动/预测回顾；`report_type=opening`；Cron 推荐单次 `tool_run_opening_analysis_and_send` |
+| `tail_session_513880.yaml` | 工作日 **14:40** | **日经225ETF尾盘监控**：`report_type=tail_session`，输出分层建议与用户可选路径（不输出唯一结论）；Cron 推荐单次 `tool_run_tail_session_analysis_and_send` |
 | `intraday_analysis.yaml` | 工作日 9–15 点每 15 分钟 | 日内：分钟/期权/Greeks、指标、波动、区间、信号、风控、告警 |
 | `after_close_analysis_enhanced.yaml` | 工作日 15:30 | **唯一**盘后工作流：实时行情、盘后分析、历史波动率、信号、效果记录、日报（已替代原精简版 `after_close_analysis.yaml`） |
 | `daily_market_report.yaml` | **工作日 16:30** | **每日市场分析报告**（钉钉）；与 `cron/jobs.json`「etf: 每日市场分析报告」对齐；章节对标见 [`docs/research/daily_market_report_web_benchmark.md`](../docs/research/daily_market_report_web_benchmark.md) |

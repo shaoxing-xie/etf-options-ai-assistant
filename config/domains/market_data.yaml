@@ -135,3 +135,24 @@ tushare:
   enabled: true
   token: "${TUSHARE_TOKEN}"
   prefer_minute: false
+
+iopv_fallback:
+  # 可扩展：按 ETF 代码配置当天手工录入 IOPV；仅 updated_date=任务当天时生效
+  manual_iopv_overrides:
+    "513880":
+      iopv: 1.8096
+      source: "manual_after_14_00"
+      updated_date: "2026-04-14"
+
+wide_inspection_overnight_refs:
+  # 宽基巡检尾盘建议：隔夜参考变量可用性与降级口径
+  sources:
+    a50_futures:
+      enabled: false
+      provider: "pending_integration"
+    usd_cny:
+      enabled: false
+      provider: "pending_integration"
+    us_equity_futures:
+      enabled: false
+      provider: "pending_integration"

@@ -189,3 +189,111 @@ daily_volatility_range:
   range_clamp:
     min_range_pct: 1.0
     max_range_pct: 12.0
+
+nikkei_tail_session:
+  enabled: true
+  etf_code: "513880"
+  index_symbol: "^N225"
+  decision_mode: user_final_decision
+  technical_thresholds:
+    ma25_dev_overheat: 5.0
+    rsi_overbought: 70
+    rsi_oversold: 30
+  streak_thresholds:
+    up_days: 5
+    down_days: 3
+  gate_rules:
+    premium_hard_stop:
+      enabled: true
+      trigger:
+        premium_pct_gte: 5.0
+    premium_extreme_exit_bias:
+      enabled: true
+      trigger:
+        premium_pct_gte: 10.0
+    manager_notice_gate:
+      enabled: true
+      trigger:
+        manager_premium_notice: true
+        premium_pct_gte: 3.0
+    degraded_data_gate:
+      enabled: true
+      trigger:
+        data_quality_in: [partial, stale, degraded]
+    overnight_shock_gate:
+      enabled: true
+      trigger:
+        overnight_risk_level_in: [high, extreme]
+    high_volatility_gate:
+      enabled: true
+      trigger:
+        atr_percentile_gte: 80
+    liquidity_guard_gate:
+      enabled: true
+      trigger:
+        min_amount_yuan_lte: 20000000
+  option_profiles:
+    conservative:
+      max_position_pct: 20
+      preferred_actions: [hold, reduce, exit_wait, buy_light]
+    neutral:
+      max_position_pct: 40
+      preferred_actions: [hold, reduce, buy_light, buy_split]
+    aggressive:
+      max_position_pct: 60
+      preferred_actions: [buy_light, buy_split, hold, reduce]
+  risk_notice_state:
+    manager_premium_notice: false
+  risk_notice_rules:
+    premium_notice:
+      when:
+        premium_pct_gte: 3.0
+      message: "当前溢价偏高，需警惕价格向IOPV回归带来的被动回撤。"
+    extreme_premium_notice:
+      when:
+        premium_pct_gte: 10.0
+      message: "当前属于极端溢价区间，不宜将上涨直接等同于安全盈利。"
+    discount_notice:
+      when:
+        premium_pct_lt: 0.0
+      message: "当前处于折价区间，具备一定安全垫，但仍需结合周期层与风险层判断。"
+    overbought_notice:
+      when:
+        rsi14_gte: 70
+      message: "技术面处于过热区域，追高胜率与盈亏比可能同时恶化。"
+    deviation_notice:
+      when:
+        ma25_dev_pct_gte: 5.0
+      message: "价格相对25日均线乖离偏大，需防范均值回归。"
+    manager_notice:
+      when:
+        manager_premium_notice: true
+      message: "基金管理人已发布溢价风险提示，当前更应从风险控制而非追涨逻辑出发。"
+    degraded_data_notice:
+      when:
+        data_quality_in: [partial, stale, degraded]
+      message: "当前部分数据源存在缺口或时滞，系统建议仅作参考，不宜据此激进决策。"
+
+wide_inspection_tail_advice:
+  enabled: true
+  # 交易日且当前时间超过此阈值时，宽基巡检报告追加“尾盘操作建议”
+  time_gate_after: "14:00"
+  trend:
+    up_threshold_pct: 0.30
+    down_threshold_pct: -0.30
+  timing:
+    # 任一核心指数盘中涨幅超过该阈值，视作短线节奏偏热
+    hot_change_pct: 1.50
+  risk:
+    drawdown_warn_pct_lte: -5.0
+    drawdown_exit_pct_lte: -10.0
+    var_warn_pct_gte: 2.0
+    var_exit_pct_gte: 2.5
+  paths:
+    conservative_cap: "20%"
+    neutral_cap: "40%"
+    aggressive_cap: "60%"
+  next_focus:
+    - "A50期货夜盘方向"
+    - "晚间重大政策/事件"
+    - "隔夜美股与中概指数波动"
