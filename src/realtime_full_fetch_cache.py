@@ -8,7 +8,7 @@
 
 约束：
 - 仅做进程内内存缓存（避免落地文件与跨进程一致性问题）
-- 缓存 TTL 可由 config.yaml 统一配置
+- 缓存 TTL 可由合并后配置统一配置
 """
 
 from __future__ import annotations
@@ -28,7 +28,7 @@ class _CacheEntry:
 _cache: Dict[str, _CacheEntry] = {}
 _lock = Lock()
 
-# 配置刷新周期：避免每次请求都重新读 config.yaml
+# 配置刷新周期：避免每次请求都重新读配置
 _CFG_REFRESH_SECONDS = 60.0
 _cfg_cache: Optional[Dict[str, Any]] = None
 _cfg_ts: float = 0.0

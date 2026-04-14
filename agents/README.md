@@ -12,6 +12,9 @@
 
 - **OpenClaw 插件注册**：项目根 `index.ts` 会加载 `config/tools_manifest.json` 中的全部工具（修改 `tools_manifest.yaml` 后请执行 `python scripts/generate_tools_json.py`）。
 - **本目录 Agent**：若 OpenClaw 支持按 Agent 限制可用工具，请将 `data_collector_agent` 与上表同步维护。
+- **Gateway 运行时**：各 Agent 的 **Skills 勾选** 与 `~/.openclaw/openclaw.json` 中 `agents.defaults.list[].skills` 维护；自研 **`ota_*`** 对照表与 Web UI（如 `http://127.0.0.1:18789/skills`）说明见 [`docs/openclaw/OpenClaw-Gateway-Agent与Skills勾选指南.md`](../docs/openclaw/OpenClaw-Gateway-Agent与Skills勾选指南.md)，可复制片段 [`config/snippets/openclaw_agents_ota_skills.json`](../config/snippets/openclaw_agents_ota_skills.json)。  
+- **趋势三工具**：`analysis_agent.yaml` 对应 Gateway 上多为 **`etf_analysis_agent`**，须在 `skills` 中勾选 **`ota_trend_analysis_brief`**（与同片段中的 **`etf_main`**、**`etf_business_core_agent`**、**`etf_notification_agent`** 一致）；纯采集的 **`etf_data_collector_agent`** 无需此项。  
+- **工作流**：`workflows/*.yaml` 不因 Skill 而必改；Skill 与 Cron 的衔接说明见 [`docs/openclaw/OpenClaw-Agent-ota-skills.md`](../docs/openclaw/OpenClaw-Agent-ota-skills.md)。
 - 其余细节需与 OpenClaw 实际格式对齐时，请参考 OpenClaw 官方文档。
 
 ## 定时任务配置

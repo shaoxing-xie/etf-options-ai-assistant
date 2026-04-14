@@ -1,6 +1,9 @@
 #!/bin/bash
 # 自动安装脚本
 # 用于自动安装option-trading-assistant插件到OpenClaw
+#
+# 推荐：OpenClaw 2026.4+ 使用 ./scripts/setup_openclaw_option_trading_assistant.sh
+# （合并 openclaw.json 的 plugins.load.paths，避免 plugin not found / 重复加载）。
 
 set -e  # 遇到错误立即退出
 

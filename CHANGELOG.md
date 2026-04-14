@@ -6,7 +6,43 @@ The format is inspired by Keep a Changelog and follows semantic versioning.
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-04-14
+
+### Changed
+- **分层配置（一次性切量）**：删除根目录 `config.yaml`；默认从 `config/environments/base.yaml` + `config/domains/*.yaml` + `config/environments/<profile>.yaml`（`ETF_OPTIONS_CONFIG_PROFILE` / `CONFIG_PROFILE`，默认 `prod`）+ 可选 `config/local.yaml` 合并加载（`src/config_loader.py`）。年度节假日来自 `config/reference/holidays_*.yaml`。`tick_client.get_best_tick` 默认走 `load_system_config`；`InternalAlertEngine` 默认走合并配置；`save_config` 默认写入 `config/environments/base.yaml`。
+- **校验**：`src/config_validate.py` 与 `scripts/validate_config_cross.py`（重复合约 code、标的与 data_cache/etf_trading 对齐、次年节假日键提醒）。
+
 ### Added
+- **Strategy engine & signal fusion (experimental)**:
+  - `plugins/strategy_engine/` + `tool_strategy_engine`（聚合候选、融合输出、审计字段）
+  - Fusion policy: `config/strategy_fusion.yaml`
+  - OpenClaw routing/evolution: `config/openclaw_strategy_engine.yaml` + `workflows/strategy_fusion_routine.yaml`
+- **Prediction quality loop**:
+  - Quality gate: `prediction_quality` + `src/prediction_normalizer.py`
+  - Close-to-close verification: `workflows/prediction_verification.yaml` + `scripts/verify_predictions.py`
+  - Weekly monitoring: `scripts/prediction_metrics_weekly.py` + `prediction_monitoring`
+- **Workflow & ops maturity**:
+  - Expanded before-open / opening / after-close / inspection / research workflows under `workflows/`
+  - Triage runbooks under `docs/ops/` and `docs/openclaw/` emphasizing single-call chaining and traceable artifacts
+- **TradingView phase 2 (balanced 4-week baseline)**:
+  - Frontend modularization: `apps/chart_console/frontend/app.js`, `api.js`, `charts.js`
+  - Multi-chart sync + layer management: second linked price chart and `Vol/MACD/RSI/MA` toggles
+  - API layered structure: `apps/chart_console/api/routes.py`, `services.py`, `serializers.py`
+  - Backtest cost model: `fee_bps/slippage_bps` and metrics `total_cost/sharpe`
+  - Workspace upgrades: history snapshots and template APIs (`/api/workspace_templates*`)
+  - Production smoke scripts: `scripts/chart_console_phase2_smoke.py`, `scripts/check_indicator_consistency.py`
+- **TradingView-style chart console (phase 1)**: Upgraded `apps/chart_console/app.py` with multi-timeframe controls, pane indicators (Volume/MACD/RSI), BOLL/MA overlays, drawing-object management, data-source status light, and workspace save/load/delete backed by `src/services/workspace_service.py` (`data/chart_console/workspaces.json`).
+- **Independent frontend + API aggregator (route B baseline)**:
+  - `apps/chart_console/frontend/index.html` (Lightweight Charts frontend)
+  - `apps/chart_console/api/server.py` (`/api/ohlcv`, `/api/indicators`, `/api/backtest`, `/api/alerts/replay`, `/api/workspaces`)
+  - `scripts/run_chart_console_pro.sh` (pro startup script)
+- **Research backtest module**: `src/services/backtest_service.py` + enhanced `apps/chart_console/pages/backtest.py` for MA crossover backtest, strategy-vs-benchmark equity chart, and metrics (`total_return`, `max_drawdown`, `win_rate`, `trade_count`).
+- **Alert replay page**: `apps/chart_console/pages/alert_replay.py` for event status distribution, filterable replay table, and timeline visualization from `data/alerts/internal_alert_events.jsonl`.
+- **Documentation sync for phase-1 rollout**: updated maintenance/runbook docs and README links:
+  - `docs/openclaw/Internal_Chart_Alert_内生类TradingView维护手册.md`
+  - `docs/openclaw/Internal_Chart_Alert_Runbook_值班速查.md`
+  - `README.md`
+- **Configurable signal generation (options + ETF + A-share)**: Primary OpenClaw tool id **`tool_generate_option_trading_signals`** (alias **`tool_generate_signals`**), plus **`tool_generate_etf_trading_signals`** and **`tool_generate_stock_trading_signals`**. **`signal_generation`**（分层 YAML）在加载时经 `normalize_signal_generation_config` 合并；docs 与 Skills（`ota-signal-risk-inspection`, `ota-strategy-fusion-playbook`）已更新。工作流默认主期权工具 id。
 - **OpenClaw ↔ strategy_engine**: `config/openclaw_strategy_engine.yaml` (routing + evolution), `Prompt_config.yaml` → `openclaw_strategy_engine_routing`, `agents/analysis_agent.yaml` lists **`tool_strategy_engine`** and adds **`strategy_fusion`** cron (**every 30 min** `*/30 9-15 * * 1-5`); optional weight persistence → `get_strategy_weights` reads `data/strategy_fusion_effective_weights.json` (override with `STRATEGY_FUSION_WEIGHTS_PATH`); workflow template `workflows/strategy_fusion_routine.yaml`; project docs updated (`README.md`, `docs/README.md`, `docs/openclaw/*`, `docs/architecture/strategy_engine_and_signal_fusion.md`, `docs/reference/工具参考手册.md`, etc.).
 - **Strategy engine (experimental v1.0)**: `plugins/strategy_engine/` with `SignalCandidate` schema, YAML-driven fusion (v1/v1.1/v1.2), and **`tool_strategy_engine`**; docs in `docs/architecture/strategy_engine_and_signal_fusion.md`. Does not change `tool_generate_signals` behavior.
 - Optional `journal_extra` on `tool_record_signal_effect` for fusion audit fields in trading journal.
@@ -23,6 +59,8 @@ The format is inspired by Keep a Changelog and follows semantic versioning.
 - Release notes:
   - `docs/publish/release-notes-v0.1.0.zh-CN.md`
   - `docs/publish/release-notes-v0.1.0.en.md`
+  - `docs/publish/release-notes-v0.2.0.zh-CN.md`
+  - `docs/publish/release-notes-v0.2.0.en.md`
 
 ### Notes
 - Research and engineering use only; not investment advice.

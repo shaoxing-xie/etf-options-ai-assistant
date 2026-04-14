@@ -458,54 +458,36 @@ def calculate_historical_volatility(
     """
     try:
         log_function_call(logger, "calculate_historical_volatility", period=period, data_period=data_period)
-        
+
+        from src.realized_vol_panel import realized_vol_windows
+
         if df is None or df.empty:
             logger.warning("数据为空，无法计算历史波动率")
             return None
-        
+
         if close_col not in df.columns:
             logger.warning(f"未找到收盘价列: {close_col}")
             return None
-        
-        # 计算收益率
+
         returns = df[close_col].pct_change().dropna()
-        
         if len(returns) < period:
             logger.warning(f"数据不足，需要至少{period}期数据，实际只有{len(returns)}期")
             return None
-        
-        # 计算最近period期的标准差
-        recent_returns = returns.tail(period)
-        std = recent_returns.std()
-        
-        # 根据数据周期类型年化波动率
-        if data_period == 'minute':
-            # 分钟数据：假设240分钟/天，252个交易日/年
-            # 年化系数 = sqrt(240 * 252)
-            annualized_vol = std * np.sqrt(240 * 252) * 100
-        else:
-            # 日线数据：假设252个交易日/年
-            annualized_vol = std * np.sqrt(252) * 100
-        
-        # 添加合理性检查：限制波动率的最大值
-        # 期权价格波动较大，但年化波动率超过500%通常不合理
-        MAX_VOLATILITY_THRESHOLD = 500.0
-        if annualized_vol > MAX_VOLATILITY_THRESHOLD:
-            logger.warning(
-                f"历史波动率异常高: {annualized_vol:.2f}%，限制为{MAX_VOLATILITY_THRESHOLD:.2f}% "
-                f"(数据周期={data_period}, 标准差={std:.6f})"
-            )
-            annualized_vol = MAX_VOLATILITY_THRESHOLD
-        
-        # 检查最小值：波动率不应该为负或过小
-        if annualized_vol < 0:
-            logger.warning(f"历史波动率为负: {annualized_vol:.2f}%，设为0%")
-            annualized_vol = 0.0
-        
-        log_function_result(logger, "calculate_historical_volatility", 
-                          f"计算成功，历史波动率={annualized_vol:.2f}% (数据周期={data_period})")
-        return annualized_vol
-        
+
+        hv_map = realized_vol_windows(df, [int(period)], close_col=close_col, data_period=data_period)
+        annualized_vol = hv_map.get(str(int(period)))
+
+        if annualized_vol is None:
+            logger.warning(f"历史波动率计算返回空 (period={period})")
+            return None
+
+        log_function_result(
+            logger,
+            "calculate_historical_volatility",
+            f"计算成功，历史波动率={annualized_vol:.2f}% (数据周期={data_period})",
+        )
+        return float(annualized_vol)
+
     except Exception as e:
         log_error_with_context(
             logger, e,

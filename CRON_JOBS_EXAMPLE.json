@@ -25,7 +25,7 @@
       "description": "每天15:30执行盘后趋势分析",
       "schedule": "30 15 * * 1-5",
       "enabled": true,
-      "message": "执行盘后趋势分析。请使用 tool_analyze_after_close 工具分析当日交易趋势，生成盘后报告，然后使用 tool_send_daily_report 发送日报到钉钉。",
+      "message": "执行盘后趋势分析。**优先单次调用 tool_analyze_after_close_and_send_daily_report**（进程内串接 analyze→send，大 JSON 不经模型）。若必须两步：先 tool_analyze_after_close，再 tool_send_daily_report，且 report_data 须含整段 tool_analyze_after_close 与 analysis=data。详见 workflows/daily_market_report.yaml。",
       "channel": "main"
     },
     {
@@ -43,7 +43,7 @@
       "description": "交易时间内每小时更新波动率（10:00-15:00，每整点）",
       "schedule": "0 10-15 * * 1-5",
       "enabled": true,
-      "message": "更新波动率数据。请使用 tool_calculate_historical_volatility 和 tool_predict_volatility 更新波动率预测。",
+      "message": "更新波动率数据。请使用 tool_calculate_historical_volatility（单窗）或 tool_underlying_historical_snapshot（多窗/可选锥与 IV）拉已实现波动，并用 tool_predict_volatility 更新预测。配置见合并后配置 historical_snapshot（域文件：config/domains/analytics.yaml）。",
       "channel": "main"
     },
     {
@@ -65,12 +65,39 @@
       "channel": "main"
     },
     {
+      "id": "etf-signal-risk-inspection-morning",
+      "name": "宽基ETF巡检快报（早盘）",
+      "description": "OpenClaw：见 workflows/signal_risk_inspection.yaml structured_message_morning",
+      "schedule": "15,45 9 * * 1-5",
+      "enabled": false,
+      "message": "唯一动作：tool_run_signal_risk_inspection_and_send(phase='morning', mode='prod')。成功则简短回执；若未发生真实 tool 调用或发送失败则输出 ERROR_NO_DELIVERY_TOOL_CALL。详见 docs/ops/cron_signal_inspection_triage.md §5。",
+      "channel": "main"
+    },
+    {
+      "id": "etf-signal-risk-inspection-midday",
+      "name": "宽基ETF巡检快报（午间）",
+      "description": "OpenClaw：structured_message_midday",
+      "schedule": "15,45 10-11 * * 1-5",
+      "enabled": false,
+      "message": "唯一动作：tool_run_signal_risk_inspection_and_send(phase='midday', mode='prod')。成功则简短回执；失败约定同早盘示例。详见 docs/ops/cron_signal_inspection_triage.md §5。",
+      "channel": "main"
+    },
+    {
+      "id": "etf-signal-risk-inspection-afternoon",
+      "name": "宽基ETF巡检快报（下午）",
+      "description": "OpenClaw：structured_message_afternoon",
+      "schedule": "0,30 13-14 * * 1-5",
+      "enabled": false,
+      "message": "唯一动作：tool_run_signal_risk_inspection_and_send(phase='afternoon', mode='prod')。成功则简短回执；失败约定同早盘示例。详见 docs/ops/cron_signal_inspection_triage.md §5。",
+      "channel": "main"
+    },
+    {
       "id": "strategy-fusion-example",
       "name": "策略引擎融合（示例，默认关闭）",
-      "description": "聚合 tool_generate_signals 与趋势信号并融合；详见 docs/architecture/strategy_engine_and_signal_fusion.md",
+      "description": "聚合 tool_generate_option_trading_signals（别名 tool_generate_signals）与趋势信号并融合；详见 docs/architecture/strategy_engine_and_signal_fusion.md",
       "schedule": "*/30 9-15 * * 1-5",
       "enabled": false,
-      "message": "执行 tool_strategy_engine（underlying=510300, index_code=000300）。根据 fused 结果可选调用 tool_assess_risk、tool_record_signal_effect（journal_extra 可带 raw/fused/weights）、tool_send_signal_alert。",
+      "message": "执行 tool_strategy_engine（默认 underlying=510300, index_code=000300；多 ETF 可用逗号分隔并与 index_code 同序）。关注返回 data.summary、fused、fused_by_symbol；根据 fused 结果可选 tool_assess_risk、tool_record_signal_effect（journal_extra 可带 summary/raw/fused/weights）、tool_send_signal_alert。详见 workflows/strategy_fusion_routine.yaml、skills/ota-strategy-fusion-playbook/SKILL.md。",
       "channel": "main"
     }
   ]

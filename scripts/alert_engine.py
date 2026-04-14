@@ -4,6 +4,19 @@ A股价格预警引擎 (Alert Engine)
 - 读写 alerts.json
 - 条件判断与触发
 - 钉钉私信通知
+
+用法示例（在项目根目录执行）：
+  # 查看帮助（含命令列表）
+  python3 scripts/alert_engine.py --help
+
+  # 创建一条“突破上限”预警（示例字段以脚本 help 为准）
+  python3 scripts/alert_engine.py create <user_id> <user_name> 510300 above 4.60
+
+  # 列出某用户的预警
+  python3 scripts/alert_engine.py list <user_id>
+
+  # 删除预警
+  python3 scripts/alert_engine.py delete <alert_id>
 """
 
 import json
@@ -40,7 +53,12 @@ def _ensure_data_dir():
 def load_alerts() -> list:
     if ALERTS_FILE.exists():
         with open(ALERTS_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
+            data = json.load(f)
+            # 支持两种格式: 直接列表 或 {"alerts": [...]}
+            if isinstance(data, list):
+                return data
+            elif isinstance(data, dict) and "alerts" in data:
+                return data["alerts"]
     return []
 
 

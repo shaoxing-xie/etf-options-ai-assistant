@@ -19,20 +19,30 @@ def tool_volatility(
     mode: predict | historical
     """
     if mode == "predict":
-        from analysis.volatility_prediction import tool_predict_volatility
-        result = tool_predict_volatility(
-            underlying=underlying or symbol or "510300",
+        # 使用 volatility_prediction 保留结构化 data；勿仅用 tool_predict_volatility 的纯字符串，
+        # 否则 send_daily_report / 开盘复合工具只能塞 Markdown，导致章节八嵌套 ## 与版式错乱。
+        from plugins.analysis.volatility_prediction import volatility_prediction
+
+        und = underlying or symbol or "510300"
+        full = volatility_prediction(
+            underlying=und,
             contract_codes=contract_codes,
-            **kwargs
+            asset_type_hint=kwargs.get("asset_type_hint"),
         )
-        # 工具层统一返回 dict，便于工作流/OpenClaw 解析；tool_predict_volatility 返回字符串
-        if isinstance(result, dict):
-            return result
+        if not isinstance(full, dict):
+            return {
+                "success": False,
+                "message": "波动率预测返回异常",
+                "formatted_output": str(full),
+                "data": None,
+            }
         return {
-            "success": True,
-            "message": "波动率预测完成",
-            "formatted_output": result if isinstance(result, str) else str(result),
-            "data": None,
+            "success": bool(full.get("success")),
+            "message": full.get("message") or "波动率预测完成",
+            "formatted_output": full.get("formatted_output"),
+            "data": full.get("data"),
+            "all_results": full.get("all_results"),
+            "llm_enhanced": full.get("llm_enhanced"),
         }
     if mode == "historical":
         from analysis.historical_volatility import tool_calculate_historical_volatility

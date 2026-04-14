@@ -2,6 +2,12 @@
 """
 从 config/tools_manifest.yaml 生成 config/tools_manifest.json，供 OpenClaw 插件 index 加载。
 单一数据源：修改 manifest 后运行此脚本再重启/重载插件。
+
+用法示例（在项目根目录执行）：
+  # 生成 tools_manifest.json（需安装 PyYAML）
+  python3 scripts/generate_tools_json.py
+
+  # 常见：改了 config/tools_manifest.yaml 后先生成，再重启/重载 OpenClaw Gateway
 """
 from pathlib import Path
 import json

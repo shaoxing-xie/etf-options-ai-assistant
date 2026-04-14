@@ -8,8 +8,9 @@
 
 | 类型 | 主渠道 | 典型工具 / 别名 |
 |------|--------|------------------|
-| 研究 / 分析类长报告 | **钉钉** | `tool_send_dingtalk_message` / `send_dingtalk_message`（Webhook + 加签） |
-| 运维 / 巡检 / 快报 | **飞书** | `send_feishu_webhook` / `tool_send_feishu_message` |
+| 研究 / 分析类长报告 | **钉钉** | `tool_send_analysis_report` / `tool_send_daily_report` / `tool_send_dingtalk_message`（Webhook + 加签）；`tool_send_analysis_report` 委托 `tool_send_daily_report` 实现 |
+| 信号+风控巡检快报 | **钉钉** | `tool_send_dingtalk_message`（`mode=prod`）；见 `workflows/signal_risk_inspection.yaml` 与 `docs/openclaw/dingtalk_delivery_contract.md` §巡检快报 |
+| 运维摘要 / 信号卡片 / 风险（非上述契约） | **飞书** | `tool_send_feishu_notification`（经 `tool_send_feishu_message` / `tool_send_signal_alert` / `tool_send_risk_alert` 等别名）、`tool_send_feishu_card_webhook` |
 
 ## SOUL 已更新的位置（本机 OpenClaw Agent）
 
@@ -21,8 +22,8 @@
 ## 与 `jobs.json` 的关系
 
 - **最高优先级**：单条任务的 `payload.message`。
-- **已对齐（本机）**：`~/.openclaw/cron/jobs.json` 中下列分析类任务已改为 **仅钉钉**（不再要求「双通道同时发飞书+钉钉」）：开盘行情分析、每日市场分析报告、ETF 轮动研究、策略研究与回放、盘后/盘前增强版、涨停回马枪盘后；`etf-510300-intraday-monitor` 改为 **仅钉钉**（可 `tool_send_dingtalk_message` 或 `message→钉钉`）；`策略引擎与信号融合` 改为 **默认静默**，仅在强信号场景允许 **简短** 钉钉摘要。
-- **巡检类**（信号+风控三档）仍为 **仅飞书**（`send_feishu_webhook`），与 SOUL 一致。
+- **已对齐（本机）**：`~/.openclaw/cron/jobs.json` 中下列分析类任务已改为 **仅钉钉**（不再要求「双通道同时发飞书+钉钉」）：开盘行情分析、每日市场分析报告、ETF 轮动研究、策略研究与回放、盘后/盘前增强版、涨停回马枪盘后；`etf-510300-intraday-monitor` 以工作流为准（常见钉钉或飞书，勿双扇出同文）；`策略引擎与信号融合` 多为 **默认静默**，仅在强信号场景允许 **简短** 摘要。
+- **巡检类**（信号+风控三档）：仓库 `workflows/signal_risk_inspection.yaml` 约定 **仅钉钉** `tool_send_dingtalk_message`；若本机 SOUL 仍写飞书，请与 YAML / `jobs.json` 一并校正。
 
 ## 同步到其它机器
 

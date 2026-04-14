@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Validate JSON syntax for repository JSON files."""
+"""Validate JSON syntax for repository JSON files.
+
+Usage examples (run from repo root):
+  python3 scripts/check_json_syntax.py
+"""
 
 from __future__ import annotations
 

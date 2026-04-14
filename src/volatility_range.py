@@ -7,6 +7,7 @@ import pandas as pd
 import numpy as np
 from datetime import datetime, time
 from typing import Dict, Optional, Any
+from copy import deepcopy
 import pytz
 
 from src.logger_config import get_module_logger, log_error_with_context
@@ -17,6 +18,54 @@ from src.system_status import get_trading_hours_config
 from src.config_loader import load_system_config
 
 logger = get_module_logger(__name__)
+
+
+def _deep_merge_dict(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
+    """递归合并字典：override 覆盖 base。"""
+    merged = deepcopy(base)
+    for k, v in override.items():
+        if isinstance(v, dict) and isinstance(merged.get(k), dict):
+            merged[k] = _deep_merge_dict(merged[k], v)
+        else:
+            merged[k] = deepcopy(v)
+    return merged
+
+
+def _resolve_vol_engine_config(config: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """
+    解析 volatility_engine 的 A/B profile：
+    - 默认使用 volatility_engine 顶层参数
+    - 如果配置了 ab_test.active_profile，则覆盖对应参数模板
+    - 如果 emergency_rollback_to_fusion=true，优先强制 fusion_safe
+    """
+    if not isinstance(config, dict):
+        return {}
+
+    base_cfg = deepcopy(config.get("volatility_engine", {}))
+    if not isinstance(base_cfg, dict):
+        return {}
+
+    ab_cfg = base_cfg.get("ab_test", {})
+    if not isinstance(ab_cfg, dict):
+        return base_cfg
+
+    profiles = ab_cfg.get("profiles", {})
+    if not isinstance(profiles, dict):
+        return base_cfg
+
+    rollback_on = bool(ab_cfg.get("emergency_rollback_to_fusion", False))
+    active_profile = "fusion_safe" if rollback_on else str(ab_cfg.get("active_profile", "")).strip()
+    selected_profile = profiles.get(active_profile)
+
+    if not isinstance(selected_profile, dict):
+        base_cfg["_ab_profile_applied"] = None
+        base_cfg["_ab_rollback_active"] = rollback_on
+        return base_cfg
+
+    merged_cfg = _deep_merge_dict(base_cfg, selected_profile)
+    merged_cfg["_ab_profile_applied"] = active_profile
+    merged_cfg["_ab_rollback_active"] = rollback_on
+    return merged_cfg
 
 # 阶段1优化：导入市场校准器和IV调整器
 try:
@@ -888,8 +937,9 @@ def calculate_etf_volatility_range_multi_period(
     remaining_minutes: int,
     primary_weight: float = 0.6,
     secondary_weight: float = 0.4,
-    underlying: str = '510300',  # ETF代码，用于IV融合
-    config: Optional[Dict] = None
+    underlying: str = '510300',  # 标的代码（ETF/股票等），输出字段同步
+    config: Optional[Dict] = None,
+    use_option_iv: bool = False,  # ETF/股票现货区间默认不融合期权 IV
 ) -> Dict[str, Any]:
     """
     计算ETF波动区间（双周期综合：30分钟为主，15分钟为辅）
@@ -908,6 +958,17 @@ def calculate_etf_volatility_range_multi_period(
     """
     try:
         logger.info("开始双周期ETF波动区间计算（30分钟为主，15分钟为辅）...")
+        if config is None:
+            config = load_system_config(use_cache=True)
+        vol_engine_cfg = _resolve_vol_engine_config(config)
+        primary_method = str(vol_engine_cfg.get("primary_method", "fusion")).lower()
+        result_profile = vol_engine_cfg.get("_ab_profile_applied")
+        if result_profile:
+            logger.info(
+                "volatility_engine A/B profile生效: %s (rollback=%s)",
+                result_profile,
+                vol_engine_cfg.get("_ab_rollback_active", False),
+            )
         
         # 1. 使用30分钟周期计算主要波动区间
         primary_range = calculate_etf_volatility_range(
@@ -934,7 +995,7 @@ def calculate_etf_volatility_range_multi_period(
         confidence = primary_range['confidence'] * primary_weight + secondary_range['confidence'] * secondary_weight
         
         result = {
-            'symbol': '510300',
+            'symbol': str(underlying or '510300'),
             'current_price': etf_current_price,
             'upper': round(upper, 4),
             'lower': round(lower, 4),
@@ -949,22 +1010,104 @@ def calculate_etf_volatility_range_multi_period(
             },
             'hist_vol': primary_range.get('hist_vol') or (primary_range.get('range_pct', 2.0))  # 保存历史波动率
         }
-        
-        # 阶段3优化：尝试使用期权IV信息融合（如果可用）
+        if result_profile:
+            result["ab_profile"] = str(result_profile)
+            result["ab_rollback_active"] = bool(vol_engine_cfg.get("_ab_rollback_active", False))
+
+        # D-1: 影子 GARCH（并行输出，不默认接管主链路）
+        garch_shadow: Dict[str, Any] = {"success": False, "reason": "not_enabled_or_unavailable"}
         try:
-            from src.option_iv_fusion import incorporate_option_iv
-            if config is None:
-                config = load_system_config()
-            
-            # 尝试应用IV融合
-            result = incorporate_option_iv(
-                etf_prediction=result,
-                underlying=underlying,
-                option_iv_data=None,  # 自动获取
-                config=config
-            )
+            etf_garch_cfg = vol_engine_cfg.get("etf_garch", {})
+            if INDEX_GARCH_AVAILABLE and bool(etf_garch_cfg.get("enabled", True)):
+                close_col = "收盘" if "收盘" in etf_minute_30m.columns else ("close" if "close" in etf_minute_30m.columns else None)
+                min_points = int(etf_garch_cfg.get("min_data_points", 40))
+                if close_col and len(etf_minute_30m) >= min_points:
+                    series = pd.to_numeric(etf_minute_30m[close_col], errors="coerce").dropna()
+                    if len(series) >= min_points:
+                        remaining_ratio = max(0.01, min(1.0, float(remaining_minutes) / 240.0))
+                        assert IndexGARCHPredictorCls is not None
+                        predictor = IndexGARCHPredictorCls(
+                            garch_p=int(etf_garch_cfg.get("garch_p", 1)),
+                            garch_q=int(etf_garch_cfg.get("garch_q", 1)),
+                            arima_order=tuple(etf_garch_cfg.get("arima_order", [1, 1, 1])),
+                            confidence_level=float(etf_garch_cfg.get("confidence_level", 0.95)),
+                        )
+                        gr = predictor.predict_price_range(
+                            current_price=float(etf_current_price),
+                            price_series=series,
+                            horizon=1,
+                            remaining_ratio=remaining_ratio,
+                        )
+                        if gr.get("success"):
+                            garch_shadow = {
+                                "success": True,
+                                "upper": float(gr.get("upper")),
+                                "lower": float(gr.get("lower")),
+                                "predicted_volatility": float(gr.get("predicted_volatility", 0.0)),
+                                "method": "shadow_garch",
+                            }
         except Exception as e:
-            logger.debug(f"期权IV融合失败（双周期）: {e}，使用原始预测")
+            garch_shadow = {"success": False, "reason": f"error: {e}"}
+        result["garch_shadow"] = garch_shadow
+
+        # D-2: primary_method 决策（fusion|garch|hybrid）
+        if garch_shadow.get("success"):
+            g_upper = float(garch_shadow["upper"])
+            g_lower = float(garch_shadow["lower"])
+            if primary_method == "garch":
+                result["upper"] = round(g_upper, 4)
+                result["lower"] = round(max(0.0, g_lower), 4)
+                result["range_pct"] = round((result["upper"] - result["lower"]) / etf_current_price * 100, 3)
+                result["method"] = "GARCH主导(30m影子转主)"
+            elif primary_method == "hybrid":
+                gw = float(vol_engine_cfg.get("garch_blend_weight", 0.4))
+                gw = max(0.0, min(1.0, gw))
+                fw = 1.0 - gw
+                h_upper = float(result["upper"]) * fw + g_upper * gw
+                h_lower = float(result["lower"]) * fw + g_lower * gw
+                result["upper"] = round(h_upper, 4)
+                result["lower"] = round(max(0.0, h_lower), 4)
+                result["range_pct"] = round((result["upper"] - result["lower"]) / etf_current_price * 100, 3)
+                result["method"] = f"Hybrid融合(Fusion{fw:.2f}+GARCH{gw:.2f})"
+
+        # D-3: 成交量因子（注入 sigma 融合阶段）
+        try:
+            vol_adj_cfg = vol_engine_cfg.get("volume_adjustment", {})
+            if bool(vol_adj_cfg.get("enabled", True)):
+                vcol = None
+                for c in ["成交量", "volume", "VOL", "成交额"]:
+                    if c in etf_minute_30m.columns:
+                        vcol = c
+                        break
+                if vcol is not None:
+                    vols = pd.to_numeric(etf_minute_30m[vcol], errors="coerce").dropna()
+                    if len(vols) >= 8:
+                        recent_n = int(vol_adj_cfg.get("recent_points", 3))
+                        lookback_n = int(vol_adj_cfg.get("lookback_points", 20))
+                        influence = float(vol_adj_cfg.get("influence", 0.2))
+                        min_factor = float(vol_adj_cfg.get("min_factor", 0.85))
+                        max_factor = float(vol_adj_cfg.get("max_factor", 1.2))
+                        recent_mean = float(vols.tail(recent_n).mean())
+                        base_mean = float(vols.tail(lookback_n).mean()) if lookback_n > 0 else float(vols.mean())
+                        ratio = (recent_mean / base_mean) if base_mean > 0 else 1.0
+                        volume_factor = max(min_factor, min(max_factor, 1.0 + influence * (ratio - 1.0)))
+                        result["volume_factor"] = round(float(volume_factor), 4)
+        except Exception as e:
+            logger.debug(f"成交量因子计算失败: {e}")
+        
+        # 期权 IV 融合：仅当显式开启（现货 ETF/股票区间默认关闭）
+        if use_option_iv:
+            try:
+                from src.option_iv_fusion import incorporate_option_iv
+
+                result = incorporate_option_iv(
+                    etf_prediction=result,
+                    underlying=underlying,
+                    option_iv_data=None,
+                    config=config,
+                )
+            except Exception as e:
+                logger.debug(f"期权IV融合失败（双周期）: {e}，使用原始预测")
         
         # P0/P2：统一收敛策略（与 tool_predict_intraday_range 同口径）
         # 目标：避免极端日“区间过宽 + 置信度偏乐观”在 volatility_ranges 缓存中持续失控。
@@ -1015,6 +1158,8 @@ def calculate_etf_volatility_range_multi_period(
             result["clamp_bounds_pct"] = {"min_pct": min_pct, "max_pct": max_pct}
         except Exception as e:
             logger.debug(f"双周期区间收敛处理失败: {e}，使用原始预测")
+
+        result["symbol"] = str(underlying or "510300")
 
         # GROK优化：添加突破概率计算
         breakthrough_prob = calculate_breakthrough_probability(
@@ -1947,11 +2092,15 @@ def calculate_volatility_ranges(
         if use_multi_period and etf_minute_30m is not None and etf_minute_15m is not None:
             # 使用双周期计算（30分钟+15分钟）
             logger.info("使用双周期计算ETF波动区间（30分钟为主，15分钟为辅）")
+            _cfg_etf = config if config is not None else load_system_config()
             etf_range = calculate_etf_volatility_range_multi_period(
                 etf_minute_30m,
                 etf_minute_15m,
                 etf_current_price,
-                remaining_minutes
+                remaining_minutes,
+                underlying="510300",
+                config=_cfg_etf,
+                use_option_iv=False,
             )
         else:
             # 使用单周期计算（如果没有提供30分钟和15分钟数据，使用默认值）

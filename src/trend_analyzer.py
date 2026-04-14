@@ -6,6 +6,7 @@
 import pandas as pd
 from datetime import datetime, timedelta
 from typing import Dict, Optional, Any
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 import pytz
 import json
 from pathlib import Path
@@ -21,6 +22,28 @@ from src.data_collector import (
 from src.indicator_calculator import calculate_macd, calculate_ma
 
 logger = get_module_logger(__name__)
+
+
+def _last_bar_yyyymmdd_from_index_df(df: Optional[pd.DataFrame]) -> Optional[str]:
+    """取指数日线 DataFrame 中最后一根 K 线的日期（YYYYMMDD），按日期列排序后取末行，避免缓存乱序误读。"""
+    if df is None or df.empty or "日期" not in df.columns:
+        return None
+    try:
+        dfc = df.copy()
+        dfc["日期"] = pd.to_datetime(dfc["日期"], errors="coerce")
+        dfc = dfc.dropna(subset=["日期"]).sort_values("日期")
+        if dfc.empty:
+            return None
+        last = dfc["日期"].iloc[-1]
+        return pd.Timestamp(last).strftime("%Y%m%d")
+    except Exception:
+        last_date = str(df["日期"].iloc[-1])
+        if len(last_date) == 8 and last_date.isdigit():
+            return last_date
+        try:
+            return pd.to_datetime(last_date).strftime("%Y%m%d")
+        except Exception:
+            return None
 
 
 def _hxc_cache_path() -> Path:
@@ -459,11 +482,19 @@ def analyze_daily_market_after_close(config: Optional[Dict] = None) -> Dict[str,
     """
     try:
         logger.info("开始盘后分析...")
-        
-        today = datetime.now(pytz.timezone('Asia/Shanghai')).strftime("%Y%m%d")
+
+        tz_sh = pytz.timezone("Asia/Shanghai")
+        now_sh = datetime.now(tz_sh)
+        today = now_sh.strftime("%Y%m%d")
+        try:
+            from src.system_status import get_expected_latest_a_share_daily_bar_date
+
+            expected_bar_date = get_expected_latest_a_share_daily_bar_date(now_sh, config)
+        except Exception:
+            expected_bar_date = today
         # 回看120个日历日，确保有足够的交易日数据（60个交易日 ≈ 90个日历日，增加缓冲确保有足够数据）
         # 考虑到节假日和周末，120个日历日通常能提供约80个交易日，足够计算MA60
-        start_date = (datetime.now() - timedelta(days=120)).strftime("%Y%m%d")
+        start_date = (now_sh - timedelta(days=120)).strftime("%Y%m%d")
         
         # ========== 数据获取与验证（支持缓存强制刷新） ==========
         max_attempts = 2  # 最多尝试2次
@@ -489,78 +520,107 @@ def analyze_daily_market_after_close(config: Optional[Dict] = None) -> Dict[str,
                 except Exception as e:
                     logger.warning(f"清除缓存失败: {e}")
             
-            # 1. 获取上证指数日线数据
-            shanghai_daily = fetch_index_daily_em(
+            # 1/2. 并行获取上证与沪深300日线，避免串行耗时叠加导致上游工具超时
+            per_fetch_timeout_seconds = 20
+            if isinstance(config, dict):
+                ta_cfg = config.get("trend_analysis_plugin", {}) or {}
+                try:
+                    per_fetch_timeout_seconds = int(
+                        ta_cfg.get("index_fetch_timeout_seconds", per_fetch_timeout_seconds)
+                    )
+                except Exception:
+                    pass
+
+            executor = ThreadPoolExecutor(max_workers=2)
+            future_sh = executor.submit(
+                fetch_index_daily_em,
                 symbol="000001",
                 period="daily",
                 start_date=start_date,
-                end_date=today
+                end_date=today,
             )
-            
-            # 2. 获取沪深300日线数据
-            hs300_daily = fetch_index_daily_em(
+            future_hs300 = executor.submit(
+                fetch_index_daily_em,
                 symbol="000300",
                 period="daily",
                 start_date=start_date,
-                end_date=today
+                end_date=today,
             )
+            try:
+                try:
+                    shanghai_daily = future_sh.result(timeout=max(5, per_fetch_timeout_seconds))
+                except Exception as e:
+                    logger.warning(f"获取上证指数日线超时/失败，后续使用降级口径: {e}")
+                    shanghai_daily = None
+                    future_sh.cancel()
+                try:
+                    hs300_daily = future_hs300.result(timeout=max(5, per_fetch_timeout_seconds))
+                except Exception as e:
+                    logger.warning(f"获取沪深300日线超时/失败，后续使用降级口径: {e}")
+                    hs300_daily = None
+                    future_hs300.cancel()
+            finally:
+                # 避免因单路阻塞导致退出阶段长时间等待，确保主流程按预算返回
+                executor.shutdown(wait=False, cancel_futures=True)
             
-            # 3. 验证数据日期是否是今天
+            # 3. 验证数据日期是否与「最近一根完整日线」应对齐的交易日一致（盘前不应要求等于日历当日）
             data_date_valid = True
             
             if shanghai_daily is not None and not shanghai_daily.empty:
-                if '日期' in shanghai_daily.columns:
-                    last_date = str(shanghai_daily['日期'].iloc[-1])
-                    # 处理多种日期格式
-                    if len(last_date) == 8:  # YYYYMMDD
-                        shanghai_last_date = last_date
-                    else:  # YYYY-MM-DD 或其他格式
-                        try:
-                            shanghai_last_date = pd.to_datetime(last_date).strftime("%Y%m%d")
-                        except Exception as e:
-                            logger.debug(f"日期解析失败（shanghai_last_date）: {last_date}, 错误: {e}", exc_info=True)
-                            shanghai_last_date = last_date
-                    
-                    if shanghai_last_date != today:
-                        logger.warning(f"上证指数数据日期不是今天: 期望={today}, 实际={shanghai_last_date}")
+                if "日期" in shanghai_daily.columns:
+                    shanghai_last_date = _last_bar_yyyymmdd_from_index_df(shanghai_daily)
+                    if shanghai_last_date and shanghai_last_date != expected_bar_date:
+                        logger.warning(
+                            "上证指数数据日期与期望最近完整交易日不一致: "
+                            f"期望={expected_bar_date}, 实际={shanghai_last_date}"
+                        )
                         data_date_valid = False
-            
+
             if hs300_daily is not None and not hs300_daily.empty:
-                if '日期' in hs300_daily.columns:
-                    last_date = str(hs300_daily['日期'].iloc[-1])
-                    # 处理多种日期格式
-                    if len(last_date) == 8:  # YYYYMMDD
-                        hs300_last_date = last_date
-                    else:  # YYYY-MM-DD 或其他格式
-                        try:
-                            hs300_last_date = pd.to_datetime(last_date).strftime("%Y%m%d")
-                        except Exception as e:
-                            logger.debug(f"日期解析失败（hs300_last_date）: {last_date}, 错误: {e}", exc_info=True)
-                            hs300_last_date = last_date
-                    
-                    if hs300_last_date != today:
-                        logger.warning(f"沪深300数据日期不是今天: 期望={today}, 实际={hs300_last_date}")
+                if "日期" in hs300_daily.columns:
+                    hs300_last_date = _last_bar_yyyymmdd_from_index_df(hs300_daily)
+                    if hs300_last_date and hs300_last_date != expected_bar_date:
+                        logger.warning(
+                            "沪深300数据日期与期望最近完整交易日不一致: "
+                            f"期望={expected_bar_date}, 实际={hs300_last_date}"
+                        )
                         data_date_valid = False
             
             # 如果数据日期验证通过，或已经是最后一次尝试，跳出循环
             if data_date_valid or attempt >= max_attempts - 1:
                 if data_date_valid:
-                    logger.info(f"数据日期验证通过: 上证指数和沪深300数据均为今天({today})")
+                    logger.info(
+                        f"数据日期验证通过: 上证/沪深300 最新日线与期望一致({expected_bar_date})"
+                    )
                 else:
-                    # 明确提示：数据日期不匹配，分析结果可能不准确
+                    # 明确提示：数据日期不匹配（交易日与非交易日口径区分）
                     actual_dates = []
                     if shanghai_last_date:
                         actual_dates.append(f"上证指数={shanghai_last_date}")
                     if hs300_last_date:
                         actual_dates.append(f"沪深300={hs300_last_date}")
                     actual_str = ", ".join(actual_dates) if actual_dates else "未知"
-                    data_stale_warning = (
-                        f"⚠️ 数据日期不匹配：期望今日({today})，实际最新数据({actual_str})。"
-                        f"可能原因：今日非交易日、数据源未更新。当前分析基于旧数据，结论可能不准确，请谨慎参考。"
-                    )
+                    try:
+                        from src.system_status import is_trading_day
+
+                        today_dt = tz_sh.localize(datetime.strptime(today, "%Y%m%d"))
+                        cal_today_is_trading = is_trading_day(today_dt, config)
+                    except Exception:
+                        cal_today_is_trading = True
+                    if not cal_today_is_trading:
+                        data_stale_warning = (
+                            f"ℹ️ **数据日期说明**：日历日 {today} 为非 A 股交易日（周末或节假日），"
+                            f"指数日线最新 bar 为上一交易日（{actual_str}）属**正常现象**；"
+                            f"本报告基于最近可用交易日收市数据，非数据源故障。"
+                        )
+                    else:
+                        data_stale_warning = (
+                            f"⚠️ 数据日期不匹配：期望最近完整交易日({expected_bar_date})，实际最新数据({actual_str})。"
+                            f"可能原因：数据源未更新、本地缓存异常或交易日盘后尚未落库。当前分析基于旧数据，结论可能不准确，请谨慎参考。"
+                        )
                     logger.error("=" * 60)
                     logger.error("【盘后分析】数据日期验证失败")
-                    logger.error(f"  期望日期: {today} (今日)")
+                    logger.error(f"  期望最近完整交易日: {expected_bar_date}")
                     logger.error(f"  实际数据: 上证指数={shanghai_last_date or '无'}, 沪深300={hs300_last_date or '无'}")
                     logger.error(f"  已尝试 {max_attempts} 次刷新缓存，数据源仍未更新")
                     logger.error("  将使用当前数据继续分析，结论可能不准确，请谨慎参考")
@@ -568,11 +628,18 @@ def analyze_daily_market_after_close(config: Optional[Dict] = None) -> Dict[str,
                 break
         # ========== 数据获取与验证结束 ==========
         
-        # 3. 分析上证指数趋势
-        shanghai_trend, shanghai_strength = analyze_index_trend(shanghai_daily, "000001")
-        
-        # 4. 分析沪深300趋势
-        hs300_trend, hs300_strength = analyze_index_trend(hs300_daily, "000300")
+        # 3/4. 分析指数趋势
+        # 根因修复：ARIMA在盘后路径耗时高（常超过工具超时），默认关闭以保证 cron 稳定返回。
+        use_arima_after_close = False
+        if isinstance(config, dict):
+            ta_cfg = config.get("trend_analysis_plugin", {}) or {}
+            use_arima_after_close = bool(ta_cfg.get("after_close_use_arima", False))
+        shanghai_trend, shanghai_strength = analyze_index_trend(
+            shanghai_daily, "000001", use_arima=use_arima_after_close
+        )
+        hs300_trend, hs300_strength = analyze_index_trend(
+            hs300_daily, "000300", use_arima=use_arima_after_close
+        )
         
         # 5. 计算市场情绪（上涨股票比例）
         # 尝试获取全市场数据，如果失败则使用指数涨跌作为参考
@@ -582,9 +649,21 @@ def analyze_daily_market_after_close(config: Optional[Dict] = None) -> Dict[str,
         
         try:
             # 尝试获取A股整体数据（涨跌家数）
-            # 说明：ak.stock_zh_a_spot() 在高频/多次运行场景下容易触发新浪风控，返回 HTML 拦截页，
-            # 从而导致 demjson 解码失败（以 '<' 开头）。这里改为更稳的“只统计涨跌家数”的实现。
-            breadth = _fetch_market_breadth_sina(max_retries=3)
+            # 说明：该步骤在部分网络环境会较慢；若超过预算则快速降级为指数推算，
+            # 避免拖垮 tool_analyze_after_close 导致上游超时/Command failed。
+            breadth_timeout_seconds = 8
+            if isinstance(config, dict):
+                ta_cfg = config.get("trend_analysis_plugin", {}) or {}
+                try:
+                    breadth_timeout_seconds = int(
+                        ta_cfg.get("breadth_timeout_seconds", breadth_timeout_seconds)
+                    )
+                except Exception:
+                    pass
+
+            with ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(_fetch_market_breadth_sina, 3)
+                breadth = future.result(timeout=max(2, breadth_timeout_seconds))
             if breadth.get("success"):
                 rising_count = int(breadth.get("rising_count") or 0)
                 falling_count = int(breadth.get("falling_count") or 0)
@@ -599,6 +678,10 @@ def analyze_daily_market_after_close(config: Optional[Dict] = None) -> Dict[str,
                 logger.warning(f"获取全市场涨跌家数失败（新浪 market_center）: {err}")
                 rising_count = None
                 falling_count = None
+        except FuturesTimeoutError:
+            logger.warning("获取全市场涨跌家数超时，回退到指数涨跌推算（不影响盘后分析主流程）")
+            rising_count = None
+            falling_count = None
         except Exception as e:
             logger.warning(f"获取全市场数据失败: {str(e)}，使用指数涨跌作为参考")
             rising_count = None
@@ -665,22 +748,6 @@ def analyze_daily_market_after_close(config: Optional[Dict] = None) -> Dict[str,
         if data_stale_warning:
             report["data_stale_warning"] = data_stale_warning
         
-        # ========== LLM增强：盘后分析 ==========
-        try:
-            from src.llm_enhancer import enhance_with_llm
-            llm_config = config.get('llm_enhancer', {}) if config else {}
-            if llm_config.get('enabled', False) and 'after_close' in llm_config.get('analysis_types', []):
-                llm_summary, llm_meta = enhance_with_llm(report, 'after_close', config)
-                if llm_summary:
-                    report['llm_summary'] = llm_summary
-                    report['llm_meta'] = llm_meta
-                    logger.info("盘后分析LLM增强完成")
-                else:
-                    logger.debug("盘后分析LLM增强未启用或调用失败，跳过")
-        except Exception as e:
-            logger.debug(f"盘后分析LLM增强失败（不影响主流程）: {e}")
-        # ========== LLM增强结束 ==========
-        
         logger.info(f"盘后分析完成: {overall_trend}, 趋势强度: {trend_strength:.2f}")
         return report
         
@@ -707,14 +774,19 @@ def fetch_a50_futures_data() -> Dict[str, Any]:
     
     注意：新浪财经的CN_MarketData.getKLineData接口不支持A50期货数据（返回null），
     但futures_foreign_hist接口可以正常获取A50数据。
+
+    **使用范围**：本函数仅服务于「盘前趋势分析」`analyze_market_before_open`（隔夜指示）。
+    盘后 `analyze_daily_market_after_close`、开盘 `analyze_opening_market` **不调用**本函数，
+    样本不足或失败时只影响盘前结论，不必在其它分析类型中兜底或重复拉取。
     
     Returns:
         dict: A50数据，包含涨跌幅等
     """
     try:
-        # 获取A50日线数据（最近2天）
+        # 先近2 个自然日；若筛选后不足 2 条 K 线（周末/节假日/披露延迟），扩至约 25 天取最近两条（与 HXC 扩窗一致）
         today = datetime.now().strftime("%Y%m%d")
         yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y%m%d")
+        wide_start = (datetime.now() - timedelta(days=25)).strftime("%Y%m%d")
         logger.info("开始获取A50期指数据: start=%s, end=%s", yesterday, today)
 
         # 使用AKShare接口获取A50数据（数据源：新浪财经）
@@ -722,6 +794,13 @@ def fetch_a50_futures_data() -> Dict[str, Any]:
             start_date=yesterday,
             end_date=today
         )
+
+        if a50_daily is not None and not a50_daily.empty and len(a50_daily) < 2:
+            logger.info("A50主链路近窗仅 %d 条，扩窗拉取: %s~%s", len(a50_daily), wide_start, today)
+            a50_daily = fetch_a50_daily_sina_hist(
+                start_date=wide_start,
+                end_date=today
+            )
 
         if a50_daily is not None and not a50_daily.empty:
             logger.info("A50主链路返回成功: rows=%d", len(a50_daily))
@@ -745,7 +824,7 @@ def fetch_a50_futures_data() -> Dict[str, Any]:
             fallback = tool_fetch_a50_data(
                 symbol="A50期指",
                 data_type="hist",
-                start_date=yesterday,
+                start_date=wide_start,
                 end_date=today,
                 use_cache=True,
             )
@@ -795,8 +874,12 @@ def fetch_a50_futures_data() -> Dict[str, Any]:
 
 def fetch_nasdaq_golden_dragon() -> Dict[str, Any]:
     """
-    获取纳斯达克中国金龙指数数据
-    
+    获取纳斯达克中国金龙指数数据（yfinance ^HXC 历史链路）
+
+    **使用范围**：仅由「盘前趋势分析」`analyze_market_before_open` 调用，作 A50 缺失时的隔夜替补。
+    盘后/开盘分析不依赖本链路；遇 yfinance 限流（Too Many Requests）时仅盘前降级为仅靠盘后结论，
+    其它趋势分析类型无需考虑该错误。
+
     Returns:
         dict: HXC数据，包含涨跌幅等
     """
@@ -884,6 +967,29 @@ def fetch_nasdaq_golden_dragon() -> Dict[str, Any]:
         return {'change_pct': None, 'status': 'error', 'reason': str(e)}
 
 
+def _load_saved_after_close_for_before_open(
+    calendar_today: str,
+    config: Optional[Dict],
+    max_calendar_lookback: int = 10,
+) -> Optional[Dict[str, Any]]:
+    """
+    从 data_storage 落盘加载盘后报告，供盘前复用。
+    自 calendar_today 起向前回退若干自然日，取首个含 overall_trend 的文件（覆盖周末后周一等场景）。
+    """
+    try:
+        from src.data_storage import load_trend_analysis
+
+        base = datetime.strptime(calendar_today, "%Y%m%d")
+        for i in range(max_calendar_lookback):
+            d = (base - timedelta(days=i)).strftime("%Y%m%d")
+            data = load_trend_analysis(date=d, analysis_type="after_close", config=config)
+            if isinstance(data, dict) and data.get("overall_trend") is not None:
+                return data
+    except Exception as e:
+        logger.debug("加载落盘盘后报告失败: %s", e, exc_info=True)
+    return None
+
+
 def analyze_market_before_open(
     after_close_report: Optional[Dict] = None,
     config: Optional[Dict] = None
@@ -891,25 +997,42 @@ def analyze_market_before_open(
     """
     每天开盘前9:15执行
     结合前晚外盘行情，作出当天行情整体趋势判断
+
+    **隔夜数据边界**：富时 A50 与纳斯达克中国金龙（HXC）仅在本流程中拉取与解释；
+    盘后分析与开盘分析均不调用上述接口，也不承担其样本不足 / yfinance 限流带来的语义。
+    若隔夜数据不可用，见 `overnight_overlay_degraded` 与日志，并回退为盘后结论加权。
     
     Args:
-        after_close_report: 盘后分析结果，如果为None则自动执行盘后分析
+        after_close_report: 盘后分析结果；若为 None，则优先读当日及近日的 after_close 落盘，
+            无文件时再现场执行 analyze_daily_market_after_close（避免与已跑过的盘后重复计算）。
         config: 系统配置
     
     Returns:
-        dict: 开盘策略建议
+        dict: 开盘策略建议（含 after_close_basis: passed | disk | computed）
     """
     try:
         logger.info("开始开盘前分析...")
         
         today = datetime.now(pytz.timezone('Asia/Shanghai')).strftime("%Y%m%d")
         
-        # 1. 加载盘后分析结果
+        # 1. 盘后结论：显式传入 > 落盘复用 > 现场计算
+        after_close_basis = "passed"
         if after_close_report is None:
-            logger.info("未提供盘后分析结果，执行盘后分析...")
-            after_close_report = analyze_daily_market_after_close(config)
+            saved = _load_saved_after_close_for_before_open(today, config)
+            if saved is not None:
+                after_close_report = saved
+                after_close_basis = "disk"
+                logger.info(
+                    "未提供盘后分析结果，已使用落盘 after_close（报告内 date=%s）",
+                    saved.get("date", "?"),
+                )
+            else:
+                logger.info("无可用盘后落盘，现场执行盘后分析...")
+                after_close_report = analyze_daily_market_after_close(config)
+                after_close_basis = "computed"
         
-        # 2. 获取外盘数据（change_pct 缺省不得用 0，否则误判阈值分支）
+        # 2. 隔夜外盘（仅盘前）：A50 主链 + 金龙替补；失败则 final 趋势回退盘后（不影响盘后/开盘其它入口）
+        # change_pct 缺省不得用 0，否则误判阈值分支
         a50_data = fetch_a50_futures_data()
         a50_change = a50_data.get("change_pct")
 
@@ -960,6 +1083,7 @@ def analyze_market_before_open(
 
         result: Dict[str, Any] = {
             "date": today,
+            "after_close_basis": after_close_basis,
             "after_close_trend": after_close_trend,
             "a50_change": a50_change,
             "hxc_change": hxc_change,
@@ -974,23 +1098,6 @@ def analyze_market_before_open(
             "overnight_overlay_degraded": overnight_overlay_degraded,
         }
 
-        # 5. LLM增强（盘前分析）
-        try:
-            from src.llm_enhancer import enhance_with_llm
-
-            llm_summary, llm_meta = enhance_with_llm(
-                analysis_data=result,
-                analysis_type="before_open",
-                config=config,
-            )
-            if llm_summary:
-                result["llm_summary"] = llm_summary
-                if llm_meta:
-                    result["llm_meta"] = llm_meta
-        except Exception as e:
-            # LLM增强失败不影响主流程
-            logger.debug(f"LLM增强开盘前分析失败，已忽略: {e}")
-        
         a50_str = f"{a50_change:.2f}%" if a50_change is not None else "N/A"
         logger.info(f"开盘前分析完成: {final_trend}, 趋势强度: {final_strength:.2f}, A50: {a50_str}")
         return result
@@ -1003,6 +1110,7 @@ def analyze_market_before_open(
         )
         return {
             "date": datetime.now().strftime("%Y%m%d"),
+            "after_close_basis": "error",
             "final_trend": "震荡",
             "final_strength": 0.5,
             "opening_strategy": generate_opening_strategy("震荡", 0.5)
@@ -1151,14 +1259,29 @@ def analyze_opening_market(
         
         # 分析每个指数
         for name, data in opening_data.items():
+            # 插件 fetch_index_opening 使用 opening_price / pre_close；历史字段为 open_price / close_yesterday
             open_price = data.get('open_price')
+            if open_price is None:
+                open_price = data.get('opening_price')
             close_yesterday = data.get('close_yesterday')
+            if close_yesterday is None:
+                close_yesterday = data.get('pre_close')
             change_pct = data.get('change_pct')
             volume = data.get('volume')
             
             # 如果change_pct为None，计算涨幅
             if change_pct is None and open_price is not None and close_yesterday is not None:
                 change_pct = (open_price - close_yesterday) / close_yesterday * 100
+
+            try:
+                from plugins.utils.index_pct_sanity import reconcile_index_change_pct
+
+                if open_price is not None and close_yesterday is not None:
+                    rp = reconcile_index_change_pct(change_pct, open_price, close_yesterday)
+                    if rp is not None:
+                        change_pct = rp
+            except ImportError:
+                pass
             
             # 获取历史数据
             hist_data = historical_data.get(name, {})
@@ -1205,8 +1328,11 @@ def analyze_opening_market(
                 "volume": volume
             }
             
-            logger.debug(f"{name}开盘分析: 涨幅={change_pct:.2f}%, 成交偏差={vol_dev:.2%}, "
-                        f"历史偏差={hist_dev:.2f}%, 强度分数={strength_score:.2f}, 强度={strength}")
+            _cp_dbg = f"{change_pct:.2f}" if change_pct is not None else "N/A"
+            logger.debug(
+                f"{name}开盘分析: 涨幅={_cp_dbg}%, 成交偏差={vol_dev:.2%}, "
+                f"历史偏差={hist_dev:.2f}%, 强度分数={strength_score:.2f}, 强度={strength}"
+            )
         
         # 统计汇总
         strong_count = sum(1 for a in analysis.values() if a.get('strength') == '强势')
@@ -1442,30 +1568,6 @@ def predict_daily_trend_from_opening(
             "opening_confidence": opening_confidence,
         }
 
-        # LLM增强（开盘行情分析 + 趋势预测）
-        try:
-            from src.llm_enhancer import enhance_with_llm
-
-            llm_config = config.get('llm_enhancer', {}) if config else {}
-            if llm_config.get('enabled', False) and 'opening_market' in llm_config.get('analysis_types', []):
-                logger.info("开始调用LLM增强开盘趋势预测...")
-                llm_summary, llm_meta = enhance_with_llm(
-                    analysis_data=result,
-                    analysis_type="opening_market",
-                    config=config,
-                )
-                if llm_summary:
-                    result["llm_summary"] = llm_summary
-                    if llm_meta:
-                        result["llm_meta"] = llm_meta
-                    logger.info("LLM增强开盘趋势预测成功")
-                else:
-                    logger.warning("LLM增强开盘趋势预测返回空结果，可能调用失败")
-            else:
-                logger.debug("LLM增强未启用或opening_market不在analysis_types中，跳过")
-        except Exception as e:
-            logger.warning(f"LLM增强开盘趋势预测失败，已忽略: {e}", exc_info=True)
-        
         logger.info(
             f"趋势预测: {trend} (置信度: {confidence:.2%}), "
             f"ARIMA增强: {arima_enhanced}, 加权分数: {weighted_score:.2f}"

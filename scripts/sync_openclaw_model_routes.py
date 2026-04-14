@@ -1,4 +1,16 @@
 #!/usr/bin/env python3
+# 同步/校验 OpenClaw 模型路由相关 JSON 配置（与主备模型切换配合）。
+#
+# 用法示例（在项目根目录执行）：
+#   # 查看帮助 / 参数（如支持）
+#   python3 scripts/sync_openclaw_model_routes.py --help
+#
+#   # 仅校验或干跑（若脚本支持 DRY_RUN）
+#   DRY_RUN=1 python3 scripts/sync_openclaw_model_routes.py
+#
+#   # 正常同步（会按脚本默认目标写入/更新配置）
+#   python3 scripts/sync_openclaw_model_routes.py
+
 from __future__ import annotations
 
 import json

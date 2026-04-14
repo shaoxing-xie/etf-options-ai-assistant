@@ -6,7 +6,7 @@ schedule: "40 15 * * 1-5"
 timezone: "Asia/Shanghai"
 
 structured_message: |
-  执行涨停回马枪盘后流程（机构化增强版）。先读 /home/xie/.openclaw/prompts/research.md 第七节「涨停回马枪」及第十节「涨停回马枪盘后」：五技能、三段式时间线、口径A/B；再按下列顺序采集并写入 `report_data`，最后 `tool_send_analysis_report`（或 `tool_send_daily_report`），参数含 `report_type=limitup_after_close_enhanced`、`split_markdown_sections=true`。
+  执行涨停回马枪盘后流程（机构化增强版）。先读 research.md 第七节「涨停回马枪」及第十节「涨停回马枪盘后」：五技能、三段式时间线、口径A/B；再按下列顺序采集并写入 `report_data`，最后 `tool_send_analysis_report`（或 `tool_send_daily_report`），参数含 `report_type=limitup_after_close_enhanced`、`split_markdown_sections=true`。
 
   【0）外盘与大盘（亚欧优先，A股约15:00已收）】
   - `tool_fetch_global_index_spot`，显式 `index_codes`：`^N225,^HSI,^KS11,^GDAXI,^STOXX50E,^FTSE,^GSPC,^IXIC,^DJI`（亚洲与欧股早盘代表+昨夜美股背景；单项失败跳过并注明）。
@@ -28,11 +28,7 @@ structured_message: |
 
   【6）终稿结构】`report_data` 含 market_overview、policy_news、industry_news、announcements、northbound、key_levels、overnight_calibration、scenarios、prediction_review、limitup_record、涨停龙虎与流向等；`llm_summary` 建议二级标题顺序：## 外盘与大宗 → ## 要闻与公告 → ## 资金与关键位 → ## 隔夜校准与情景 → ## 昨日预判回顾 → ## 涨停回马枪专题。
 
-  【钉钉投递（硬约束）】
-  - cron delivery=none：须工具推送钉钉自定义机器人；`tool_send_analysis_report(..., mode=prod, split_markdown_sections=true)`。
-  - 环境变量：OPENCLAW_DINGTALK_CUSTOM_ROBOT_WEBHOOK_URL、OPENCLAW_DINGTALK_CUSTOM_ROBOT_SECRET（进程加载 ~/.openclaw/.env）。
-  - **禁止**：`tool_send_feishu_message` 对同一份长文扇出。
-  - 群备注：cid0dqwAYvqu94+QEoODXL1uw==（以 webhook 为准）。
-  - 失败勿令任务 error；输出末尾记原因与重试建议（可重试 1 次）。
+  【钉钉投递（硬约束）】完整条款见仓库 docs/openclaw/dingtalk_delivery_contract.md §涨停回马枪盘后。
+  摘要：须钉钉自定义机器人；tool_send_analysis_report(mode=prod, split_markdown_sections=true)；禁飞书扇出同文；需 OPENCLAW_DINGTALK_*。
 
-  【通知要求】delivery.mode 保持 none。
+  【通知要求】delivery.mode 保持 none（同上文档）。

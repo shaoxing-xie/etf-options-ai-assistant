@@ -22,7 +22,7 @@
 | 阶段 | 内容 | 主要落点 | 典型风险 |
 |------|------|----------|----------|
 | P0-A | 输出规范、章节骨架、免责与 `EVIDENCE_REF` 可追溯 | `docs/openclaw/**`、`docs/research/**` | 低 |
-| P0-B | 在现有工具范围内补全「隔夜外盘摘要、要闻列表」等（若已有 tavily/全球指数等） | `plugins/analysis/**`、`config.yaml` 白名单键 | 中 |
+| P0-B | 在现有工具范围内补全「隔夜外盘摘要、要闻列表」等（若已有 tavily/全球指数等） | `plugins/analysis/**`、合并后配置白名单键 | 中 |
 | P1 | 北向/资金面等：**先确认** `tool_fetch_northbound_flow` 在开盘链路已挂载且可用 | `tool_runner`、Agent 工具列表、工作流 YAML | 中 |
 | P2 | 新采集、新脚本、多 channel 滚动 | `data_collection`、`scripts`、通知 | 高，需专项评审 |
 

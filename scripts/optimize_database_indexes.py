@@ -1,6 +1,10 @@
 """
 数据库索引优化脚本
 为信号记录表和预测记录表添加索引，提升查询性能
+
+用法示例（在项目根目录执行）：
+  # 为 data/signal_records 与 data/prediction_records 下的 SQLite 建索引（幂等）
+  python3 scripts/optimize_database_indexes.py
 """
 
 import sqlite3

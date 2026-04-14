@@ -1,0 +1,57 @@
+---
+description: Cron agent boundaries for ETF workflows and delivery safety
+alwaysApply: true
+---
+
+# Cron Agent 边界与自动维护规范（ETF）
+
+## 目标
+防止工作流串线、任务“完成但未投递”、以及手工改配置带来的回归问题。
+
+## 硬性边界
+- `etf_main`、`etf_analysis_agent` 是交互通道 Agent（钉钉/飞书/聊天），**禁止承载 cron 任务**。
+- cron 任务必须挂在专用执行 Agent（如 `etf_cron_analysis_agent`、`etf_cron_inspection_agent`、`etf_cron_research_agent`、`etf_cron_ops_agent`、`etf_data_collector_agent`）。
+- 日报任务 `8c548101-85b7-4c95-a458-8b0e15317d46` 必须执行日报工作流，若上下文进入巡检流程，必须快速失败。
+
+## 单一事实源（必须）
+- 维护入口：`config/agents/cron_agents.yaml`
+- **不要直接手改** `~/.openclaw/openclaw.json` 和 `~/.openclaw/cron/jobs.json`（紧急修复除外，且事后必须回填 YAML）。
+
+## 自动维护流程（每次改动后必须执行）
+1. 渲染受管 Agent 与任务映射：
+   - `python scripts/render_agents_config.py --apply-jobs`
+2. 校验技能矩阵与映射：
+   - `python scripts/validate_agent_skill_matrix.py`
+3. 校验交互 Agent 边界：
+   - `python scripts/validate_cron_agent_boundaries.py --jobs ~/.openclaw/cron/jobs.json`
+4. 重启 Gateway 使配置生效：
+   - `openclaw gateway restart`
+5. 对关键任务做冒烟回归（至少日报）：
+   - `bash scripts/test_cron_tools.sh --mode cron --filter "^8c548101-85b7-4c95-a458-8b0e15317d46$" --wait-finished --verify-send --expect-final --include-send`
+
+## LLM 流式空闲超时（运维项，非 YAML）
+- OpenClaw 默认 `agents.defaults.llm.idleTimeoutSeconds` 为 60s：长上下文 + 多轮工具后，若模型 **60s 内无新 token** 会报 `LLM idle timeout (60s): no response from model` 并整轮失败（与 tavily 无直接关系，主要是上下文变大后主模型变慢）。
+- 日报/多工具链路建议在 `~/.openclaw/openclaw.json` 的 `agents.defaults` 下设置 `"llm": { "idleTimeoutSeconds": 300 }`（或按需更高），改后 **`openclaw gateway restart`**。
+- `etf_cron_analysis_agent` 主模型应与 `config/model_routes.json` 的 `S` 组一致时，优先用 **`deepseek-v3.1`** 作主模型，避免超大 MoE 在 60s 窗口内“首 token 过慢”。
+
+## 投递门禁（必须）
+- 每次 cron 执行至少应发生一次发送工具调用：
+  - `tool_send_daily_report` 或 `tool_send_dingtalk_message` 或 `tool_send_analysis_report`
+- 若未发生发送工具调用，必须显式报错并失败：`ERROR_NO_DELIVERY_TOOL_CALL`
+
+## 参考文档
+- 维护指南：`docs/openclaw/agent_maintenance_guide.md`
+- 5 分钟速查：`docs/openclaw/agent_maintenance_quickstart.md`
+
+## 插件/Skill 变更的主动维护（必须）
+- 当新增、安装、移除、升级任一插件工具或 Skill（含 `skills/*`、工具清单、Gateway 可见工具）时，Cursor 必须**主动**执行维护，不得等待用户额外指令。
+- 主动维护至少包含：
+  1) 评估变更是否影响 `config/agents/cron_agents.yaml` 的 `requiredSkills`/`requiredTools` 或 `jobAgentMapping`；
+  2) 如有影响，更新 `config/agents/cron_agents.yaml`（保持其为单一事实源）；
+  3) 执行并报告结果：
+     - `python scripts/render_agents_config.py --apply-jobs`
+     - `python scripts/validate_agent_skill_matrix.py`
+     - `python scripts/validate_cron_agent_boundaries.py --jobs ~/.openclaw/cron/jobs.json`
+  4) 如配置已变更，执行 `openclaw gateway restart` 使其生效；
+  5) 对受影响 cron 任务做最小化冒烟验证（至少 1 个相关任务）。
+- 若检测到新增 Skill/工具未被任何受管 Agent 纳入（且业务上应纳入），必须给出修正并落地，而不是仅提示。

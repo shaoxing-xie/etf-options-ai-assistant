@@ -15,6 +15,17 @@ from src.system_status import is_trading_day
 logger = get_module_logger(__name__)
 
 
+def _df_drop_duplicate_column_names(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    去掉重复列名，仅保留每个名称第一次出现（常见于多源日线 merge 后出现重复「成交量」）。
+    """
+    if df is None or getattr(df, "empty", True):
+        return df
+    if not df.columns.duplicated().any():
+        return df
+    return df.loc[:, ~df.columns.duplicated()].copy()
+
+
 def get_holidays(config: Optional[Dict] = None) -> set:
     """
     获取节假日集合（从配置文件读取）
@@ -580,6 +591,8 @@ def save_stock_daily_cache(
     try:
         if df is None or df.empty:
             return False
+
+        df = _df_drop_duplicate_column_names(df)
 
         date_col: Optional[str] = None
         for col in ['日期', 'date', '日期时间', 'datetime']:

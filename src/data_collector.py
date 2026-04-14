@@ -1,12 +1,21 @@
 """
 数据采集模块
-从AKShare获取市场数据（指数、ETF、期权）
+从 AKShare 等获取市场数据（指数、ETF、期权、A 股）。
+
+与 openclaw-data-china-stock 的关系：
+- **A 股日线**：`fetch_stock_daily_hist` 优先调用
+  `plugins/data_collection/stock/fetch_historical.fetch_single_stock_historical`（多源链与插件一致），
+  失败再退回 `ak.stock_zh_a_hist`。`fetch_historical.py` 应与插件目录保持同源；可用仓库脚本
+  `scripts/link_china_stock_data_collection.sh` 将插件侧 `plugins/data_collection` 链到本仓库。
+- **本文件与插件中的 `src/data_collector.py` 并非逐行相同**：本仓库含期权/多标的分钟线、`fetch_stock_minute_em`、
+  参数化指数分钟等；插件版可能含独立的重试抖动、缓存读取策略等。合并插件上游时请按函数审阅，勿整体覆盖。
 """
 
 import akshare as ak
 import pandas as pd
 from datetime import datetime, timedelta
-from typing import Optional, Dict, Any, cast
+from typing import Optional, Dict, Any, List, Tuple, cast
+import re
 import time
 import pytz
 import requests
@@ -465,9 +474,10 @@ def fetch_index_minute_data_with_fallback(
     lookback_days: int = 5,
     max_retries: int = 2,
     retry_delay: float = 1.0,
+    symbol: str = "000300",
 ) -> tuple[Optional[pd.DataFrame], Optional[pd.DataFrame]]:
     """
-    获取指数分钟数据（000300）- 独立获取，不依赖ETF数据
+    获取指数分钟数据（支持多指数）- 独立获取，不依赖ETF数据
     
     支持多数据源优先级配置（通过config.yaml中的data_sources.index_minute.priority配置）
     默认优先级：["eastmoney", "sina"]
@@ -478,11 +488,12 @@ def fetch_index_minute_data_with_fallback(
         lookback_days: 回看天数（默认5天）
         max_retries: 最大重试次数（默认2次，每个数据源独立重试）
         retry_delay: 重试延迟（秒，默认1.0秒）
+        symbol: 指数代码（默认000300）
     
     Returns:
         tuple: (30分钟数据, 15分钟数据)
     """
-    logger.info("开始获取指数分钟数据（000300）：多数据源优先级")
+    logger.info(f"开始获取指数分钟数据（{symbol}）：多数据源优先级")
     
     # 检查是否在交易时间内（用于force_realtime判断）
     from src.system_status import get_current_market_status
@@ -532,9 +543,9 @@ def fetch_index_minute_data_with_fallback(
             if source == 'eastmoney':
                 source_max_retries = eastmoney_config.get('max_retries', max_retries)
                 source_retry_delay = eastmoney_config.get('retry_delay', retry_delay)
-                logger.debug("尝试从东方财富获取30分钟数据: 000300")
+                logger.debug(f"尝试从东方财富获取30分钟数据: {symbol}")
                 index_30m = fetch_index_minute_em(
-                    symbol="000300",
+                    symbol=symbol,
                     period="30",
                     lookback_days=lookback_days,
                     max_retries=source_max_retries,
@@ -545,9 +556,9 @@ def fetch_index_minute_data_with_fallback(
             elif source == 'sina':
                 source_max_retries = sina_config.get('max_retries', max_retries)
                 source_retry_delay = sina_config.get('retry_delay', retry_delay)
-                logger.debug("尝试从新浪财经获取30分钟数据: 000300")
+                logger.debug(f"尝试从新浪财经获取30分钟数据: {symbol}")
                 index_30m = fetch_index_minute_sina(
-                    symbol="000300",
+                    symbol=symbol,
                     period="30",
                     lookback_days=lookback_days,
                     max_retries=source_max_retries,
@@ -582,9 +593,9 @@ def fetch_index_minute_data_with_fallback(
             if source == 'eastmoney':
                 source_max_retries = eastmoney_config.get('max_retries', max_retries)
                 source_retry_delay = eastmoney_config.get('retry_delay', retry_delay)
-                logger.debug("尝试从东方财富获取15分钟数据: 000300")
+                logger.debug(f"尝试从东方财富获取15分钟数据: {symbol}")
                 index_15m = fetch_index_minute_em(
-                    symbol="000300",
+                    symbol=symbol,
                     period="15",
                     lookback_days=lookback_days,
                     max_retries=source_max_retries,
@@ -595,9 +606,9 @@ def fetch_index_minute_data_with_fallback(
             elif source == 'sina':
                 source_max_retries = sina_config.get('max_retries', max_retries)
                 source_retry_delay = sina_config.get('retry_delay', retry_delay)
-                logger.debug("尝试从新浪财经获取15分钟数据: 000300")
+                logger.debug(f"尝试从新浪财经获取15分钟数据: {symbol}")
                 index_15m = fetch_index_minute_sina(
-                    symbol="000300",
+                    symbol=symbol,
                     period="15",
                     lookback_days=lookback_days,
                     max_retries=source_max_retries,
@@ -809,6 +820,200 @@ def fetch_etf_minute_data_with_fallback(
             failed_periods.append("15分钟")
         logger.warning(f"ETF分钟数据获取部分失败: {', '.join(failed_periods)}数据未获取成功（已尝试所有配置的数据源，缓存数据已在各函数中处理）")
         return etf_30m, etf_15m
+
+
+def _normalize_stock_minute_dataframe(df: Optional[pd.DataFrame]) -> Optional[pd.DataFrame]:
+    """将 stock_zh_a_hist_min_em 等英文列名对齐为与 ETF 分钟模块一致的字段。"""
+    if df is None or df.empty:
+        return df
+    out = df.copy()
+    mapping = {
+        "open": "开盘",
+        "close": "收盘",
+        "high": "最高",
+        "low": "最低",
+        "volume": "成交量",
+        "amount": "成交额",
+    }
+    rename = {k: v for k, v in mapping.items() if k in out.columns and v not in out.columns}
+    if rename:
+        out = out.rename(columns=rename)
+    return out
+
+
+def fetch_stock_minute_em(
+    symbol: str,
+    period: str = "30",
+    lookback_days: int = 10,
+    max_retries: int = 3,
+    retry_delay: float = 1.5,
+) -> Optional[pd.DataFrame]:
+    """
+    A 股分钟 K（东方财富 stock_zh_a_hist_min_em），列名对齐指数/ETF 分钟数据。
+    """
+    symbol = str(symbol).strip()
+    if not symbol:
+        return None
+    tz_shanghai = pytz.timezone("Asia/Shanghai")
+    now = datetime.now(tz_shanghai)
+    end_date_str = now.strftime("%Y-%m-%d %H:%M:%S")
+    start = now - timedelta(days=max(lookback_days * 2, 14))
+    start_date_str = start.strftime("%Y-%m-%d 09:30:00")
+    for attempt in range(max_retries):
+        try:
+            if attempt > 0:
+                time.sleep(min(retry_delay * (2 ** (attempt - 1)), 20.0))
+            minute_df = ak.stock_zh_a_hist_min_em(
+                symbol=symbol,
+                start_date=start_date_str,
+                end_date=end_date_str,
+                period=str(period),
+                adjust="",
+            )
+            if minute_df is not None and not minute_df.empty:
+                if "时间" in minute_df.columns:
+                    minute_df = minute_df.copy()
+                    minute_df["时间"] = pd.to_datetime(minute_df["时间"], errors="coerce").dt.strftime(
+                        "%Y-%m-%d %H:%M:%S"
+                    )
+                return _normalize_stock_minute_dataframe(minute_df)
+        except Exception as e:
+            logger.warning(
+                "fetch_stock_minute_em 失败 symbol=%s period=%s attempt=%s: %s",
+                symbol,
+                period,
+                attempt + 1,
+                e,
+            )
+    return None
+
+
+def fetch_stock_minute_data_with_fallback(
+    symbol: str = "600519",
+    lookback_days: int = 15,
+    max_retries: int = 2,
+    retry_delay: float = 1.0,
+) -> tuple[Optional[pd.DataFrame], Optional[pd.DataFrame]]:
+    """
+    获取 A 股 30m/15m 分钟数据（无多数据源切换，失败返回 None/空表）。
+    """
+    symbol = str(symbol).strip()
+    logger.info("开始获取 A 股分钟数据: %s", symbol)
+    s30 = fetch_stock_minute_em(
+        symbol, "30", lookback_days, max_retries=max_retries, retry_delay=retry_delay
+    )
+    s15 = fetch_stock_minute_em(
+        symbol, "15", lookback_days, max_retries=max_retries, retry_delay=retry_delay
+    )
+    if s15 is None or s15.empty:
+        s15 = s30
+    return s30, s15
+
+
+def fetch_stock_daily_hist(
+    symbol: str,
+    start_date: str,
+    end_date: str,
+    adjust: str = "",
+) -> Optional[pd.DataFrame]:
+    """
+    A 股日线，日期参数 YYYYMMDD。
+
+    优先使用 `plugins/data_collection/stock/fetch_historical.py` 的多源链（与 openclaw-data-china-stock
+    对齐：本地 stock_daily 缓存 → mootdx → Baostock → AkShare 新浪 → AkShare 东财 → 腾讯 → Tushare），
+    全部不可用或返回空时再退回单源 `ak.stock_zh_a_hist`（东财）。
+    """
+    sym = str(symbol).strip()
+    if not sym:
+        return None
+
+    try:
+        from plugins.data_collection.stock.fetch_historical import fetch_single_stock_historical
+
+        df_ms, src = fetch_single_stock_historical(
+            stock_code=sym,
+            period="daily",
+            start_date=start_date,
+            end_date=end_date,
+            tushare_token=None,
+            use_cache=True,
+        )
+        if df_ms is not None and not df_ms.empty:
+            logger.debug(
+                "fetch_stock_daily_hist: %s rows=%s source=%s",
+                sym,
+                len(df_ms),
+                src,
+            )
+            return df_ms
+    except Exception as e:
+        logger.debug("fetch_stock_daily_hist 多源链跳过 %s: %s", sym, e)
+
+    try:
+        df = ak.stock_zh_a_hist(
+            symbol=sym,
+            period="daily",
+            start_date=start_date,
+            end_date=end_date,
+            adjust=adjust,
+        )
+        if df is not None and not df.empty:
+            return df
+    except Exception as e:
+        logger.warning("fetch_stock_daily_hist 失败 %s: %s", sym, e)
+    return None
+
+
+def get_stock_current_price(symbol: str) -> Optional[float]:
+    """
+    A 股现价：优先 mootdx 实时，其次新浪分时，最后日线收盘。
+    """
+    try:
+        clean = str(symbol).strip()
+        if not clean:
+            return None
+        if clean.upper().endswith((".SH", ".SZ")):
+            clean = clean.split(".")[0]
+        if len(clean) > 2 and clean.lower()[:2] in ("sh", "sz") and clean[2:].isdigit():
+            clean = clean[2:]
+
+        try:
+            from plugins.data_collection.stock.fetch_realtime import fetch_stock_realtime
+
+            rt = fetch_stock_realtime(stock_code=clean, mode="production", include_depth=False)
+            if isinstance(rt, dict) and rt.get("success") and rt.get("data"):
+                row = rt["data"][0] if isinstance(rt["data"], list) else rt["data"]
+                cp = float(row.get("current_price") or 0.0)
+                if cp > 0:
+                    return cp
+        except Exception:
+            pass
+
+        if clean.startswith(("60", "688")):
+            pref = "sh"
+        else:
+            pref = "sz"
+        try:
+            minute_df = ak.stock_zh_a_minute(symbol=f"{pref}{clean}", period="1", adjust="qfq")
+            if minute_df is not None and not minute_df.empty and "close" in minute_df.columns:
+                cp = float(minute_df["close"].iloc[-1])
+                if cp > 0:
+                    return cp
+        except Exception:
+            pass
+
+        end_d = datetime.now().strftime("%Y%m%d")
+        start_d = (datetime.now().replace(day=1)).strftime("%Y%m%d")
+        daily_df = fetch_stock_daily_hist(clean, start_d, end_d)
+        if daily_df is not None and not daily_df.empty:
+            for col in ("收盘", "close"):
+                if col in daily_df.columns:
+                    cp = float(daily_df[col].iloc[-1])
+                    if cp > 0:
+                        return cp
+    except Exception as e:
+        logger.debug("get_stock_current_price 失败 %s: %s", symbol, e)
+    return None
 
 
 # 保留旧函数以保持向后兼容（标记为废弃）
@@ -2335,6 +2540,105 @@ def fetch_option_spot_sina(symbol: str) -> Optional[pd.DataFrame]:
         return None
 
 
+def _option_kv_rows(df: Optional[pd.DataFrame]) -> List[Tuple[str, str]]:
+    if df is None or df.empty:
+        return []
+    if "字段" not in df.columns or "值" not in df.columns:
+        return []
+    rows: List[Tuple[str, str]] = []
+    for _, row in df.iterrows():
+        rows.append((str(row.get("字段", "")).strip(), str(row.get("值", "")).strip()))
+    return rows
+
+
+def _etf_code_from_text(text: str) -> Optional[str]:
+    m = re.search(r"\b(51\d{4}|15\d{4}|16\d{4})\b", str(text))
+    return m.group(1) if m else None
+
+
+def infer_sse_option_metadata_from_quotes(
+    contract_code: str,
+    spot_df: Optional[pd.DataFrame] = None,
+    greeks_df: Optional[pd.DataFrame] = None,
+) -> Dict[str, Any]:
+    """
+    从上交所期权新浪行情（spot / Greeks 的「字段/值」表）推断 ETF 标的、Call/Put、行权价。
+    不依赖本地 option_contracts 配置；解析失败时 underlying 为 None。
+    """
+    out: Dict[str, Any] = {"underlying": None, "option_type": None, "strike_price": None}
+    rows = _option_kv_rows(spot_df) + _option_kv_rows(greeks_df)
+    logger.debug("解析期权元数据: contract_code=%s, kv_rows=%s", contract_code, len(rows))
+
+    for fld, val in rows:
+        fl = fld.lower()
+        if "标的股票" in fld or fld.strip() in ("标的代码", "跟踪标的"):
+            digits = re.sub(r"\D", "", val)
+            if len(digits) >= 6:
+                out["underlying"] = digits[-6:]
+        if "行权价" in fld or "strike" in fl:
+            try:
+                out["strike_price"] = float(str(val).replace(",", ""))
+            except (TypeError, ValueError):
+                pass
+        if "期权合约简称" in fld or ("简称" in fld and "期权" in fld):
+            if "沽" in val:
+                out["option_type"] = "put"
+            elif "购" in val:
+                out["option_type"] = "call"
+        if "期权类型" in fld:
+            vl = val.lower()
+            if "认购" in val or "call" in vl:
+                out["option_type"] = "call"
+            elif "认沽" in val or "put" in vl:
+                out["option_type"] = "put"
+
+    if not out["underlying"]:
+        for _, val in rows:
+            code = _etf_code_from_text(val)
+            if code:
+                out["underlying"] = code
+                break
+
+    if out["option_type"] not in ("call", "put"):
+        for fld, val in rows:
+            if "delta" in fld.lower():
+                try:
+                    d = float(str(val).replace(",", ""))
+                    if d > 1e-6:
+                        out["option_type"] = "call"
+                    elif d < -1e-6:
+                        out["option_type"] = "put"
+                    break
+                except (TypeError, ValueError):
+                    continue
+
+    if out["option_type"] not in ("call", "put"):
+        out["option_type"] = "call"
+
+    return out
+
+
+def extract_option_price_from_spot_df(spot_df: Optional[pd.DataFrame]) -> Optional[float]:
+    """从 option_sse_spot_price_sina 返回的 DataFrame 中取最新价。"""
+    if spot_df is None or spot_df.empty:
+        return None
+    if "字段" in spot_df.columns and "值" in spot_df.columns:
+        for _, row in spot_df.iterrows():
+            field = str(row.get("字段", "")).strip()
+            value = row.get("值", "")
+            if any(
+                kw in field
+                for kw in ["最新价", "当前价", "现价", "价格", "last_price", "current_price", "price"]
+            ):
+                try:
+                    price = float(value)
+                    if price > 0:
+                        return price
+                except (TypeError, ValueError):
+                    continue
+    return None
+
+
 def fetch_option_greeks_sina(
     symbol: str,
     use_cache: bool = True,
@@ -3474,7 +3778,7 @@ def fetch_global_index_hist_em(
             if not enabled:
                 logger.warning(
                     "fetch_global_index_hist_em: 已跳过纳斯达克中国金龙指数（HXC）yfinance 请求，"
-                    "可在 config.yaml 的 data_sources.global_index.hxc.enabled 开启后再使用该数据源"
+                    "可在合并后配置的 data_sources.global_index.hxc.enabled 开启后再使用该数据源（来源：config/domains/market_data.yaml）"
                 )
                 return None
 
@@ -4361,7 +4665,12 @@ def fetch_etf_daily_em(
             start_time = time.time()
             # 新浪接口需要 "sh" 或 "sz" 前缀
             sina_symbol = f"sh{symbol}" if symbol.startswith('51') else f"sz{symbol}"
-            etf_df = ak.fund_etf_hist_sina(symbol=sina_symbol)
+            try:
+                from plugins.utils.proxy_env import without_proxy_env
+            except Exception:
+                from contextlib import nullcontext as without_proxy_env  # type: ignore
+            with without_proxy_env():
+                etf_df = ak.fund_etf_hist_sina(symbol=sina_symbol)
             duration = time.time() - start_time
             
             if etf_df is not None and not etf_df.empty:
@@ -4490,12 +4799,17 @@ def fetch_etf_daily_em(
                                 f"start_date={start_date}, end_date={end_date}")
                     
                     start_time = time.time()
-                    etf_df = ak.fund_etf_hist_em(
-                        symbol=symbol,
-                        period=period,
-                        start_date=start_date,
-                        end_date=end_date
-                    )
+                    try:
+                        from plugins.utils.proxy_env import without_proxy_env
+                    except Exception:
+                        from contextlib import nullcontext as without_proxy_env  # type: ignore
+                    with without_proxy_env():
+                        etf_df = ak.fund_etf_hist_em(
+                            symbol=symbol,
+                            period=period,
+                            start_date=start_date,
+                            end_date=end_date
+                        )
                     duration = time.time() - start_time
                     
                     if etf_df is not None and not etf_df.empty:
@@ -4815,28 +5129,12 @@ def get_option_current_price(contract_code: str) -> Optional[float]:
         if spot_df is None or spot_df.empty:
             logger.warning(f"无法获取期权实时数据: {contract_code}")
             return None
-        
-        # 从DataFrame中提取当前价格
-        # AKShare返回格式：字段/值
-        if '字段' in spot_df.columns and '值' in spot_df.columns:
-            for idx, row in spot_df.iterrows():
-                field = str(row.get('字段', '')).strip()
-                value = row.get('值', '')
-                
-                # 查找价格相关字段
-                if any(keyword in field for keyword in ['最新价', '当前价', '现价', '价格', 'last_price', 'current_price', 'price']):
-                    try:
-                        price = float(value)
-                        if price > 0:
-                            logger.debug(f"获取期权当前价格: {contract_code} -> {price}")
-                            return price
-                    except (ValueError, TypeError):
-                        continue
-        
-        # 如果找不到价格字段，尝试从值列获取
+        price = extract_option_price_from_spot_df(spot_df)
+        if price is not None:
+            logger.debug(f"获取期权当前价格: {contract_code} -> {price}")
+            return price
         logger.warning(f"无法从期权数据中提取价格: {contract_code}")
         return None
-        
     except Exception as e:
         logger.warning(f"获取期权当前价格失败: {contract_code}, 错误: {e}")
         return None

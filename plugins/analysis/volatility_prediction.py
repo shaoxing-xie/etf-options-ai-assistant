@@ -1,7 +1,35 @@
 """
-波动区间预测插件
-融合原系统 on_demand_predictor.py 和 llm_enhancer.py
-OpenClaw 插件工具
+日内波动区间预测插件（OpenClaw / 飞书等场景）
+
+职责概览
+--------
+在插件层封装「现货 + 期权」的波动区间预测：调用 ``src.on_demand_predictor`` 中的即时预测函数，
+输出适合 IM 展示的 Markdown 表格（自然语言解读由 OpenClaw 主模型 + ``skills/ota-volatility-prediction-narration`` 等承接，进程内不再调用 ``llm_enhancer``）；成功时可将结果写入
+``data/volatility_ranges``（经 ``src.data_storage.save_volatility_ranges``）。
+
+支持标的与入口
+--------------
+- **指数**：``predict_index_volatility_range_on_demand``
+- **ETF**：``predict_etf_volatility_range_on_demand``（底层双周期区间默认**不**融合期权 IV，见 ``src.volatility_range``）
+- **A 股**：``predict_stock_volatility_range_on_demand``
+- **期权**：传入 ``contract_codes`` 列表，逐合约调用 ``predict_option_volatility_range_on_demand``；
+  标的 ETF、认购/认沽、行权价等由**行情接口**推断，**不要求**在 ``config.option_contracts`` 中预先配置该合约。
+
+标的解析（现货路径）
+--------------------
+使用 ``src.underlying_resolver.resolve_volatility_underlying``：
+
+- 支持名称或 6 位代码；可用前缀消歧：``指数:`` / ``ETF:`` / ``股票:`` 等（与 ``asset_type_hint`` 二选一或并用）。
+- 无类别且代码无法唯一归类时返回错误，提示加前缀。
+- 名称多义时返回错误并附带 ``candidates``。
+- 仅传 ``contract_codes`` 做期权预测时**不会**对 ``underlying`` 做上述解析（避免干扰期权专用流程）。
+
+对外 API
+--------
+- ``volatility_prediction(...)``：返回 ``dict``，含 ``success``、``formatted_output``、``data``、多合约时的 ``all_results`` 等。
+- ``tool_predict_volatility(...)``：OpenClaw 工具封装，返回字符串（成功为 Markdown，失败为错误说明）；含输出长度截断与表格自检逻辑。
+
+模块加载时会将仓库根目录加入 ``sys.path``，以便导入 ``src.*`` 与 ``plugins.utils``；若核心依赖导入失败，则 ``ORIGINAL_SYSTEM_AVAILABLE`` 为 False。
 """
 
 import sys
@@ -38,10 +66,12 @@ try:
     from src.on_demand_predictor import (
         predict_index_volatility_range_on_demand,
         predict_etf_volatility_range_on_demand,
-        predict_option_volatility_range_on_demand
+        predict_option_volatility_range_on_demand,
+        predict_stock_volatility_range_on_demand,
     )
-    from src.llm_enhancer import enhance_with_llm
     from src.config_loader import load_system_config
+    from src.underlying_resolver import resolve_volatility_underlying
+
     ORIGINAL_SYSTEM_AVAILABLE = True
 except ImportError as e:
     ORIGINAL_SYSTEM_AVAILABLE = False
@@ -81,6 +111,15 @@ def _format_prediction_result(result: Dict[str, Any], result_type: str) -> str:
         reply += "**标的物信息**\n"
         reply += f"- ETF代码: `{symbol}`\n"
         reply += f"- ETF名称: {symbol_name}\n"
+        reply += "\n"
+
+    elif result_type == 'stock':
+        symbol = result.get('symbol', 'N/A')
+        symbol_name = result.get('symbol_name', symbol)
+        reply = "## 📊 A股波动区间预测\n\n"
+        reply += "**标的物信息**\n"
+        reply += f"- 股票代码: `{symbol}`\n"
+        reply += f"- 名称: {symbol_name}\n"
         reply += "\n"
     
     elif result_type == 'index':
@@ -155,10 +194,53 @@ def _format_prediction_result(result: Dict[str, Any], result_type: str) -> str:
     method = result.get('method')
     if method:
         reply += f"| 计算方法 | {method} |\n"
-    
+
+    # 质量门禁（仅当有 normalization 信息时展示）
+    normalization = result.get("normalization")
+    if isinstance(normalization, dict) and "quality_gate_passed" in normalization:
+        passed = normalization.get("quality_gate_passed")
+        gate_msg = normalization.get("message", "")
+        status_text = "通过" if passed else "未通过"
+        reply += f"| 质量门禁 | {status_text} ({gate_msg}) |\n"
+
     remaining_minutes = result.get('remaining_minutes')
     if remaining_minutes is not None:
         reply += f"| 剩余交易时间 | {remaining_minutes}分钟 |\n"
+
+    # A/B 模板、成交量因子、IV 可观测性、影子 GARCH（与落库字段对齐，便于钉钉/OpenClaw 核对）
+    ab_profile = result.get("ab_profile")
+    if ab_profile is not None:
+        reply += f"| A/B 模板 | `{ab_profile}` |\n"
+    ab_rb = result.get("ab_rollback_active")
+    if ab_rb is not None:
+        reply += f"| 紧急回滚 | {'是' if ab_rb else '否'} |\n"
+    vf = result.get("volume_factor")
+    if vf is not None:
+        try:
+            reply += f"| 成交量因子 | {float(vf):.4f} |\n"
+        except (TypeError, ValueError):
+            reply += f"| 成交量因子 | {vf} |\n"
+    iv_avail = result.get("iv_data_available")
+    if iv_avail is not None:
+        reply += f"| IV 数据 | {'可用' if iv_avail else '不可用'} |\n"
+    iv_reason = result.get("iv_data_reason")
+    if iv_reason is not None:
+        reply += f"| IV 说明 | `{iv_reason}` |\n"
+    gs = result.get("garch_shadow")
+    if isinstance(gs, dict):
+        if gs.get("success"):
+            gu = gs.get("upper")
+            gl = gs.get("lower")
+            try:
+                if gu is not None and gl is not None:
+                    reply += f"| 影子GARCH | [{float(gl):.4f}, {float(gu):.4f}] |\n"
+                else:
+                    reply += "| 影子GARCH | 成功（区间缺省） |\n"
+            except (TypeError, ValueError):
+                reply += f"| 影子GARCH | {gl} ~ {gu} |\n"
+        else:
+            gr = str(gs.get("reason", ""))[:80]
+            reply += f"| 影子GARCH | 未产出（{gr or '见日志'}） |\n"
     
     reply += "\n"
     
@@ -177,6 +259,32 @@ def _format_prediction_result(result: Dict[str, Any], result_type: str) -> str:
             reply += f"- **趋势判断**: {trend_direction}\n"
         reply += "\n"
     
+    # IV–HV 融合与数据质量（如果有的话，加一个简短说明段）
+    iv_hv_fusion = result.get("iv_hv_fusion")
+    if iv_hv_fusion:
+        reply += "### IV–HV 融合信息\n\n"
+        weights = result.get("iv_hv_weights") or {}
+        scale = result.get("iv_hv_scaling_factor")
+        sigma_eff = result.get("iv_hv_sigma_eff")
+        w_iv = weights.get("weight_iv")
+        w_hv = weights.get("weight_hv")
+        if w_iv is not None and w_hv is not None:
+            reply += f"- 融合权重: IV={w_iv:.2f}, HV={w_hv:.2f}\n"
+        if scale is not None:
+            reply += f"- 区间缩放因子: {scale:.3f}\n"
+        if sigma_eff is not None:
+            reply += f"- 有效年化波动率 σ_eff: {sigma_eff:.4f}\n"
+        reply += "\n"
+
+    data_quality = result.get("data_quality")
+    if isinstance(data_quality, dict):
+        warnings = data_quality.get("warnings") or []
+        if warnings:
+            reply += "### 数据质量提示\n\n"
+            for w in warnings:
+                reply += f"- {w}\n"
+            reply += "\n"
+
     # LLM增强结果（直接嵌入，不单独标记）
     llm_summary = result.get('llm_summary')
     if llm_summary:
@@ -196,21 +304,27 @@ def volatility_prediction(
     underlying: str = "510300",
     contract_codes: Optional[List[str]] = None,
     api_base_url: str = "http://localhost:5000",
-    api_key: Optional[str] = None
+    api_key: Optional[str] = None,
+    asset_type_hint: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     预测波动区间（融合原系统逻辑和LLM增强）
     
     Args:
-        underlying: 标的物代码（如 "510300" ETF 或 "000300" 指数）
+        underlying: 标的物代码或名称；可用前缀消歧：指数:/ETF:/股票:
         contract_codes: 期权合约代码列表（可选，如果提供则预测期权波动）
         api_base_url: 原系统 API 基础地址（保留用于未来扩展）
         api_key: API Key（保留用于未来扩展）
+        asset_type_hint: 可选 index / etf / stock，与名称/代码联用
     
     Returns:
         Dict: 包含预测结果和LLM增强的字典，包含格式化的文本输出
     """
     try:
+        hint = str(asset_type_hint).strip().lower() if asset_type_hint else None
+        if hint == "":
+            hint = None
+
         # ========== 交易日判断（仅用于提示，不阻止执行） ==========
         # 注意：波动率预测基于历史数据，即使在非交易日也可以执行
         # 这里只做提示，不阻止执行
@@ -246,11 +360,9 @@ def volatility_prediction(
         
         # 判断预测类型并调用原系统函数
         prediction_results = []
-        analysis_type = None
-        
+
         if contract_codes and len(contract_codes) > 0:
             # 期权波动预测（支持多个合约代码）
-            analysis_type = 'volatility_prediction_option'
             for contract_code in contract_codes:
                 try:
                     prediction_result = predict_option_volatility_range_on_demand(
@@ -271,35 +383,51 @@ def volatility_prediction(
                     import logging
                     logger = logging.getLogger(__name__)
                     logger.warning(f"合约 {contract_code} 预测异常: {str(e)}")
-        
-        elif underlying.startswith('51') or underlying.startswith('159'):
-            # ETF波动预测
-            prediction_result = predict_etf_volatility_range_on_demand(
-                symbol=underlying,
-                config=config
-            )
-            if prediction_result:
-                prediction_results.append(('etf', prediction_result))
-            analysis_type = 'volatility_prediction_underlying'
-        
-        elif underlying.startswith('000') or underlying.startswith('399'):
-            # 指数波动预测
-            prediction_result = predict_index_volatility_range_on_demand(
-                symbol=underlying,
-                config=config
-            )
-            if prediction_result:
-                prediction_results.append(('index', prediction_result))
-            analysis_type = 'volatility_prediction_underlying'
-        
+
         else:
-            error_msg = f'不支持的标的物代码格式: {underlying}'
-            return {
-                'success': False,
-                'message': error_msg,
-                'formatted_output': f"❌ {error_msg}",
-                'data': None
-            }
+            resolved = resolve_volatility_underlying(underlying, hint)
+            if not resolved.ok:
+                return {
+                    "success": False,
+                    "message": resolved.error,
+                    "formatted_output": f"❌ {resolved.error}",
+                    "data": {"candidates": resolved.candidates} if resolved.candidates else None,
+                }
+            code = resolved.code
+            atype = resolved.asset_type
+
+            if atype == "etf":
+                prediction_result = predict_etf_volatility_range_on_demand(
+                    symbol=code,
+                    config=config,
+                )
+                if prediction_result:
+                    prediction_results.append(("etf", prediction_result))
+
+            elif atype == "index":
+                prediction_result = predict_index_volatility_range_on_demand(
+                    symbol=code,
+                    config=config,
+                )
+                if prediction_result:
+                    prediction_results.append(("index", prediction_result))
+
+            elif atype == "stock":
+                prediction_result = predict_stock_volatility_range_on_demand(
+                    symbol=code,
+                    config=config,
+                )
+                if prediction_result:
+                    prediction_results.append(("stock", prediction_result))
+
+            else:
+                error_msg = f"无法识别的标的类型: {atype}"
+                return {
+                    "success": False,
+                    "message": error_msg,
+                    "formatted_output": f"❌ {error_msg}",
+                    "data": None,
+                }
         
         if not prediction_results:
             error_msg = '预测函数返回空结果'
@@ -309,47 +437,6 @@ def volatility_prediction(
                 'formatted_output': f"❌ {error_msg}",
                 'data': None
             }
-        
-        # ========== LLM增强（使用原系统的llm_enhancer）==========
-        # 注意：原系统的预测函数内部可能已经调用了LLM增强
-        # 如果预测结果中已经有llm_summary，说明原系统已经增强过了
-        # 如果没有，我们在这里进行增强
-        
-        for result_type, prediction_result in prediction_results:
-            if 'llm_summary' not in prediction_result:
-                # 原系统函数没有进行LLM增强，我们在这里进行
-                llm_summary = ""
-                llm_meta = {}
-                
-                try:
-                    # 检查LLM增强是否启用
-                    llm_config = config.get('llm_enhancer', {}) if config else {}
-                    if llm_config.get('enabled', False):
-                        # 检查该分析类型是否在启用列表中
-                        # volatility_prediction_underlying 和 volatility_prediction_option 都匹配 volatility_prediction
-                        enabled_types = llm_config.get('analysis_types', [])
-                        is_enabled = analysis_type in enabled_types
-                        if not is_enabled and analysis_type.startswith("volatility_prediction_"):
-                            is_enabled = "volatility_prediction" in enabled_types
-                        
-                        if is_enabled:
-                            # 调用原系统的LLM增强
-                            llm_summary, llm_meta = enhance_with_llm(
-                                analysis_data=prediction_result,
-                                analysis_type=analysis_type,
-                                config=config
-                            )
-                            
-                            # 将LLM增强结果添加到预测结果中
-                            if llm_summary:
-                                prediction_result['llm_summary'] = llm_summary
-                                if llm_meta:
-                                    prediction_result['llm_meta'] = llm_meta
-                except Exception as e:
-                    # LLM增强失败不影响主流程
-                    import logging
-                    logger = logging.getLogger(__name__)
-                    logger.warning(f"LLM增强失败（不影响主流程）: {str(e)}")
         
         # 格式化输出（统一格式，适合飞书和Chat显示）
         formatted_outputs = []
@@ -442,9 +529,9 @@ def volatility_prediction(
                             'timestamp': now.strftime('%Y-%m-%d %H:%M:%S'),
                             'date': now.strftime('%Y%m%d'),
                             'underlyings': {
-                                underlying: {
+                                code: {
                                     'etf_range': {
-                                        'symbol': underlying,
+                                        'symbol': code,
                                         'upper': main_result.get('upper'),
                                         'lower': main_result.get('lower'),
                                         'current_price': main_result.get('current_price'),
@@ -464,7 +551,7 @@ def volatility_prediction(
                             'timestamp': now.strftime('%Y-%m-%d %H:%M:%S'),
                             'date': now.strftime('%Y%m%d'),
                             'index_range': {
-                                'symbol': underlying,
+                                'symbol': code,
                                 'upper': main_result.get('upper'),
                                 'lower': main_result.get('lower'),
                                 'current_price': main_result.get('current_price'),
@@ -473,6 +560,29 @@ def volatility_prediction(
                                 'confidence': main_result.get('confidence'),
                                 'timestamp': main_result.get('timestamp', now.strftime('%Y-%m-%d %H:%M:%S'))
                             }
+                        }
+                    elif result_type == 'stock':
+                        volatility_ranges_data = {
+                            'timestamp': now.strftime('%Y-%m-%d %H:%M:%S'),
+                            'date': now.strftime('%Y%m%d'),
+                            'underlyings': {
+                                code: {
+                                    'stock_range': {
+                                        'symbol': code,
+                                        'upper': main_result.get('upper'),
+                                        'lower': main_result.get('lower'),
+                                        'current_price': main_result.get('current_price'),
+                                        'range_pct': main_result.get('range_pct'),
+                                        'method': main_result.get('method'),
+                                        'confidence': main_result.get('confidence'),
+                                        'timestamp': main_result.get(
+                                            'timestamp', now.strftime('%Y-%m-%d %H:%M:%S')
+                                        ),
+                                    },
+                                    'call_ranges': [],
+                                    'put_ranges': [],
+                                }
+                            },
                         }
                     else:
                         volatility_ranges_data = None
@@ -514,20 +624,35 @@ def volatility_prediction(
 # OpenClaw 工具函数接口
 def tool_predict_volatility(
     underlying: str = "510300",
-    contract_codes: Optional[List[str]] = None
+    contract_codes: Optional[List[str]] = None,
+    asset_type_hint: Optional[str] = None,
 ) -> str:
     """
     OpenClaw 工具：预测波动区间
     
     支持：
-    - ETF波动预测：underlying="510300"
-    - 指数波动预测：underlying="000300"
-    - 期权波动预测：contract_codes=["10010891", "10010892"]（支持多个合约）
+    - ETF / 指数 / A 股（名称或代码；歧义时用 指数:/ETF:/股票: 或 asset_type_hint）
+    - 期权：contract_codes=["10010891", "10010892"]（支持多个合约）
     
     返回格式与其他工具保持一致，适合在飞书群组中显示
     """
     try:
-        result = volatility_prediction(underlying=underlying, contract_codes=contract_codes)
+        def _is_detailed_markdown(msg: str) -> bool:
+            """校验是否为详细表格风格输出（防止被上层改写成摘要）。"""
+            if not isinstance(msg, str):
+                return False
+            required_markers = [
+                "### 关键指标",
+                "| 指标 | 数值 |",
+                "### 📍 当前位置分析",
+            ]
+            return all(m in msg for m in required_markers)
+
+        result = volatility_prediction(
+            underlying=underlying,
+            contract_codes=contract_codes,
+            asset_type_hint=asset_type_hint,
+        )
         
         # 确保有格式化的输出
         if result.get('success'):
@@ -540,15 +665,35 @@ def tool_predict_volatility(
                     # 判断类型并格式化
                     if 'contract_code' in data:
                         output = _format_prediction_result(data, 'option')
-                    elif data.get('type') == 'etf' or (underlying.startswith('51') or underlying.startswith('159')):
+                    elif data.get('type') == 'etf':
                         output = _format_prediction_result(data, 'etf')
-                    elif data.get('type') == 'index' or (underlying.startswith('000') or underlying.startswith('399')):
+                    elif data.get('type') == 'stock':
+                        output = _format_prediction_result(data, 'stock')
+                    elif data.get('type') == 'index':
                         output = _format_prediction_result(data, 'index')
                     else:
                         output = f"预测完成，但无法格式化结果。原始数据：{str(data)[:200]}"
             
             # 直接返回格式化的文本字符串，供OpenClaw在飞书中直接显示
             formatted_message = output if output else "预测完成，但未生成输出内容"
+
+            # 格式自检钩子：若不是详细表格版，自动重建一次，避免摘要化漂移
+            if not _is_detailed_markdown(formatted_message):
+                data = result.get('data', {}) if isinstance(result.get('data'), dict) else {}
+                rebuilt = ""
+                try:
+                    if 'contract_code' in data:
+                        rebuilt = _format_prediction_result(data, 'option')
+                    elif data.get('type') == 'etf':
+                        rebuilt = _format_prediction_result(data, 'etf')
+                    elif data.get('type') == 'stock':
+                        rebuilt = _format_prediction_result(data, 'stock')
+                    elif data.get('type') == 'index':
+                        rebuilt = _format_prediction_result(data, 'index')
+                except Exception:
+                    rebuilt = ""
+                if _is_detailed_markdown(rebuilt):
+                    formatted_message = rebuilt
             
             # 限制消息长度，避免过长导致问题（飞书消息可能有长度限制）
             max_message_length = 2000  # 飞书消息建议长度

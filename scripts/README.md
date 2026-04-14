@@ -42,6 +42,7 @@ cd /path/to/etf-options-ai-assistant
 | `test_cron_tools.sh` | 从 `jobs.json` 抽取 `tool_*` 并对 `tool_runner.py` 冒烟（默认跳过 `tool_send_*`） | `./scripts/test_cron_tools.sh --help` |
 | `dingtalk_before_open_smoke.sh` | 盘前晨报钉钉冒烟：`tool_send_analysis_report` + JSON 示例（`test` / `prod`） | `bash scripts/dingtalk_before_open_smoke.sh test` |
 | `dingtalk_signal_inspection_smoke.sh` | 信号+风控巡检钉钉冒烟（走 `tool_send_signal_risk_inspection` 结构化渲染链路） | `bash scripts/dingtalk_signal_inspection_smoke.sh test` |
+| （无脚本） | Cron 推荐进程内链：`tool_run_signal_risk_inspection_and_send`（`phase`+`mode=test` 干跑） | `python3 tool_runner.py tool_run_signal_risk_inspection_and_send phase=midday mode=test fetch_mode=test` |
 | `triage_cron_signal_inspection.py` | 解析 Cron 运行日志，辅助巡检任务分流（配合 `docs/ops/cron_signal_inspection_triage.md`） | `python3 scripts/triage_cron_signal_inspection.py --help` |
 | `check_third_party_skills.sh` | 检查推荐/可选 OpenClaw 第三方技能是否已安装 | `./scripts/check_third_party_skills.sh` |
 | `sync_repo_skills_to_openclaw.sh` | 将仓库 **`skills/`** 下自研 Skill（子目录含 `SKILL.md`）**rsync** 到 `~/.openclaw/skills/`（及可选 shared skills）；不删除目标目录中其他第三方包 | `./scripts/sync_repo_skills_to_openclaw.sh` |

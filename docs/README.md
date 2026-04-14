@@ -51,7 +51,7 @@
 
 **入口文档**：`docs/openclaw/三Skill驱动ETF研究自动进化实施方案.md`  
 **工作流目录**：`workflows/`（`*_evolution_on_demand.yaml`、`quality_backstop_audit.yaml`、`ci_autofix_triage_on_demand.yaml` 等）  
-**预测与质量闭环**（与进化配套）：`config.yaml`（`prediction_quality` / `prediction_monitoring`）、`scripts/verify_predictions.py`、`scripts/prediction_metrics_weekly.py`；详见根目录 `README.md` 与 `config/openclaw_strategy_engine.yaml`。
+**预测与质量闭环**（与进化配套）：合并后配置 `prediction_quality` / `prediction_monitoring`（来源：`config/domains/risk_quality.yaml`）、`scripts/verify_predictions.py`、`scripts/prediction_metrics_weekly.py`；详见根目录 `README.md` 与 `config/openclaw_strategy_engine.yaml`。
 
 ---
 
@@ -94,7 +94,7 @@
 
 - **策略融合工具**：`tool_strategy_engine` — 见 `docs/reference/工具参考手册.md` 与 `config/tools_manifest.yaml`
 
-- **数据采集插件的分类与 Provider 约定**（OpenClaw 技能/工具索引）：`plugins/data_collection/README.md`、`plugins/data_collection/ROADMAP.md`
+- **数据采集插件的分类与 Provider 约定**：`plugins/data_collection/README.md`、`plugins/data_collection/ROADMAP.md`\n+  - 注：该目录在部分部署形态中为指向 OpenClaw 扩展（如 `openclaw-data-china-stock`）的符号链接；若你是纯 clone 本仓库且未安装扩展，请先按 `docs/publish/plugins-and-skills.md` 完成扩展安装/链接，再阅读该索引。
 - `docs/reference/工具参考手册.md`
 - `docs/reference/工具参考手册-速查.md`
 - `docs/reference/工具参考手册-场景.md`
@@ -127,7 +127,7 @@
 包含常见问题、风险控制与回滚、钉钉/飞书连接排查等：
 
 - `docs/ops/常见问题库.md`
-- `docs/ops/RISK_CONTROL_AND_ROLLBACK.md`
+- `docs/ops/RISK_CONTROL_AND_ROLLBACK.md`（若该文件不存在，以 `docs/ops/` 目录实际内容为准）
 - `docs/ops/cron_signal_inspection_triage.md`（信号+风控巡检 Cron 排错）
 - 以及其他 ops 相关文档（如交易日跳过参数清单等）
 

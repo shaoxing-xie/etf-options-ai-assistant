@@ -29,7 +29,7 @@ def get_runtime_config() -> Dict[str, Any]:
     """
     获取当前运行时配置。
 
-    优先返回已缓存的运行时配置；如果尚未初始化，则从 config.yaml 加载。
+    优先返回已缓存的运行时配置；如果尚未初始化，则从分层配置加载（`load_system_config` 的合并后视图）。
     """
     global _runtime_config
     with _lock:

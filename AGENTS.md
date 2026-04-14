@@ -17,7 +17,13 @@ Before doing anything else:
 
 Don't ask permission. Just do it.
 
-**Multi-strategy fusion:** Use **`tool_strategy_engine`** when the user wants a **combined / consistency-aware** view (not only single-path `tool_generate_signals`). It aggregates rule sources, fuses per `config/strategy_fusion.yaml`, returns `candidates`, `fused`, `weights_effective`, `inputs_hash`; optional Journal. OpenClaw routing hints: `config/openclaw_strategy_engine.yaml` + `Prompt_config.yaml` → `openclaw_strategy_engine_routing`. Weight persistence for iterative refinement: `data/strategy_fusion_effective_weights.json` when `evolution.persist_effective_weights` is enabled. See `docs/architecture/strategy_engine_and_signal_fusion.md`. Does not replace `tool_generate_signals`.
+## Cursor Rules (Persistent)
+
+- Project rules that must survive editor reinstall live under `.cursor/rules/`.
+- Cron/agent boundary rule for this repo: `.cursor/rules/cron-agent-boundaries.mdc`.
+- When changing cron jobs or delivery flow, follow that rule before editing code or `jobs.json`.
+
+**Multi-strategy fusion:** Use **`tool_strategy_engine`** when the user wants a **combined / consistency-aware** view (not only single-path `tool_generate_option_trading_signals`; alias `tool_generate_signals`). It aggregates rule sources, fuses per `config/strategy_fusion.yaml`, returns `candidates`, `fused` (primary symbol), `fused_by_symbol` (multi-ETF), `summary`, `weights_effective`, `inputs_hash` (policy + strategy weight snapshot); optional Journal. Multi-underlying: comma-separated `underlying` and aligned `index_code`. OpenClaw routing hints: `config/openclaw_strategy_engine.yaml` + `Prompt_config.yaml` → `openclaw_strategy_engine_routing`. Skill: `skills/ota-strategy-fusion-playbook/SKILL.md`. Workflow template: `workflows/strategy_fusion_routine.yaml`. Weight persistence: `data/strategy_fusion_effective_weights.json` when `evolution.persist_effective_weights` is enabled. See `docs/architecture/strategy_engine_and_signal_fusion.md`. Does not replace option/ETF/stock signal tools (`tool_generate_etf_trading_signals`, `tool_generate_stock_trading_signals`).
 
 ## Memory
 
@@ -284,13 +290,13 @@ trading-copilot ──> market-quick-scan
 
 ### 5) Skill 文件位置
 
-- `skills/market-quick-scan/SKILL.md`
-- `skills/signal-workflow/SKILL.md`
-- `skills/position-monitor/SKILL.md`
-- `skills/trading-copilot/SKILL.md`（新增）
-- `skills/a-share-market-regime/SKILL.md`（新增）
-- `skills/a-share-tradability-filter/SKILL.md`（新增）
-- `skills/event-sentinel/SKILL.md`（新增）
+> **仓库约定**：`skills/` 下**仅**提交项目自研 Skill；Clawhub 等第三方包装到 `~/.openclaw/skills/`（或 shared skills），详见 `skills/README.md` 与 `docs/getting-started/third-party-skills.md`。自研包调通后可用 `scripts/sync_repo_skills_to_openclaw.sh` 同步到 OpenClaw。
+
+**当前已落地的自研包**均以 **`skills/ota-*`** 为目录名（`name:` 为 `ota_*` 蛇形），完整索引与 Agent 勾选片段见 **[`skills/README.md`](skills/README.md)**、**[`config/snippets/openclaw_agents_ota_skills.json`](config/snippets/openclaw_agents_ota_skills.json)**、**[`docs/openclaw/OpenClaw-Agent-ota-skills.md`](docs/openclaw/OpenClaw-Agent-ota-skills.md)**。下列为**历史规划/他仓示意图**，**勿**与本仓库 `skills/` 路径混用；若需同类能力，优先查表内是否已有 `ota_*` 等价物（如体制清单 → `ota_market_regime_checklist`）。
+
+- ~~`skills/market-quick-scan/SKILL.md`~~ → 用 `ota_daily_session_routine` 等与规程文档配合
+- ~~`skills/signal-workflow/SKILL.md`~~ → `ota_signal_risk_inspection`、`ota_strategy_fusion_playbook`
+- ~~`skills/a-share-market-regime/SKILL.md`~~ → `ota_market_regime_checklist` + `tool_detect_market_regime`
 
 ### 6) 注意事项
 
@@ -310,18 +316,17 @@ trading-copilot ──> market-quick-scan
 | `northbound-flow` | "北向资金"/"/northbound" | 外资流向监控 | 🚧 待实现数据源 |
 | `sector-rotation` | "板块轮动"/"/sector" | 热点板块识别 | 🚧 待实现数据源 |
 | `capital-flow` | "资金流向"/"/capital" | 主力散户博弈分析 | 🚧 待实现数据源 |
-| `quantitative-screening` | "量化选股"/"/quant" | 多因子ETF排名 | 🚧 待构建因子库 |
+| `quantitative-screening` | "量化选股"/"/quant" | 多因子排序（候选列表） | **工具已有** `tool_quantitative_screening`；规程 Skill：**`ota_quantitative_screening_brief`**（`skills/ota-quantitative-screening-brief/`）。机构级因子库 / 中性化仍为后续增强项 |
 
-**Skill 文件位置：**
+**Skill 文件位置（P3 仍为独立命名空间的规划草案，未提交到本仓库 `skills/`）：**
 - `skills/dragon-tiger-list/SKILL.md`
 - `skills/northbound-flow/SKILL.md`
 - `skills/sector-rotation/SKILL.md`
 - `skills/capital-flow/SKILL.md`
-- `skills/quantitative-screening/SKILL.md`
 
 **实现优先级建议：**
 1. `northbound-flow` - 外资数据相对容易获取，优先实现
 2. `sector-rotation` - 板块数据对ETF轮动最有价值
 3. `capital-flow` - Level2 数据增强信号准确性
 4. `dragon-tiger-list` - 游资动向提供短线参考
-5. `quantitative-screening` - 需要完整因子库，最后实现
+5. ~~`quantitative-screening`~~ → 已用 `tool_quantitative_screening` + `ota_quantitative_screening_brief` 覆盖「助手内排序」场景；完整因子库另列里程碑

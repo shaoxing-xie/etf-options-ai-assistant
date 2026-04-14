@@ -1,0 +1,29 @@
+{
+  "name": "option-trading-assistant",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "description": "ETF / A 股交易助手：分析、策略融合、通知与回测（OpenClaw 本地扩展）",
+  "main": "index.ts",
+  "files": [
+    "index.ts",
+    "tool_runner.py",
+    "openclaw.plugin.json",
+    "config",
+    "plugins",
+    "src"
+  ],
+  "license": "UNLICENSED",
+  "peerDependencies": {
+    "openclaw": "*"
+  },
+  "openclaw": {
+    "extensions": [
+      "./index.ts"
+    ],
+    "compat": {
+      "pluginApi": ">=2026.3.24-beta.2",
+      "minGatewayVersion": "2026.3.24-beta.2"
+    }
+  }
+}

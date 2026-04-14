@@ -1,0 +1,180 @@
+# Internal chart-alert engine configuration.
+# This file is intentionally standalone so it can be toggled
+# without changing the large root config.
+
+internal_chart:
+  enabled: true
+  mode: "observe"  # observe | semi_auto | auto
+  max_daily_alerts: 50
+  cooldown_seconds: 300
+  alert_engine_scan_interval_seconds: 60
+  emergency_manual_override: true
+
+alert_engine:
+  contract_version: "1.0"
+  store:
+    backend: "jsonl"  # jsonl | sqlite (future)
+    path: "data/alerts/internal_alert_events.jsonl"
+  dedup:
+    enabled: true
+    key_format: "source|symbol|timeframe|rule_id|bar_ts"
+    ttl_seconds: 86400
+  cooldown:
+    enabled: true
+    scope: "rule_symbol"  # rule_symbol | rule_only
+  rate_limit:
+    enabled: true
+    max_events_per_scan: 20
+  default_notify_channels:
+    - feishu
+  groups:
+    technical:
+      enabled: true
+      default_priority: medium
+    volatility:
+      enabled: true
+      default_priority: medium
+    regime:
+      enabled: true
+      default_priority: low
+
+# Production-oriented starter rules for observe phase.
+# These align with current engine metric support: rsi / current_price.
+rules:
+  - rule_id: "rsi_oversold_510300_30m"
+    contract_version: "1.0"
+    enabled: true
+    symbol: "510300"
+    timeframe: "30m"
+    group: "technical"
+    priority: "high"
+    condition:
+      type: "threshold"
+      metric: "rsi"
+      operator: "<="
+      value: 30
+    cooldown_sec: 600
+    ttl_sec: 86400
+    notify:
+      channels: ["feishu"]
+      template: "default"
+    actions:
+      emit_signal_candidate: true
+    metadata:
+      owner: "analysis_team"
+      tags: ["observe", "entry"]
+
+  - rule_id: "rsi_overbought_510300_30m"
+    contract_version: "1.0"
+    enabled: true
+    symbol: "510300"
+    timeframe: "30m"
+    group: "technical"
+    priority: "high"
+    condition:
+      type: "threshold"
+      metric: "rsi"
+      operator: ">="
+      value: 70
+    cooldown_sec: 600
+    ttl_sec: 86400
+    notify:
+      channels: ["feishu"]
+      template: "default"
+    actions:
+      emit_signal_candidate: true
+    metadata:
+      owner: "analysis_team"
+      tags: ["observe", "risk"]
+
+  - rule_id: "rsi_oversold_510050_30m"
+    contract_version: "1.0"
+    enabled: true
+    symbol: "510050"
+    timeframe: "30m"
+    group: "technical"
+    priority: "medium"
+    condition:
+      type: "threshold"
+      metric: "rsi"
+      operator: "<="
+      value: 30
+    cooldown_sec: 900
+    ttl_sec: 86400
+    notify:
+      channels: ["feishu"]
+      template: "default"
+    actions:
+      emit_signal_candidate: true
+    metadata:
+      owner: "analysis_team"
+      tags: ["observe"]
+
+  - rule_id: "rsi_overbought_510050_30m"
+    contract_version: "1.0"
+    enabled: true
+    symbol: "510050"
+    timeframe: "30m"
+    group: "technical"
+    priority: "medium"
+    condition:
+      type: "threshold"
+      metric: "rsi"
+      operator: ">="
+      value: 70
+    cooldown_sec: 900
+    ttl_sec: 86400
+    notify:
+      channels: ["feishu"]
+      template: "default"
+    actions:
+      emit_signal_candidate: true
+    metadata:
+      owner: "analysis_team"
+      tags: ["observe"]
+
+  - rule_id: "rsi_oversold_510500_30m"
+    contract_version: "1.0"
+    enabled: true
+    symbol: "510500"
+    timeframe: "30m"
+    group: "technical"
+    priority: "medium"
+    condition:
+      type: "threshold"
+      metric: "rsi"
+      operator: "<="
+      value: 30
+    cooldown_sec: 900
+    ttl_sec: 86400
+    notify:
+      channels: ["feishu"]
+      template: "default"
+    actions:
+      emit_signal_candidate: true
+    metadata:
+      owner: "analysis_team"
+      tags: ["observe"]
+
+  - rule_id: "rsi_overbought_510500_30m"
+    contract_version: "1.0"
+    enabled: true
+    symbol: "510500"
+    timeframe: "30m"
+    group: "technical"
+    priority: "medium"
+    condition:
+      type: "threshold"
+      metric: "rsi"
+      operator: ">="
+      value: 70
+    cooldown_sec: 900
+    ttl_sec: 86400
+    notify:
+      channels: ["feishu"]
+      template: "default"
+    actions:
+      emit_signal_candidate: true
+    metadata:
+      owner: "analysis_team"
+      tags: ["observe"]

@@ -31,7 +31,7 @@ def tool_stop_loss_take_profit(
     if action == "check":
         from analysis.etf_risk_manager import tool_check_stop_loss_take_profit
         if None in (entry_price, current_price, highest_price):
-            return {"success": False, "message": "check 需要 etf_symbol, entry_price, current_price, highest_price", "data": None}
+            return {"success": False, "message": "check 需要 entry_price, current_price, highest_price（etf_symbol 可选，默认 510300）", "data": None}
         return tool_check_stop_loss_take_profit(
             etf_symbol=etf_symbol or "510300",
             entry_price=entry_price,

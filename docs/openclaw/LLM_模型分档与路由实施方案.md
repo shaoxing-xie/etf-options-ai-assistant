@@ -1,3 +1,11 @@
+## internal_chart_alert 融合说明（新增）
+
+- `tool_strategy_engine` 现支持可选参数 `sources`，用于显式启停来源：
+  - 示例：`["src_signal_generation", "etf_trend_following", "internal_chart_alert"]`
+- 当 `sources` 未传时，仍按 `config/strategy_fusion.yaml -> providers` 的默认开关生效（向后兼容）。
+- 融合输出 `data` 中新增 `source_contribution`，用于周报和 A/B 评估来源贡献度。
+- 建议在 `observe` 阶段先把 `providers.internal_chart_alert` 维持 `false`，仅在阶段评审通过后开启。
+
 # LLM 模型分档与路由实施方案（OpenClaw / etf-options-ai-assistant）
 
 本文用于指导你在 OpenClaw 体系内，为不同 **agent / job / workflow** 配置合适的模型档位、降级策略与成本控制手段，作为长期可查询的“配置决策依据”。
@@ -62,7 +70,6 @@
 - **推荐候选**：
   - `glm-5`（iflow2api）
   - `deepseek-v3.2-chat`（iflow2api）
-  - `deepseek-chat`（DeepSeek 官方 32k：适合较长文本但注意可用性/配额）
 
 ### S 档（Strong：研究级/长链路/容错强）
 - **适用**：类别 3（盘前/盘后/日报/轮动/策略研究/涨停回马枪等）。
@@ -224,6 +231,15 @@ python3 ~/.openclaw/workspaces/etf-options-ai-assistant/scripts/sync_openclaw_mo
 ### 2.5) 仅用 FreeRide `list`：手工挑选 F 档免费候选（不跑 auto）
 
 你当前的做法是：**只运行 `freeride list` 进行免费模型可用性/质量参考**，然后**手动**把“最优的一批免费模型”写入本项目的 `config/model_routes.json -> groups.F.model.primary/fallbacks`。
+
+source ~/.openclaw/.env
+export OPENROUTER_API_KEY="$OPENCLAW_OPENROUTER_API_KEY"
+freeride list -n 20
+
+模型验证：
+ TARGET_PROVIDER="custom-openrouter-alpha-free" TARGET_MODEL="custom-openrouter-alpha-free/nvidia/nemotron-3-super-120b-a12b:free" ~/scripts/test-nvidia-glm5-auth.sh
+
+ ~/scripts/test-openclaw-models-batch.sh
 
 该模式的好处是：你们的 SSOT 与同步脚本仍然完全掌控 `openclaw.json`（避免 `freeride auto` 与同步脚本互相覆盖）。
 

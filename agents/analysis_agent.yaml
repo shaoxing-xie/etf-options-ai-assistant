@@ -13,24 +13,46 @@ agent:
     
     # 趋势分析
     - tool_analyze_after_close
+    # 盘后分析 + 日报发送进程内串接（cron 优先，避免模型传大 JSON）
+    - tool_analyze_after_close_and_send_daily_report
     - tool_analyze_before_open
     - tool_analyze_opening_market
     
     # 波动率预测
     - tool_predict_volatility
     - tool_calculate_historical_volatility
+    - tool_underlying_historical_snapshot
     - tool_predict_intraday_range
+    - tool_predict_daily_volatility_range
     - tool_compute_index_key_levels
+    # 日报 / 盘后补采（与 workflows/daily_market_report.yaml、tool_send_daily_report ingest 对齐；原在 data_collector_agent）
+    - tool_fetch_global_index_spot
+    - tool_fetch_northbound_flow
+    - tool_fetch_etf_realtime
+    - tool_fetch_policy_news
+    - tool_fetch_announcement_digest
+    - tool_sector_heat_score
+    - tool_fetch_macro_commodities
     - tool_record_before_open_prediction
     - tool_get_yesterday_prediction_review
     
-    # 信号生成
+    # 信号生成（期权主名 + 兼容别名 + ETF / A 股）
+    - tool_generate_option_trading_signals
     - tool_generate_signals
+    - tool_generate_etf_trading_signals
+    - tool_generate_stock_trading_signals
     # 多路 Rule 聚合 + 融合（OpenClaw 应优先用于「综合信号/一致性」类问题）
     - tool_strategy_engine
+    - tool_internal_alert_scan
     
     # 风险评估
     - tool_assess_risk
+
+    # 市场体制 / 轮动 / 策略研究 / 候选多因子排序（与 plugins/analysis README、ota-* Skill 对齐）
+    - tool_detect_market_regime
+    - tool_etf_rotation_research
+    - tool_strategy_research
+    - tool_quantitative_screening
     
     # ETF趋势跟踪
     - tool_check_etf_index_consistency
@@ -75,6 +97,7 @@ schedules:
     cron: "28 9 * * 1-5"  # 工作日 9:28
     task: opening_market_analysis_task
   
+  # 盘中：日内波动 + 轻量区间 + 日频全日区间（三者口径不同，分步调用）
   - name: intraday_volatility_range
     cron: "*/30 9-15 * * 1-5"  # 工作日 9:00-15:00 每30分钟
     task: intraday_volatility_range_task
@@ -112,13 +135,21 @@ tasks:
       - tool: tool_predict_volatility
         params:
           underlying: "510300"
-  
-  signal_generation_task:
-    steps:
-      - tool: tool_generate_signals
+      - tool: tool_predict_intraday_range
+        params:
+          symbol: "510300"
+      - tool: tool_predict_daily_volatility_range
         params:
           underlying: "510300"
 
+  signal_generation_task:
+    steps:
+      - tool: tool_generate_option_trading_signals
+        params:
+          underlying: "510300"
+
+  # 策略融合：与 workflows/strategy_fusion_routine.yaml 一致；默认单标的 510300。
+  # 多 ETF 时改为逗号分隔，例如 underlying: "510300,510500" 与 index_code: "000300,000905"（同序对齐）。
   strategy_fusion_task:
     steps:
       - tool: tool_strategy_engine

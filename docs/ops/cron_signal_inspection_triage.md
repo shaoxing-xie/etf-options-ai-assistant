@@ -29,3 +29,18 @@ python3 scripts/triage_cron_signal_inspection.py --days 14
 
 - `python3 tool_runner.py tool_portfolio_risk_snapshot '{}'`：依赖本地 ETF 日线缓存与 `config/portfolio_weights.json`（可复制 `portfolio_weights.example.json`）。
 - 机构占位：`tool_compliance_rules_check`、`tool_stop_loss_lines_check`、`tool_stress_test_linear_scenarios`、`tool_risk_attribution_stub`（见 `config/*.example.yaml`）。
+
+## 5. Cron `payload.message` 模板（`~/.openclaw/cron/jobs.json`）
+
+三档任务仅 `phase` 不同；**唯一必需工具调用**：
+
+- **早盘** `etf-signal-risk-inspection-morning`：`tool_run_signal_risk_inspection_and_send(phase='morning', mode='prod')`
+- **午间** `etf-signal-risk-inspection-midday`：`tool_run_signal_risk_inspection_and_send(phase='midday', mode='prod')`
+- **下午** `etf-signal-risk-inspection-afternoon`：`tool_run_signal_risk_inspection_and_send(phase='afternoon', mode='prod')`
+
+可在 `message` 中保留简短硬失败约定（如未出现真实 `toolResult success` 则输出 `ERROR_NO_DELIVERY_TOOL_CALL`），但**不应**再要求模型多轮拉数拼 `report`。本地烟测（不经钉钉）：`python3 tool_runner.py tool_run_signal_risk_inspection_and_send phase=midday mode=test fetch_mode=test`。
+
+### 数据不全时排查顺序（与日报类任务一致）
+
+- **禁止**不经逐项核对就归因于「数据采集工具坏了」「网络不稳定」；应先走完字段映射与环境核对，再考虑外网/供应商。
+- 采集层单独 `tool_runner` 往往正常；优先查 **report 字段映射**、OpenClaw **多轮 JSON 截断**、键名别名。复合工具上线后传送链已在进程内，仍应对照 `plugins/notification/run_signal_risk_inspection.py` 与 `send_signal_risk_inspection._REQUIRED_REPORT_KEYS` 逐字段核对。

@@ -4,42 +4,60 @@
     "F": {
       "description": "Fast / low-cost: tool orchestration, data collection, ops log scanning.",
       "model": {
-        "primary": "custom-openrouter-alpha-free/stepfun/step-3.5-flash:free",
+        "primary": "custom-openrouter-alpha-free/nvidia/nemotron-3-nano-30b-a3b:free",
         "fallbacks": [
-          "custom-openrouter-alpha-free/qwen/qwen3-coder:free",
-          "custom-openrouter-alpha-free/qwen/qwen3-next-80b-a3b-instruct:free",
-          "custom-openrouter-alpha-free/nvidia/nemotron-3-nano-30b-a3b:free",
           "custom-openrouter-alpha-free/nvidia/nemotron-3-super-120b-a12b:free",
-          "z-ai-glm5-nvidia-com-sxxiefg/z-ai/glm5",
-          "glm5-api-nvidia-com/z-ai/glm5"
+          "glm5-api-nvidia-com/moonshotai/kimi-k2-instruct",
+          "z-ai-glm5-nvidia-com-sxxiefg/deepseek-ai/deepseek-v3.1",
+          "glm5-api-nvidia-com/deepseek-ai/deepseek-v3.1",
+          "z-ai-glm5-nvidia-com-sxxiefg/moonshotai/kimi-k2-instruct",
+          "glm5-api-nvidia-com/z-ai/glm4.7",
+          "z-ai-glm5-nvidia-com-sxxiefg/z-ai/glm4.7",
+          "glm5-api-nvidia-com/moonshotai/kimi-k2-instruct-0905",
+          "z-ai-glm5-nvidia-com-sxxiefg/moonshotai/kimi-k2-instruct-0905",
+          "glm5-api-nvidia-com/deepseek-ai/deepseek-v3.1-terminus",
+          "z-ai-glm5-nvidia-com-sxxiefg/deepseek-ai/deepseek-v3.1-terminus",
+          "custom-openrouter-alpha-free/openai/gpt-oss-120b:free"
         ]
       }
     },
     "M": {
       "description": "Medium: strict template compliance, inspection briefs, code-health summaries.",
       "model": {
-        "primary": "z-ai-glm5-nvidia-com-sxxiefg/z-ai/glm5",
+        "primary": "custom-openrouter-alpha-free/nvidia/nemotron-3-super-120b-a12b:free",
         "fallbacks": [
-          "glm5-api-nvidia-com/z-ai/glm5",
-          "custom-openrouter-alpha-free/stepfun/step-3.5-flash:free",
-          "custom-openrouter-alpha-free/qwen/qwen3-coder:free",
-          "custom-openrouter-alpha-free/nvidia/nemotron-3-nano-30b-a3b:free",
-          "custom-qianfan-baidubce-com/ernie-4.5-21b-a3b",
-          "custom-api-deepseek-com/deepseek-chat"
+          "glm5-api-nvidia-com/moonshotai/kimi-k2-instruct",
+          "z-ai-glm5-nvidia-com-sxxiefg/deepseek-ai/deepseek-v3.1",
+          "custom-openrouter-alpha-free/openai/gpt-oss-120b:free",
+          "glm5-api-nvidia-com/deepseek-ai/deepseek-v3.1",
+          "z-ai-glm5-nvidia-com-sxxiefg/moonshotai/kimi-k2-instruct",
+          "glm5-api-nvidia-com/z-ai/glm4.7",
+          "z-ai-glm5-nvidia-com-sxxiefg/z-ai/glm4.7",
+          "glm5-api-nvidia-com/moonshotai/kimi-k2-instruct-0905",
+          "z-ai-glm5-nvidia-com-sxxiefg/moonshotai/kimi-k2-instruct-0905",
+          "glm5-api-nvidia-com/deepseek-ai/deepseek-v3.1-terminus",
+          "z-ai-glm5-nvidia-com-sxxiefg/deepseek-ai/deepseek-v3.1-terminus",
+          "custom-openrouter-alpha-free/nvidia/nemotron-3-nano-30b-a3b:free"
         ]
       }
     },
     "S": {
       "description": "Strong: research reports, long-form reasoning, complex multi-step analysis.",
       "model": {
-        "primary": "glm5-api-nvidia-com/z-ai/glm5",
+        "primary": "z-ai-glm5-nvidia-com-sxxiefg/moonshotai/kimi-k2-instruct",
         "fallbacks": [
-          "z-ai-glm5-nvidia-com-sxxiefg/z-ai/glm5",
-          "custom-openrouter-alpha-free/qwen/qwen3-next-80b-a3b-instruct:free",
+          "glm5-api-nvidia-com/moonshotai/kimi-k2-instruct",
+          "z-ai-glm5-nvidia-com-sxxiefg/deepseek-ai/deepseek-v3.1",
+          "glm5-api-nvidia-com/deepseek-ai/deepseek-v3.1",
+          "z-ai-glm5-nvidia-com-sxxiefg/z-ai/glm4.7",
+          "glm5-api-nvidia-com/z-ai/glm4.7",
+          "z-ai-glm5-nvidia-com-sxxiefg/moonshotai/kimi-k2-instruct-0905",
+          "glm5-api-nvidia-com/moonshotai/kimi-k2-instruct-0905",
+          "z-ai-glm5-nvidia-com-sxxiefg/deepseek-ai/deepseek-v3.1-terminus",
+          "glm5-api-nvidia-com/deepseek-ai/deepseek-v3.1-terminus",
           "custom-openrouter-alpha-free/nvidia/nemotron-3-super-120b-a12b:free",
-          "custom-openrouter-alpha-free/stepfun/step-3.5-flash:free",
-          "custom-qianfan-baidubce-com/ernie-4.5-21b-a3b",
-          "custom-api-deepseek-com/deepseek-chat"
+          "custom-openrouter-alpha-free/openai/gpt-oss-120b:free",
+          "custom-openrouter-alpha-free/nvidia/nemotron-3-nano-30b-a3b:free"
         ]
       }
     }
@@ -49,6 +67,10 @@
     "overrides": {
       "etf_main": "M",
       "etf_analysis_agent": "S",
+      "etf_cron_analysis_agent": "S",
+      "etf_cron_inspection_agent": "M",
+      "etf_cron_research_agent": "S",
+      "etf_cron_ops_agent": "F",
       "etf_business_core_agent": "M",
       "code_maintenance_agent": "M",
       "ops_agent": "F",

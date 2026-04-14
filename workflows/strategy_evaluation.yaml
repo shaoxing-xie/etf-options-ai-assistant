@@ -6,24 +6,24 @@ schedule:
 steps:
   - name: calculate_strategy_scores
     tool: tool_calculate_strategy_score
-    parameters:
+    params:
       strategy: "trend_following"
       lookback_days: 60
       min_signals: 10
-    continue_on_error: true
-  
+    continue_on_failure: true
+
   - name: calculate_mean_reversion_score
     tool: tool_calculate_strategy_score
-    parameters:
+    params:
       strategy: "mean_reversion"
       lookback_days: 60
       min_signals: 10
-    continue_on_error: true
-  
+    continue_on_failure: true
+
   - name: calculate_breakout_score
     tool: tool_calculate_strategy_score
-    parameters:
+    params:
       strategy: "breakout"
       lookback_days: 60
       min_signals: 10
-    continue_on_error: true
+    continue_on_failure: true

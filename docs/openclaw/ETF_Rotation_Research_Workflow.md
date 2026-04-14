@@ -2,93 +2,58 @@
 
 ### 1. 目标与定位
 
-- 为宽基及部分行业 ETF 建立一个**研究级**的轮动分析工作流：
-  - 每个交易日盘后或晚间，对预设 ETF 池进行强弱评估与轮动方向分析；
-  - 输出一份结构化的「ETF 轮动研究报告」，通过现有钉钉/飞书渠道推送；
-  - **不直接驱动交易决策或仓位调整**，仅作为研究与投资决策辅助。
-- 与现有主线（510300 + 期权日内交易）关系：
-  - 作为补充视角，帮助判断「当前市场下哪些 ETF 相对更强/更适合作为主战场」；
-  - 不替代现有日内信号与风控链路。
+- 为宽基及行业/主题 ETF 建立**研究级**轮动分析：
+  - 每个交易日盘后或晚间，对配置池内 ETF 做强弱评估与轮动方向参考；
+  - 输出结构化「ETF 轮动研究」报告，经钉钉等渠道推送；
+  - **不直接驱动交易或仓位调整**，仅作研究与决策辅助。
+- 与现有主线（如 510300 + 期权日内）关系：补充「相对强弱与风险刻度」视角，不替代日内信号与风控链路。
 
 ### 2. 工作流文件与调度建议
 
-- 工作流文件：`workflows/etf_rotation_research.yaml`
-- 建议调度时间：
-  - 工作日 18:00（`schedule: "0 18 * * 1-5"`），在盘后分析与日内任务结束后执行；
-  - 如需手动触发，可通过 `openclaw cron run <job-id> --timeout 1800000` 的方式运行。
+- **工具管道版**：`workflows/etf_rotation_research.yaml`  
+  - 步骤：`tool_etf_rotation_research` → `tool_send_analysis_report`（`report_data` 来自上一步）。
+  - 默认 `etf_pool: ""`，标的池由 **`config/rotation_config.yaml`**（`pool.symbol_groups` + `extra_etf_codes`）与 **`config/symbols.json`** 解析。
+- **Agent 版**：`workflows/etf_rotation_research_agent.yaml`（按 `research.md` + 钉钉长文；与管道版**并存**，Cron 择一绑定）。
+- 建议调度：工作日 **18:00**（管道版 YAML 内 `schedule: "0 18 * * 1-5"`）；若与 Cron 对齐 **18:10**，以 `~/.openclaw/cron/jobs.json` 为准。
+- 手动触发：可通过 OpenClaw `cron run` 或本地 `tool_runner.py` 调用工具。
 
-> 注意：上线前应在 `~/.openclaw/cron/jobs.json` 中显式创建对应 Cron 任务，并在 `payload.message` 中延续「研究模式一」的调用规范。
+### 3. 标的池与配置（单一入口）
 
-### 3. ETF 池设计
+- **轮动专用配置**：`config/rotation_config.yaml`  
+  - `pool.symbol_groups`：通常为 `core`、`industry_etf`（与 `symbols.json` 的 `groups` 名称一致）。  
+  - `pool.extra_etf_codes`：轮动补集（如历史上默认池中的行业主题代码），避免仅合并 `symbols.json` 时遗漏。  
+- **集中标的清单**：`config/symbols.json`（指数/ETF 分组）；采集优先级仍按各组 `priority` 执行。
+- **显式覆盖**：工作流或工具参数传入非空 `etf_pool`（逗号分隔）时，**不再**合并上述默认池，便于测试或缩池。
 
-- 建议初期 ETF 池（示例，视数据源与实际需求可调整）：
-  - 宽基：
-    - `510300`（沪深300）
-    - `510500`（中证500）
-    - `159915`（创业板）
-  - 行业/风格：
-    - `512100`（证券）
-    - `512880`（银行）
-    - `512690`（酒）
-- ETF 池应配置在统一位置（如配置文件或环境变量），避免在多个工作流中硬编码。
+### 4. 核心实现与数据（与旧版「多工具链」设计对齐后的实际形态）
 
-### 4. 核心步骤概览
+当前实现已**收敛为单工具 + 共享核心库**，不再依赖独立的 `tool_read_etf_daily` / `tool_calculate_technical_indicators` 链式步骤（若文档其它处仍提及，以本节为准）。
 
-工作流主要步骤（与 `workflows/etf_rotation_research.yaml` 对应）：
+1. **数据**  
+   - `plugins/data_access/read_cache_data`：`etf_daily`，需 **start_date / end_date**，支持缓存全量或部分命中（部分命中时仍尽量使用已有 K 线）。  
+   - 核心模块：`plugins/analysis/etf_rotation_core.py` 内根据 `data_need`（`lookback_days` 与 MA、相关性、R² 窗口取 max）决定尾部截取，避免长窗被过短 `lookback` 误截断。
 
-1. **加载 ETF 池日线数据**  
-   - 工具：`tool_read_etf_daily`  
-   - 内容：读取最近一段时间（如 60–120 天）的日线行情，为动量、波动率、回撤等因子计算提供数据基础。
+2. **因子与评分**（均在 `rotation_config.yaml` 可调）  
+   - 动量：20 日 / 60 日；波动：20 日年化；回撤：约 60 日窗口最大回撤。  
+   - 趋势稳定性：对数收盘价线性回归 **R²**（`numpy`，非 scipy）。  
+   - 相关性：对齐收益后 Pearson 矩阵，**mean_abs_corr**；模式含 `penalize` / `filter` / `off` / `filter_greedy`（见 YAML）。  
+   - 均线：默认 MA200，`ma_mode`：`soft`（低于均线降权）/ `hard` / `off`。  
+   - **legacy_score**：保留旧口径（0.45/0.35/0.15/0.05）便于对比；综合分含新权重时可与 legacy 并列展示。
 
-2. **计算技术因子（动量/成交量等）**  
-   - 工具：`tool_calculate_technical_indicators`  
-   - 内容：对 ETF 日线数据计算：
-     - N 日/周动量（如 20 日收益、60 日收益）；
-     - 成交量变化（短期 vs 长期平均）；
-     - 其他技术指标（如 MA、MACD、RSI）作为轮动辅助因子。
+3. **工具**  
+   - `tool_etf_rotation_research`：`plugins/analysis/etf_rotation_research.py`。  
+   - 输出：`report_data.llm_summary`、排名、`correlation_matrix`、`config_snapshot`、`errors`；可选 **JSONL 历史**（默认 `data/etf_rotation_runs.jsonl`）。  
+   - **回测**：`tool_backtest_etf_rotation`（`plugins/backtest/etf_rotation_backtest.py`），月度调仓、等权 Top-K，与生产评分逻辑一致（研究级）。
 
-3. **历史与预测波动率评估**  
-   - 工具：
-     - `tool_calculate_historical_volatility`
-     - `tool_predict_volatility`
-   - 作用：
-     - 为每只 ETF 提供风险刻度（高波/低波）；
-     - 在轮动评价中平衡「收益预期」与「波动/回撤风险」。
+4. **发送报告**  
+   - 管道版：`tool_send_analysis_report` 投递钉钉（与仓库内通知工具映射一致）。  
+   - 自然语言输出仍建议遵守 `research.md`「研究模式一」与免责声明。
 
-4. **综合评分与排名（研究阶段）**  
-   - 当前阶段建议在 LLM 增强层/盘后分析工具中实现：
-     - 结合动量、成交量、波动率及行业/风格暴露，给出综合评分；
-     - 明确标出得分最高/最低的 ETF 及其主要驱动因素。  
-   - 后续可根据需要，将此步骤下沉为专门的轮动工具或策略模块。
+### 5. 与 Market Regime 的衔接
 
-5. **发送轮动研究报告**  
-   - 工具：`tool_send_analysis_report`（通过 `etf_notification_agent`，将研究类报告推送到钉钉）
-   - 报告要求：
-     - 标题中明确「ETF 轮动研究（研究级，不构成交易指令）」；
-     - 正文结构建议包含：
-       - ETF 综合排名与核心指标表格；
-       - 市场 Regime 下的风格偏好说明（可参考 `Market_Regime_and_AI_Decision_Layer.md`）；
-       - 对当前主交易标的（如 510300）在轮动体系中的相对位置说明；
-       - 风险提示与数据限制说明；
-       - 下一步行动建议（例如「关注某 ETF 的回调买点」「在某 Regime 下减弱行业曝险」等）。
+- 工具内可调用 `tool_detect_market_regime`（如基于 510300）在报告中补充 Regime 一行说明；Regime **不覆盖**轮动排名逻辑，仅作上下文。
 
-### 5. 与 Market Regime / AI 决策层的衔接
+### 6. 钉钉输出与研究模式一
 
-- Market Regime（参考 `Market_Regime_and_AI_Decision_Layer.md`）：
-  - 在趋势市，适度提高顺势宽基 ETF 的权重建议；
-  - 在震荡市，强调防御型或低波 ETF 的相对吸引力；
-  - 在高风险/流动性收缩 Regime 下，整体降低轮动激活度并强化风险提示。
-- AI 决策层：
-  - 可以将 ETF 轮动得分视为「标的/方向层面」的输入，与策略层表现与风险约束共同决定建议组合构成；
-  - 当前阶段仍以「建议形式」输出，由人工审核。
-
-### 6. 钉钉/飞书输出规范与研究模式一
-
-- 该工作流的所有自然语言输出应：
-  - 继续遵守 `~/.openclaw/prompts/research.md` 中「研究模式一」的结构化输出与 Markdown 规范；
-  - 明确标记数据来源（缓存/Tushare/其他）与回退策略；
-  - 在结尾附上「以上内容仅供研究参考，不构成投资建议」。
-- 通知链路：
-  - 通过 `etf_notification_agent` → 现有 Feishu Webhook / 插件 → 对应钉钉/飞书群；
-  - 不新建额外渠道，方便你在现有群中统一查看各类研究与巡检结果。
-
+- 遵守 `~/.openclaw/prompts/research.md` 中 ETF 轮动相关步骤与 Markdown 约束。  
+- 明确标注「研究级，不构成交易指令」；说明数据来自本地缓存及可能缺失情形。

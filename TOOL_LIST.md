@@ -56,17 +56,21 @@
 - tool_get_a_share_market_regime: A股市场时段细分（集合竞价/连续竞价/午休/收盘集合竞价/盘后/非交易日）
 - tool_trading_copilot: 交易助手统一入口（状态→时段→快扫→信号→持仓）
 - tool_event_sentinel: 事件哨兵（外部事件检索/摘要→影响提示→是否触发再分析）
-- tool_calculate_technical_indicators: 计算技术指标
+- tool_calculate_technical_indicators: 计算技术指标（standard=pandas_ta，legacy=旧数值；可选 kdj/cci/adx/atr；见合并后配置 `technical_indicators`，来源：`config/domains/analytics.yaml`）
 - tool_analyze_after_close: 执行盘后趋势分析
 - tool_analyze_before_open: 执行开盘前趋势分析
 - tool_analyze_opening_market: 执行开盘行情分析
 - tool_predict_volatility: 预测波动率
-- tool_calculate_historical_volatility: 计算历史波动率
-- tool_generate_signals: 根据多种策略生成买卖信号
+- tool_calculate_historical_volatility: 单窗口历史波动率（年化%）
+- tool_underlying_historical_snapshot: 多标的/多窗口 HV，可选波动率锥与 SSE ETF 近月 IV（config historical_snapshot）
+- tool_historical_snapshot: 同上（别名）
+- tool_generate_option_trading_signals: 期权交易信号（主名；别名 tool_generate_signals）
+- tool_generate_etf_trading_signals: ETF 短波段信号（signal_generation.etf）
+- tool_generate_stock_trading_signals: A 股监控信号（signal_generation.stock）
 - tool_generate_trend_following_signal: 基于ETF与指数趋势一致性生成趋势跟踪交易信号
 - tool_calculate_position_size: 计算建议仓位
 - tool_calculate_stop_loss_take_profit: 计算止盈止损价格
-- tool_assess_risk: 评估交易风险
+- tool_assess_risk: ETF/指数/A 股风险评估（缓存优先+拉日线，凯利简化）
 - tool_predict_intraday_range: 预测日内价格波动区间
 
 ## 一致性检查工具
@@ -88,6 +92,12 @@
 - tool_send_feishu_message: 发送到飞书
 - tool_send_signal_alert: 发送交易信号提醒
 - tool_send_daily_report: 发送每日市场分析报告（钉钉）
+- tool_analyze_after_close_and_send_daily_report: 盘后分析并发送日报（进程内串接，不经模型传大 JSON）
+- tool_run_opening_analysis_and_send: 9:28 开盘晨报进程内采集+发送（Cron 推荐单次调用）
+- tool_run_before_open_analysis_and_send: 9:20 盘前晨报进程内采集+发送（Cron 推荐单次调用）
+- tool_send_signal_risk_inspection: 宽基 ETF 巡检快报（结构化 report → 固定模板 → 钉钉）
+- tool_run_signal_risk_inspection_and_send: 巡检采集+发送（指数/ETF/组合风险进程内拉取后同上，Cron 推荐单次调用）
+- tool_send_dingtalk_message: 钉钉自定义机器人文本/Markdown
 - tool_send_risk_alert: 发送风险预警通知
 - tool_send_feishu_card_webhook: 发送飞书交互卡片（interactive）到 webhook
 

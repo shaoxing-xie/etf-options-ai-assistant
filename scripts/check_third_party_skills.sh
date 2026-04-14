@@ -3,6 +3,13 @@ set -euo pipefail
 
 # One-shot checker for OpenClaw third-party skills required/recommended by this repo.
 # It scans common skill locations and reports which skills are installed.
+#
+# Usage examples:
+#   # Run from repo root (recommended)
+#   bash scripts/check_third_party_skills.sh
+#
+#   # After installing skills into ~/.openclaw/skills, rerun to verify
+#   bash scripts/check_third_party_skills.sh
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
@@ -23,6 +30,8 @@ OPTIONAL_SKILLS=(
   "mootdx-china-stock-data"
   "capability-evolver"
   "Capability Evolver"
+  "agent-team-orchestration"
+  "github"
 )
 
 color() {

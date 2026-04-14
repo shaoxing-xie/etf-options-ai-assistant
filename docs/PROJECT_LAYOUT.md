@@ -5,15 +5,16 @@
 ### 根目录（项目根目录）
 
 - `README.md`：项目总体说明（A股 / ETF 交易助手系统介绍、功能概览）。
-- `config.yaml`：系统主配置（市场数据、通知、日志、系统参数等）。
+- `config/environments/base.yaml` + `config/domains/*.yaml` + `<profile>.yaml` + 可选 `config/local.yaml` + `config/reference/holidays_*.yaml`：系统主配置（分层合并；见 `docs/configuration/README.md`）。
 - `Prompt_config.yaml`：LLM 提示词模板与分析类型配置（含 `openclaw_strategy_engine_routing` 等可选 OpenClaw 路由片段）。
 - `config/strategy_fusion.yaml`：多策略融合阈值与默认权重（`tool_strategy_engine`）。
 - `config/openclaw_strategy_engine.yaml`：OpenClaw 与策略引擎衔接（路由提示、权重落盘进化、默认工具参数）。
 - `CRON_JOBS_EXAMPLE.json`：Cron 任务示例（含 `strategy-fusion-example`，`*/30 9-15 * * 1-5`，默认关闭）。
 - `index.ts`：OpenClaw 插件入口（注册所有工具，调用 `tool_runner.py`）。
 - `tool_runner.py`：Python 工具路由入口（统一分发到 `plugins/` 和 `src/` 中的各个工具）。
-- `install_plugin.sh`：将本项目安装为 OpenClaw 插件的自动安装脚本。
-- `setup_openclaw_plugin.sh`：在 Remote-WSL 环境下快速配置 OpenClaw 插件结构的脚本。
+- `install_plugin.sh`：将本项目安装为 OpenClaw 插件的自动安装脚本（偏历史流程；当前推荐 `scripts/setup_openclaw_option_trading_assistant.sh` + 仓库即扩展）。
+- `setup_openclaw_plugin.sh`：在 Remote-WSL 环境下快速配置 OpenClaw 插件结构的脚本（偏历史；新环境优先用 `scripts/setup_openclaw_option_trading_assistant.sh` 写入 `plugins.load.paths`）。
+- `scripts/setup_openclaw_option_trading_assistant.sh`：一键合并 `openclaw.json` 的 `plugins.load.paths` 并避免与 extensions 符号链接重复加载（OpenClaw 2026.4.x 推荐）。
 - `setup_wsl_access.sh`：在 WSL 中为项目创建符号链接、workspace 目录等的辅助脚本。
 - 集成/冒烟测试脚本见 `tests/README.md`（如 `tests/integration/run_all_workflow_tests.py`、`verify_data_pipeline.py`）。
 
@@ -28,7 +29,7 @@
 - `src/signal_generation.py`：信号生成核心逻辑  
   - 多策略信号生成、信号过滤等。
 - `src/config_loader.py`：统一配置加载模块  
-  - 负责加载 `config.yaml`，并提供数据存储、调度、节假日等子配置。
+  - 负责加载分层配置（`load_system_config`），并提供数据存储、调度、节假日等子配置。
 - `src/llm_enhancer.py`：LLM 增强模块  
   - 封装与 LLM 的调用与增强逻辑，用于趋势分析、波动预测、信号说明等。
 
@@ -36,7 +37,7 @@
 
 ### 2. OpenClaw 插件：`plugins/`
 
-- `plugins/data_collection/`：数据采集插件
+- `plugins/data_collection/`：指向 **`~/.openclaw/extensions/openclaw-data-china-stock/plugins/data_collection`** 的**符号链接**（Python `import plugins.data_collection`）；行情工具注册见该插件的 Gateway manifest。将插件**复制**进扩展目录用 `scripts/install_china_stock_extension_copy.sh`，再执行 `scripts/ensure_openclaw_china_stock_plugin.py --ensure-allow --ensure-entry` 与 `scripts/link_china_stock_data_collection.sh`（见 `scripts/README.md`）。仅链目录用 `scripts/link_china_stock_data_collection.sh`。
   - `morning_brief_fetchers.py`：盘前晨报（政策、大宗、隔夜期货摘要、公告、行业要闻等，依赖 Tavily 时须配置密钥）。
   - `README.md`：OpenClaw 工具索引（标的物 → 数据域 → 周期）与 `TOOL_MAP` 对照。
   - `ROADMAP.md`：路线图、双层降级（多 Provider × 包内多路由）、附录 DTO/标的映射等。
@@ -49,13 +50,14 @@
   - `futures/`：A50 期指数据采集。
   - `utils/`：批量采集、交易时间判断、期权合约列表等通用工具。
 - `plugins/analysis/`：分析类插件
-  - `technical_indicators.py`：技术指标计算（MACD、RSI、MA、ATR 等）。
-  - `trend_analysis.py`：盘后/盘前/开盘趋势分析的插件封装。
+  - `technical_indicators.py`：技术指标（`pandas_ta` / `legacy` 双引擎；MA、MACD、RSI、布林带及可选 KDJ/CCI/ADX/ATR；分层配置 → `technical_indicators`）。
+  - `trend_analysis.py`：盘后/盘前/开盘趋势分析插件；`daily_report_overlay` + `report_meta`；配置 **`trend_analysis_plugin`**；落盘含独立 **`opening_dir`**（见 `data_storage.save_trend_analysis`）。
   - `volatility_prediction.py`：波动率预测工具。
-  - `intraday_range.py` / `historical_volatility.py` 等：日内区间、历史波动率分析。
+  - `intraday_range.py` / `historical_volatility.py` / `underlying_historical_snapshot.py`：日内区间、单窗历史波动率、多标的复合 HV 快照（`src/realized_vol_panel.py`）。
   - `key_levels.py` / `accuracy_tracker.py` / `overnight_calibration.py` / `scenario_analysis.py`：指数关键位、盘前预测落盘与回顾、隔夜校准、涨停情景结构化输出。
   - `etf_trend_tracking.py`：ETF-指数趋势一致性与趋势跟随信号。
-  - `etf_position_manager.py` / `etf_risk_manager.py` / `risk_assessment.py`：仓位管理、止盈止损、整体风险评估。
+  - `etf_position_manager.py` / `etf_risk_manager.py`：仓位管理、止盈止损。
+  - `risk_assessment.py`：**`tool_assess_risk`**，单标的 ETF/指数/A 股风险评估（`realized_vol_windows`、凯利简化；分层配置 → `risk_assessment`）。
   - `strategy_tracker.py` / `strategy_evaluator.py` / `strategy_weight_manager.py`：策略效果记录、评分与权重管理（`get_strategy_weights` 可优先读 `data/strategy_fusion_effective_weights.json`）。  
 - `plugins/risk/`：组合与机构向风控辅助（`tool_portfolio_risk_snapshot`、合规/止损线/压力测试占位等）；说明见 [`plugins/risk/README.md`](../plugins/risk/README.md)。
 - `plugins/strategy_engine/`：**策略引擎与信号融合**（`SignalCandidate`、Fusion v1/v1.1/v1.2、`tool_strategy_engine`）；说明见 [`plugins/strategy_engine/README.md`](../plugins/strategy_engine/README.md)。
@@ -102,7 +104,7 @@
 - `data/`：运行时数据
   - `signal_records/`：信号记录数据库与 JSON。
   - `prediction_records/`：预测记录数据库与 JSON。
-  - `trend_analysis/`：趋势分析结果。
+  - `trend_analysis/`：趋势分析结果（`after_close/`、`before_open/`、`opening/` 等子目录，以分层配置 `system.data_storage.trend_analysis` 为准）。
   - `volatility_ranges/`：波动区间预测结果（已在生成源头统一收敛：`range_pct` 夹紧、`confidence` 上限等）。
   - `cache/`：LLM 上下文、市场广度缓存等。
 - `logs/`：统一日志目录
@@ -120,6 +122,9 @@
   - `OpenClaw配置指南.md`：在 OpenClaw 中配置插件的详细步骤。
   - `插件集成到OpenClaw指南.md`：与 OpenClaw Gateway、Agent、工作流的集成说明。
   - `工作流参考手册.md`：工作流设计与使用参考。
+  - `能力地图.md`：工具 / 工作流 / 脚本 / 环境变量索引（与 `config/tools_manifest.yaml` 同步维护）。
+  - `跨插件数据契约.md`：缓存根、融合权重与关键 `data/` 读写约定（模块化阶段 1）。
+  - `模块化改造策略-插件与Skill分层.md`：插件与 Skill 分层及阶段路线。
 - `docs/architecture/`
   - `README.md`：架构文档索引与阅读顺序。
   - `架构与工具审查报告.md`：工具分层、清单与可维护性等系统性审查与建议。

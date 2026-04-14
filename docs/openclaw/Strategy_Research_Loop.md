@@ -3,7 +3,7 @@
 ## 1. 目标与范围
 
 - 在现有系统中，已经具备：
-  - 信号生成与记录（`tool_generate_signals` + `tool_record_signal_effect`）。
+  - 信号生成与记录（`tool_generate_option_trading_signals`，别名 `tool_generate_signals` + `tool_record_signal_effect`）。
   - 策略表现查询与评分（`tool_get_strategy_performance`、`tool_calculate_strategy_score`）。
   - 策略权重调整工具（`tool_adjust_strategy_weights`、`tool_get_strategy_weights`）。
 - 本文件的目标是：
@@ -15,7 +15,7 @@
 
 ```mermaid
 flowchart TD
-  signals[信号生成\n(tool_generate_signals)] --> record[信号记录\n(tool_record_signal_effect)]
+  signals[信号生成\n(tool_generate_option_trading_signals)] --> record[信号记录\n(tool_record_signal_effect)]
   record --> perf[策略表现统计\n(tool_get_strategy_performance)]
   perf --> score[策略评分\n(tool_calculate_strategy_score)]
   score --> weightAdj[权重调整建议\n(tool_adjust_strategy_weights)]
@@ -56,7 +56,7 @@ flowchart TD
   - 指数/ETF 日线与分钟线缓存（`tool_read_index_daily`、`tool_read_etf_daily`、`tool_read_index_minute`、`tool_read_etf_minute`）。
 - 期权与波动相关：
   - 期权分钟与 Greeks（`tool_read_option_minute`、`tool_read_option_greeks`）；
-  - 历史/预测波动率（`tool_calculate_historical_volatility`、`tool_predict_volatility`）。
+  - 历史/预测波动率（`tool_calculate_historical_volatility` 单窗；`tool_underlying_historical_snapshot` 多窗/可选锥与 IV；`tool_predict_volatility`）。
 
 > 统一建议：在实现具体回放逻辑时，保持「数据源与假设」在报告中显式说明，避免出现不可复现的“纸面胜率”。
 

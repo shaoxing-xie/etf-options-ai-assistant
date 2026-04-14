@@ -18,7 +18,7 @@ class TestTickClient(unittest.TestCase):
     def test_get_best_tick_000300_shape(self):
         from tick_client import get_best_tick
 
-        result = get_best_tick("000300", config_path=str(ROOT / "config.yaml"))
+        result = get_best_tick("000300", config_path=str(ROOT / "config" / "environments" / "base.yaml"))
 
         self.assertIn("ok", result)
         self.assertIn("tick", result)

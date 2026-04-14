@@ -1,4 +1,13 @@
 #!/usr/bin/env python3
+# 清理未被 openclaw.json 引用的 agent 定义目录（建议先备份）。
+#
+# 用法示例：
+#   # 默认读取 ~/.openclaw/openclaw.json，并在 ~/.openclaw/agents 下做搬移/清理（以脚本参数为准）
+#   python3 scripts/cleanup_unused_openclaw_agents.py --help
+#
+#   # 常见：先 dry-run 看计划，再执行
+#   python3 scripts/cleanup_unused_openclaw_agents.py --dry-run
+
 from __future__ import annotations
 
 import json

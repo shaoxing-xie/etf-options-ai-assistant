@@ -15,7 +15,11 @@
 
 ## 运行方式
 
-在项目根目录：
+在项目根目录，**先激活 `.venv`**（或执行 `pip install -r requirements.txt -r requirements-dev.txt`），避免系统 Python 缺少 `pandas`：
+
+```bash
+source .venv/bin/activate   # 或: ./scripts/run_tests.sh …（见 scripts/README.md）
+```
 
 ```bash
 # 单元/冒烟（推荐日常）
@@ -27,8 +31,9 @@ python3 tests/integration/verify_data_pipeline.py
 # 合并工具与别名：覆盖多类 tool_*（耗时可较长）
 python3 tests/integration/run_merged_tools_smoke.py
 
-# 工作流：串行执行 workflows/ 下各 step_by_step 脚本
+# 工作流：校验 workflows/*.yaml 中 tool id 是否在 manifest + workflow_external_tool_ids
 python3 tests/integration/run_all_workflow_tests.py
+# 或直接：python3 scripts/validate_workflows.py
 
 # 指数开盘接口：直接探测 AkShare 东财/新浪（排障用）
 python3 tests/manual/manual_index_opening_apis.py

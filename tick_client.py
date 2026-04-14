@@ -2,7 +2,7 @@
 Tick 行情采集客户端封装（etf-options-ai-assistant）。
 
 特性：
-- 从项目根目录 `config.yaml` 的 `data_sources.tick` 段读取配置；
+- 从分层系统配置（默认 `load_system_config` → `data_sources.tick`）或显式 YAML 路径读取；
 - 支持 iTick（免费环境/生产环境）Tick 拉取；
 - 预留 Alltick（待按官方文档补齐）。
 
@@ -45,8 +45,7 @@ def _load_yaml_config(path: str) -> Dict[str, Any]:
         return {}
 
 
-def _load_tick_config(config_path: str) -> Optional[TickConfig]:
-    cfg = _load_yaml_config(config_path)
+def _tick_config_from_mapping(cfg: Dict[str, Any]) -> Optional[TickConfig]:
     data_sources = cfg.get("data_sources") or {}
     tick_cfg = data_sources.get("tick")
     if not isinstance(tick_cfg, dict):
@@ -71,6 +70,15 @@ def _load_tick_config(config_path: str) -> Optional[TickConfig]:
         symbols=symbols,
         providers=providers,
     )
+
+
+def _load_tick_config(config_path: Optional[str]) -> Optional[TickConfig]:
+    if not config_path:
+        from src.config_loader import load_system_config
+
+        return _tick_config_from_mapping(load_system_config(use_cache=True))
+    cfg = _load_yaml_config(config_path)
+    return _tick_config_from_mapping(cfg)
 
 
 def _http_get_json(url: str, headers: Dict[str, str], timeout: float) -> Dict[str, Any]:
@@ -281,7 +289,7 @@ def _fetch_alltick_tick(
     return tick, None
 
 
-def get_best_tick(logical_symbol: str, config_path: str = "config.yaml") -> Dict[str, Any]:
+def get_best_tick(logical_symbol: str, config_path: Optional[str] = None) -> Dict[str, Any]:
     tick_cfg = _load_tick_config(config_path)
     if tick_cfg is None:
         return {"ok": False, "tick": None, "provider": None, "error": "tick_config_not_found_or_invalid"}

@@ -1,0 +1,28 @@
+risk_assessment:
+  default_asset_type: auto
+  default_lookback_trading_days: 60
+  stop_loss_multiplier: 1.5
+  high_volatility_pct: 30.0
+  position_ratio_warn_pct: 30.0
+  risk_ratio_high_threshold: 0.1
+  risk_ratio_medium_threshold: 0.05
+  volatility_model: realized_vol_windows
+  kelly:
+    default_win_rate: 0.55
+    default_avg_win: 0.02
+    max_kelly_ratio: 0.25
+
+prediction_quality:
+  min_range_pct: 0.5
+  max_range_pct: 10.0
+  band_low_factor: 0.95
+  band_high_factor: 1.05
+  expected_low_margin: 0.8
+  expected_high_margin: 1.2
+  on_quality_fail: log_only
+
+prediction_monitoring:
+  rolling_days: 20
+  baseline_rolling_days: 20
+  min_samples_for_alert: 8
+  hit_rate_drop_alert_pp: 25.0

@@ -13,18 +13,65 @@ from time import time
 from copy import deepcopy
 
 # 在解析 ${VAR} 或 os.getenv 之前加载项目根目录的 .env
-try:
-    from dotenv import load_dotenv  # type: ignore[import-not-found]
-    _project_root = Path(__file__).resolve().parents[1]
-    _env_file = _project_root / ".env"
-    if _env_file.exists():
+_project_root = Path(__file__).resolve().parents[1]
+_env_file = _project_root / ".env"
+if _env_file.exists():
+    try:
+        from dotenv import load_dotenv  # type: ignore[import-not-found]
+
         load_dotenv(_env_file)
-except ImportError:
-    pass  # python-dotenv 未安装时，依赖父进程传入的 env
+    except ImportError:
+        # python-dotenv 不可用时，使用极简 KEY=VALUE 解析兜底
+        try:
+            for line in _env_file.read_text(encoding="utf-8").splitlines():
+                s = line.strip()
+                if not s or s.startswith("#"):
+                    continue
+                if s.startswith("export "):
+                    s = s[7:].strip()
+                if "=" not in s:
+                    continue
+                k, _, v = s.partition("=")
+                k = k.strip()
+                v = v.strip()
+                if len(v) >= 2 and ((v[0] == v[-1] == '"') or (v[0] == v[-1] == "'")):
+                    v = v[1:-1]
+                if k and os.getenv(k) is None:
+                    os.environ[k] = v
+        except OSError:
+            pass
+
+# 与 tool_runner / Gateway 对齐：补充加载 ~/.openclaw/.env（OpenClaw 模型 API Key、TAVILY 等）
+_openclaw_env = Path.home() / ".openclaw" / ".env"
+if _openclaw_env.exists():
+    try:
+        from dotenv import load_dotenv  # type: ignore[import-not-found]
+
+        load_dotenv(_openclaw_env, override=False)
+    except ImportError:
+        try:
+            for line in _openclaw_env.read_text(encoding="utf-8").splitlines():
+                s = line.strip()
+                if not s or s.startswith("#"):
+                    continue
+                if s.startswith("export "):
+                    s = s[7:].strip()
+                if "=" not in s:
+                    continue
+                k, _, v = s.partition("=")
+                k = k.strip()
+                v = v.strip()
+                if len(v) >= 2 and ((v[0] == v[-1] == '"') or (v[0] == v[-1] == "'")):
+                    v = v[1:-1]
+                if k and os.getenv(k) is None:
+                    os.environ[k] = v
+        except OSError:
+            pass
 
 import yaml
 
 from src.logger_config import get_module_logger
+from src.signal_config_normalize import normalize_signal_generation_config
 
 logger = get_module_logger(__name__)
 
@@ -88,7 +135,10 @@ def get_default_config() -> Dict[str, Any]:
             'sms': {
                 'enabled': False,
                 'phone_numbers': []
-            }
+            },
+            # 钉钉：分条目标长度；硬顶见 dingtalk_max_chars_hard_ceiling（默认 20000）
+            'dingtalk_max_chars_per_message': 1600,
+            'dingtalk_max_chars_hard_ceiling': 20000,
         },
         'logging': {
             'level': 'INFO',
@@ -100,7 +150,43 @@ def get_default_config() -> Dict[str, Any]:
             'morning_end': '11:30',
             'afternoon_start': '13:00',
             'afternoon_end': '15:00'
-        }
+        },
+        'historical_snapshot': {
+            'enabled': True,
+            'default_windows': [5, 10, 20, 60, 252],
+            'max_symbols': 20,
+            'cone_history_calendar_days': 756,
+            'include_vol_cone_default': False,
+            'include_iv_default': False,
+            'iv': {
+                'sse_only': True,
+                'near_month_min_days': 7,
+                'atm_method': 'average_call_put',
+                'eq_30d_enabled': True,
+            },
+        },
+        'trend_analysis_plugin': {
+            'enabled': True,
+            'opening_dir': None,
+            'overlay': {
+                'northbound_enabled': True,
+                'northbound_lookback_days': 5,
+                'global_index_enabled': True,
+                'global_index_codes': (
+                    '^N225,^HSI,^KS11,^GDAXI,^STOXX50E,^FTSE,^GSPC,^IXIC,^DJI'
+                ),
+                'key_levels_enabled': True,
+                'key_levels_index': '000300',
+                'sector_heat_enabled': True,
+                'adx_enabled': False,
+                'adx_index': '000300',
+                'adx_lookback_days': 60,
+            },
+            'fallback': {
+                'use_simple_opening': True,
+                'simple_opening_include_volume_weighted': True,
+            },
+        },
     }
 
 
@@ -144,100 +230,229 @@ def merge_config(default: Dict, user: Dict) -> Dict:
     return result
 
 
-def load_system_config(config_path: str = "config.yaml", use_cache: bool = True) -> Dict[str, Any]:
+def _project_root() -> Path:
+    return Path(__file__).resolve().parents[1]
+
+
+def _config_profile_name() -> str:
+    raw = (os.getenv("ETF_OPTIONS_CONFIG_PROFILE") or os.getenv("CONFIG_PROFILE") or "prod").strip().lower()
+    if not raw or raw in {".", ".."} or "/" in raw or "\\" in raw:
+        return "prod"
+    return raw
+
+
+def _load_yaml_mapping(path: Path) -> Dict[str, Any]:
+    if not path.is_file():
+        return {}
+    try:
+        with open(path, encoding="utf-8") as f:
+            raw = yaml.safe_load(f)
+    except Exception as e:  # noqa: BLE001
+        logger.error("读取 YAML 失败: %s | %s", path, e, exc_info=True)
+        return {}
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict):
+        logger.warning("YAML 根节点不是 mapping: %s", path)
+        return {}
+    resolved = _resolve_env_placeholders(raw)
+    return resolved if isinstance(resolved, dict) else {}
+
+
+def _load_domain_configs(root: Path) -> Dict[str, Any]:
+    """加载 config/domains/*.yaml，按固定域顺序深度合并。"""
+    domain_dir = root / "config" / "domains"
+    ordered = [
+        "reference.yaml",
+        "market_data.yaml",
+        "analytics.yaml",
+        "signals.yaml",
+        "risk_quality.yaml",
+        "outbound.yaml",
+        "platform.yaml",
+    ]
+    acc: Dict[str, Any] = {}
+    if not domain_dir.is_dir():
+        return acc
+    for name in ordered:
+        path = domain_dir / name
+        if path.is_file():
+            acc = merge_config(acc, _load_yaml_mapping(path))
+    return acc
+
+
+def _load_calendar_file_mapping(path: Path) -> Dict[str, List[str]]:
+    """
+    加载年度节假日文件。
+
+    支持两种格式：
+    1) 纯列表：["20260101", ...]，年份从文件名 holidays_YYYY.yaml 推导
+    2) mapping：{2026: ["20260101", ...]}
+    """
+    if not path.is_file():
+        return {}
+    try:
+        with open(path, encoding="utf-8") as f:
+            raw = yaml.safe_load(f)
+    except Exception as e:  # noqa: BLE001
+        logger.error("读取年度日历失败: %s | %s", path, e, exc_info=True)
+        return {}
+
+    if isinstance(raw, list):
+        stem = path.stem
+        year = stem.split("_")[-1]
+        if year.isdigit():
+            return {year: [str(x) for x in raw if isinstance(x, str)]}
+        return {}
+    if isinstance(raw, dict):
+        out: Dict[str, List[str]] = {}
+        for year, dates in raw.items():
+            if not str(year).isdigit() or not isinstance(dates, list):
+                continue
+            out[str(year)] = [str(x) for x in dates if isinstance(x, str)]
+        return out
+    return {}
+
+
+def _merge_calendar_files(config: Dict[str, Any], root: Path) -> Dict[str, Any]:
+    """
+    按 system.trading_hours.calendar_* 配置加载年度节假日文件，并写回 holidays。
+    """
+    system_cfg = config.get("system")
+    if not isinstance(system_cfg, dict):
+        return config
+    th = system_cfg.get("trading_hours")
+    if not isinstance(th, dict):
+        return config
+
+    source = str(th.get("calendar_source") or "").strip().lower()
+    if source not in {"files", "file"}:
+        return config
+
+    pattern = str(th.get("calendar_path_glob") or "config/reference/holidays_*.yaml").strip()
+    merged: Dict[str, Any] = {}
+    existing = th.get("holidays")
+    if isinstance(existing, dict):
+        merged = deepcopy(existing)
+
+    for path in sorted(root.glob(pattern)):
+        merged = merge_config(merged, _load_calendar_file_mapping(path))
+
+    th["holidays"] = merged
+    return config
+
+
+def load_layered_user_config(project_root: Optional[Path] = None) -> Dict[str, Any]:
+    """加载 environments + domains + 可选 local，不含默认值合并。"""
+    root = project_root or _project_root()
+    env_dir = root / "config" / "environments"
+    base_p = env_dir / "base.yaml"
+    profile = _config_profile_name()
+    overlay_p = env_dir / f"{profile}.yaml"
+    local_p = root / "config" / "local.yaml"
+    if not base_p.is_file():
+        logger.error(
+            "缺少必需配置文件 %s — 请参考 docs/configuration/README.md 使用分层配置。",
+            base_p,
+        )
+        return {}
+    acc: Dict[str, Any] = {}
+    acc = merge_config(acc, _load_yaml_mapping(base_p))
+    acc = merge_config(acc, _load_domain_configs(root))
+    if overlay_p.is_file():
+        acc = merge_config(acc, _load_yaml_mapping(overlay_p))
+    else:
+        logger.warning("未找到环境 overlay（仅使用 base）: %s", overlay_p)
+    if local_p.is_file():
+        acc = merge_config(acc, _load_yaml_mapping(local_p))
+    logger.info(
+        "分层配置已加载: profile=%s base=%s overlay=%s local=%s",
+        profile,
+        base_p.name,
+        overlay_p.is_file(),
+        local_p.is_file(),
+    )
+    return _merge_calendar_files(acc, root)
+
+
+def load_system_config(config_path: Optional[str] = None, use_cache: bool = True) -> Dict[str, Any]:
     """
     加载完整系统配置（统一配置管理）
-    
+
     Args:
-        config_path: 配置文件路径
+        config_path: 若为 None，从 config/environments/base.yaml + <profile>.yaml + config/local.yaml 分层加载；
+            若指定路径则仅加载该单文件（供测试夹具使用）。
         use_cache: 是否使用缓存（默认True，减少频繁加载）
-    
+
     Returns:
         dict: 系统配置字典
     """
     global _system_config_cache, _system_config_cache_time
-    
+
     try:
-        # 检查缓存（如果启用且缓存有效）
         if use_cache and _system_config_cache is not None and _system_config_cache_time is not None:
             if time() - _system_config_cache_time < _system_config_cache_ttl:
-                logger.debug(f"使用缓存的系统配置（缓存时间: {int(time() - _system_config_cache_time)}秒）")
-                # 使用深拷贝，确保返回的配置不会被修改
+                logger.debug("使用缓存的系统配置（缓存时间: %d秒）", int(time() - _system_config_cache_time))
                 return deepcopy(_system_config_cache)
-        
-        logger.debug(f"开始加载系统配置: {config_path}")
-        
-        # 获取默认配置
+
         default_config = get_default_config()
-        
-        # 从配置文件加载（如果存在）
         user_config: Dict[str, Any] = {}
-        config_file = Path(config_path)
-        
-        # 如果配置文件不存在，尝试在项目根目录查找
-        if not config_file.exists():
-            # 尝试从当前文件位置向上查找项目根目录
-            current_file = Path(__file__).resolve()
-            # src/config_loader.py -> 项目根目录
-            project_root = current_file.parents[1]
-            config_file = project_root / config_path
-            logger.debug(f"配置文件不存在于当前路径，尝试项目根目录: {config_file}")
-        
-        if config_file.exists():
-            try:
-                with open(config_file, 'r', encoding='utf-8') as f:
-                    user_config = yaml.safe_load(f) or {}
-                # 解析 ${ENV_VAR} 占位符，避免真实密钥写入 config.yaml
-                user_config = _resolve_env_placeholders(user_config) or {}
-                logger.debug(f"成功加载配置文件: {config_path}")
-                # 调试：检查 YAML 解析后的 underlyings
-                if 'option_contracts' in user_config:
-                    oc = user_config['option_contracts']
-                    if 'underlyings' in oc:
-                        ul = oc['underlyings']
-                        logger.info(f"YAML 解析后: option_contracts.underlyings 类型={type(ul)}, 长度={len(ul) if isinstance(ul, list) else 'N/A'}")
-                        if isinstance(ul, list) and ul:
-                            for i, u in enumerate(ul, 1):
-                                logger.info(f"YAML 解析后: 标的物 {i}/{len(ul)}: underlying={u.get('underlying', 'N/A')}, call={len(u.get('call_contracts', []))}, put={len(u.get('put_contracts', []))}")
-                        elif isinstance(ul, list) and not ul:
-                            logger.warning("YAML 解析后: option_contracts.underlyings 是空列表！")
-            except Exception as e:
-                logger.error(f"加载配置文件失败: {config_path} | 错误: {str(e)}", exc_info=True)
-                logger.warning("使用默认配置")
+        project_root = Path(__file__).resolve().parents[1]
+
+        if config_path is not None:
+            cfg_file = Path(config_path)
+            if not cfg_file.is_absolute():
+                cfg_file = project_root / cfg_file
+            logger.debug("从显式路径加载系统配置: %s", cfg_file)
+            if cfg_file.is_file():
+                user_config = _load_yaml_mapping(cfg_file)
+            else:
+                logger.warning("显式配置文件不存在: %s", cfg_file)
         else:
-            logger.warning(f"配置文件不存在: {config_path}，使用默认配置")
-        
-        # 合并配置
+            logger.debug("从分层目录加载系统配置 (profile=%s)", _config_profile_name())
+            user_config = load_layered_user_config(project_root)
+
         config = merge_config(default_config, user_config)
-        
-        # 调试：检查 option_contracts.underlyings 是否正确加载
-        if 'option_contracts' in config:
-            oc = config['option_contracts']
-            if 'underlyings' in oc:
-                ul = oc['underlyings']
-                logger.info(f"配置加载后: option_contracts.underlyings 类型={type(ul)}, 长度={len(ul) if isinstance(ul, list) else 'N/A'}")
+        normalize_signal_generation_config(config)
+
+        try:
+            from src.config_validate import cross_validate_runtime_config
+
+            for msg in cross_validate_runtime_config(config):
+                logger.warning("config cross-validate: %s", msg)
+        except Exception as e:  # noqa: BLE001
+            logger.debug("config cross-validate skipped: %s", e)
+
+        if "option_contracts" in config:
+            oc = config["option_contracts"]
+            if "underlyings" in oc:
+                ul = oc["underlyings"]
+                logger.info(
+                    "配置加载后: option_contracts.underlyings 类型=%s, 长度=%s",
+                    type(ul),
+                    len(ul) if isinstance(ul, list) else "N/A",
+                )
                 if isinstance(ul, list) and ul:
                     for i, u in enumerate(ul, 1):
-                        logger.info(f"配置加载后: 标的物 {i}/{len(ul)}: underlying={u.get('underlying', 'N/A')}, call={len(u.get('call_contracts', []))}, put={len(u.get('put_contracts', []))}")
+                        logger.info(
+                            "配置加载后: 标的物 %d/%d: underlying=%s, call=%d, put=%d",
+                            i,
+                            len(ul),
+                            u.get("underlying", "N/A"),
+                            len(u.get("call_contracts", [])),
+                            len(u.get("put_contracts", [])),
+                        )
                 elif isinstance(ul, list) and not ul:
-                    logger.warning("配置加载后: option_contracts.underlyings 是空列表！检查原始配置...")
-                    # 检查原始用户配置
-                    if 'option_contracts' in user_config:
-                        user_oc = user_config['option_contracts']
-                        if 'underlyings' in user_oc:
-                            user_ul = user_oc['underlyings']
-                            logger.warning(f"原始用户配置中 underlyings 类型={type(user_ul)}, 长度={len(user_ul) if isinstance(user_ul, list) else 'N/A'}")
-        
-        # 更新缓存（使用深拷贝，确保缓存不会被修改）
+                    logger.warning("配置加载后: option_contracts.underlyings 是空列表")
+
         _system_config_cache = deepcopy(config)
         _system_config_cache_time = time()
-        
+
         logger.debug("系统配置加载完成")
-        # 返回深拷贝，确保调用者修改配置不会影响缓存
         return deepcopy(config)
-        
+
     except Exception as e:
-        logger.error(f"加载系统配置时发生错误: {str(e)}", exc_info=True)
+        logger.error("加载系统配置时发生错误: %s", e, exc_info=True)
         return get_default_config()
 
 
@@ -326,7 +541,8 @@ def get_data_storage_config(config: Dict) -> Dict:
                 'enabled': True,
                 'dir': f'{DEFAULT_DATA_DIR}/trend_analysis',
                 'after_close_dir': f'{DEFAULT_DATA_DIR}/trend_analysis/after_close',
-                'before_open_dir': f'{DEFAULT_DATA_DIR}/trend_analysis/before_open'
+                'before_open_dir': f'{DEFAULT_DATA_DIR}/trend_analysis/before_open',
+                'opening_dir': f'{DEFAULT_DATA_DIR}/trend_analysis/opening',
             },
             'signals': {
                 'enabled': True,
@@ -391,121 +607,103 @@ def get_scheduler_config(config: Dict) -> Dict:
     return scheduler_config
 
 
-def load_contract_config(config_path: str = "config.yaml", use_cache: bool = True) -> Dict[str, Any]:
+def _build_flat_contract_dict_from_option_block(opt_config: Dict[str, Any]) -> Dict[str, Any]:
+    """从 option_contracts 块构建 load_contract_config 历史返回的扁平 dict。"""
+    config: Dict[str, Any] = {}
+    if not isinstance(opt_config, dict):
+        return config
+    config["current_month"] = opt_config.get("current_month")
+    underlyings_list = opt_config.get("underlyings", [])
+
+    if underlyings_list:
+        config["underlyings"] = underlyings_list
+        first_underlying = underlyings_list[0]
+        config["underlying"] = first_underlying.get("underlying", "510300")
+        config["call_contracts"] = first_underlying.get("call_contracts", [])
+        config["put_contracts"] = first_underlying.get("put_contracts", [])
+        if config["call_contracts"]:
+            first_call = config["call_contracts"][0]
+            config["call_contract_code"] = first_call.get("contract_code")
+            config["call_strike_price"] = first_call.get("strike_price")
+            config["call_expiry_date"] = first_call.get("expiry_date")
+        if config["put_contracts"]:
+            first_put = config["put_contracts"][0]
+            config["put_contract_code"] = first_put.get("contract_code")
+            config["put_strike_price"] = first_put.get("strike_price")
+            config["put_expiry_date"] = first_put.get("expiry_date")
+        logger.info("从 option_contracts 加载: %d 个标的物", len(underlyings_list))
+    else:
+        config["underlying"] = opt_config.get("underlying", "510300")
+        call_contracts_list = opt_config.get("call_contracts", [])
+        put_contracts_list = opt_config.get("put_contracts", [])
+        if not call_contracts_list:
+            call_contract_single = opt_config.get("call_contract", {})
+            if call_contract_single:
+                call_contracts_list = [call_contract_single]
+        if not put_contracts_list:
+            put_contract_single = opt_config.get("put_contract", {})
+            if put_contract_single:
+                put_contracts_list = [put_contract_single]
+        config["call_contracts"] = call_contracts_list
+        config["put_contracts"] = put_contracts_list
+        config["underlyings"] = [
+            {
+                "underlying": config["underlying"],
+                "call_contracts": call_contracts_list,
+                "put_contracts": put_contracts_list,
+            }
+        ]
+        logger.warning("检测到旧格式 option_contracts，已转换为 underlyings 列表")
+    return config
+
+
+def load_contract_config(config_path: Optional[str] = None, use_cache: bool = True) -> Dict[str, Any]:
     """
     加载期权合约配置（支持多标的物）
-    支持多种方式：配置文件、环境变量、命令行参数、WEB界面
-    用户只需指定行权价，程序自动查找对应合约代码
-    
+    默认从 load_system_config 合并后的 option_contracts 读取；config_path 非空时仅从该 YAML 的 option_contracts 段读取（测试用）。
+
     Args:
-        config_path: 配置文件路径
+        config_path: 默认 None 使用分层系统配置；指定则为单文件路径。
         use_cache: 是否使用缓存（默认True，WEB界面更新后会自动清除缓存）
-    
+
     Returns:
-        dict: {
-            'underlyings': [  # 多标的物配置（新格式）
-                {
-                    'underlying': str,  # 标的代码
-                    'call_contracts': [...],
-                    'put_contracts': [...]
-                },
-                ...
-            ],
-            'current_month': str,  # 当前月份 YYYYMM
-            # 向后兼容字段（第一个标的物）
-            'underlying': str,
-            'call_contracts': [...],
-            'put_contracts': [...]
-        }
+        dict: 含 underlyings、current_month、underlying、call/put_contracts 等扁平字段。
     """
     global _config_cache, _config_cache_time
-    
+
     try:
-        logger.debug(f"加载合约配置: config_path={config_path}, use_cache={use_cache}")
-        
-        # 检查缓存（如果启用且缓存有效）
+        logger.debug("加载合约配置: config_path=%s, use_cache=%s", config_path, use_cache)
+
         if use_cache and _config_cache is not None and _config_cache_time is not None:
             if time() - _config_cache_time < _config_cache_ttl:
                 logger.debug("使用缓存的合约配置")
                 return _config_cache.copy()
-        
-        config = {}
-        
-        # 1. 从配置文件加载（如果存在）
-        config_file = Path(config_path)
-        if config_file.exists():
-            try:
-                with open(config_file, 'r', encoding='utf-8') as f:
-                    file_config = yaml.safe_load(f)
-                    if file_config and 'option_contracts' in file_config:
-                        opt_config = file_config['option_contracts']
-                        config['current_month'] = opt_config.get('current_month')
-                        
-                        # 支持多标的物配置（新格式）
-                        underlyings_list = opt_config.get('underlyings', [])
-                        
-                        if underlyings_list:
-                            # 新格式：多标的物配置
-                            config['underlyings'] = underlyings_list
-                            
-                            # 向后兼容：保留第一个标的物的配置
-                            if underlyings_list:
-                                first_underlying = underlyings_list[0]
-                                config['underlying'] = first_underlying.get('underlying', '510300')
-                                config['call_contracts'] = first_underlying.get('call_contracts', [])
-                                config['put_contracts'] = first_underlying.get('put_contracts', [])
-                                
-                                # 保留单个合约字段（向后兼容）
-                                if config['call_contracts']:
-                                    first_call = config['call_contracts'][0]
-                                    config['call_contract_code'] = first_call.get('contract_code')
-                                    config['call_strike_price'] = first_call.get('strike_price')
-                                    config['call_expiry_date'] = first_call.get('expiry_date')
-                                
-                                if config['put_contracts']:
-                                    first_put = config['put_contracts'][0]
-                                    config['put_contract_code'] = first_put.get('contract_code')
-                                    config['put_strike_price'] = first_put.get('strike_price')
-                                    config['put_expiry_date'] = first_put.get('expiry_date')
-                            
-                            logger.info(f"从配置文件加载: {len(underlyings_list)} 个标的物")
-                            for idx, underlying_config in enumerate(underlyings_list, 1):
-                                underlying_code = underlying_config.get('underlying', 'N/A')
-                                call_count = len(underlying_config.get('call_contracts', []))
-                                put_count = len(underlying_config.get('put_contracts', []))
-                                logger.info(f"  标的物 {idx}: {underlying_code}, Call合约: {call_count}, Put合约: {put_count}")
-                        else:
-                            # 旧格式：单个标的物配置（已废弃，但暂时支持）
-                            config['underlying'] = opt_config.get('underlying', '510300')
-                            
-                            call_contracts_list = opt_config.get('call_contracts', [])
-                            put_contracts_list = opt_config.get('put_contracts', [])
-                            
-                            if not call_contracts_list:
-                                call_contract_single = opt_config.get('call_contract', {})
-                                if call_contract_single:
-                                    call_contracts_list = [call_contract_single]
-                            
-                            if not put_contracts_list:
-                                put_contract_single = opt_config.get('put_contract', {})
-                                if put_contract_single:
-                                    put_contracts_list = [put_contract_single]
-                            
-                            config['call_contracts'] = call_contracts_list
-                            config['put_contracts'] = put_contracts_list
-                            
-                            # 转换为新格式
-                            config['underlyings'] = [{
-                                'underlying': config['underlying'],
-                                'call_contracts': call_contracts_list,
-                                'put_contracts': put_contracts_list
-                            }]
-                            
-                            logger.warning("检测到旧格式配置，已自动转换为新格式。建议使用 underlyings 列表格式。")
-                            logger.debug(f"从配置文件加载: Call合约数={len(call_contracts_list)}, Put合约数={len(put_contracts_list)}")
-            except Exception as e:
-                logger.error(f"读取配置文件失败: {str(e)}", exc_info=True)
-        
+
+        config: Dict[str, Any] = {}
+        validation_full: Dict[str, Any] = {}
+
+        if config_path is None:
+            validation_full = load_system_config(config_path=None, use_cache=use_cache)
+            opt_block = validation_full.get("option_contracts") or {}
+            config = _build_flat_contract_dict_from_option_block(opt_block if isinstance(opt_block, dict) else {})
+        else:
+            project_root = Path(__file__).resolve().parents[1]
+            config_file = Path(config_path)
+            if not config_file.is_absolute():
+                config_file = project_root / config_file
+            if config_file.is_file():
+                try:
+                    with open(config_file, encoding="utf-8") as f:
+                        file_config = yaml.safe_load(f) or {}
+                    file_config = _resolve_env_placeholders(file_config) or {}
+                    if isinstance(file_config, dict) and "option_contracts" in file_config:
+                        opt_config = file_config["option_contracts"]
+                        if isinstance(opt_config, dict):
+                            config = _build_flat_contract_dict_from_option_block(opt_config)
+                            validation_full = {"option_contracts": opt_config}
+                except Exception as e:  # noqa: BLE001
+                    logger.error("读取合约配置文件失败: %s", e, exc_info=True)
+
         # 2. 从环境变量加载（如果配置文件没有）
         call_strike_env = os.getenv('CALL_STRIKE_PRICE')
         if not config.get('call_strike_price') and call_strike_env:
@@ -539,8 +737,12 @@ def load_contract_config(config_path: str = "config.yaml", use_cache: bool = Tru
         elif put_has_code:
             logger.debug("Put期权已指定合约代码，跳过行权价输入")
         
-        # 验证配置完整性
-        is_valid, validation_errors = validate_contract_config(config)
+        if validation_full:
+            is_valid, validation_errors = validate_contract_config(validation_full)
+        else:
+            is_valid, validation_errors = validate_contract_config(
+                {"option_contracts": {"underlyings": config.get("underlyings", [])}}
+            )
         if not is_valid:
             logger.warning(f"合约配置验证失败，发现 {len(validation_errors)} 个问题:")
             for error in validation_errors:
@@ -561,20 +763,23 @@ def load_contract_config(config_path: str = "config.yaml", use_cache: bool = Tru
         return {}
 
 
-def save_config(config: Dict, config_path: str = "config.yaml") -> bool:
+def save_config(config: Dict, config_path: Optional[str] = None) -> bool:
     """
     保存配置到文件
-    
+
     Args:
         config: 配置字典
-        config_path: 配置文件路径
-    
+        config_path: 默认写入 config/environments/base.yaml（相对项目根）
+
     Returns:
         bool: 是否保存成功
     """
     try:
         import yaml
-        
+
+        if config_path is None:
+            config_path = str(_project_root() / "config" / "environments" / "base.yaml")
+
         # 确保目录存在
         config_file = Path(config_path)
         config_file.parent.mkdir(parents=True, exist_ok=True)

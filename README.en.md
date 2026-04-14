@@ -93,7 +93,12 @@ cp .env.example .env
 # Fill in Tushare token, Feishu webhook, etc.
 ```
 
-- Adjust parameters in `config.yaml` and `Prompt_config.yaml` if needed (data directories, log directories, strategy parameters, etc.).
+- Adjust parameters in layered config and `Prompt_config.yaml` if needed:
+  - Anchor: `config/environments/base.yaml`
+  - Domain defaults: `config/domains/*.yaml`
+  - Environment overlay: `config/environments/<profile>.yaml` (via `ETF_OPTIONS_CONFIG_PROFILE` / `CONFIG_PROFILE`, default `prod`)
+  - Local override: `config/local.yaml` (gitignored)
+  - Trading calendar: `config/reference/holidays_*.yaml`
 
 ### 3. Install as an OpenClaw plugin
 
@@ -189,7 +194,10 @@ etf-options-ai-assistant/
 ├── README.md
 ├── README.en.md
 ├── LICENSE
-├── config.yaml
+├── config/environments/base.yaml            # Layered config anchor
+├── config/domains/*.yaml                    # Domain defaults (merged)
+├── config/environments/<profile>.yaml       # Environment overlays
+├── config/reference/holidays_*.yaml         # Trading calendar files
 ├── Prompt_config.yaml
 ├── config/strategy_fusion.yaml              # Fusion thresholds & default weights
 ├── config/openclaw_strategy_engine.yaml     # OpenClaw routing / weight persistence (optional)

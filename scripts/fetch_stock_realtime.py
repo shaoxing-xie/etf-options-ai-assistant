@@ -2,6 +2,13 @@
 """
 实时行情获取模块（供 alert_engine 使用）
 封装 AkShare 获取 A 股实时数据
+
+用法示例（在项目根目录执行）：
+  # 作为库被 alert_engine 调用（最常见）
+  python3 scripts/alert_poll.py
+
+  # 作为 CLI 直接拉取（若脚本支持命令行参数；见文件末尾 Usage）
+  python3 scripts/fetch_stock_realtime.py 510300 600519
 """
 
 import sys

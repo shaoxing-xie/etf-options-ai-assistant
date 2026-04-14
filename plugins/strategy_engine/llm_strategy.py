@@ -9,8 +9,17 @@ from typing import Any, Dict, List
 from strategy_engine.schemas import SignalCandidate
 
 
-def generate_llm_candidates(_context: Dict[str, Any]) -> List[SignalCandidate]:
-    """未来：解析 LLM JSON -> SignalCandidate。v1 返回空列表。"""
+def generate_llm_candidates(context: Dict[str, Any]) -> List[SignalCandidate]:
+    """
+    解析 LLM 结构化输出为 ``SignalCandidate``（未实现前恒为空列表）。
+
+    调用约定：**仅**由 ``tool_strategy_engine`` 在
+    ``config/strategy_fusion.yaml`` 的 ``providers.llm: true`` 时调用，并传入
+    ``providers_llm=True``。不要在业务层再设独立的 ``llm_enabled`` 与 yaml 开关
+    重复门控。其它入口若未传 ``providers_llm=True``，本函数直接返回空列表。
+    """
+    if context.get("providers_llm") is not True:
+        return []
     return []
 
 

@@ -1,0 +1,18 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://local.invalid/etf-options-ai-assistant/runtime_surface.schema.json",
+  "title": "MergedRuntimeConfigTopLevelKeys",
+  "description": "加载并 normalize 后的顶层键最小集合（additionalProperties 允许其余键）。CI 由 scripts/validate_config_surface.py 校验。",
+  "type": "object",
+  "required": [
+    "notification",
+    "logging",
+    "signal_generation",
+    "system",
+    "data_sources",
+    "signal_params",
+    "etf_trading",
+    "option_contracts"
+  ],
+  "additionalProperties": true
+}

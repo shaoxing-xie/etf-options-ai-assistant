@@ -1,0 +1,87 @@
+notification:
+  feishu_webhook: "${FEISHU_WEBHOOK_URL}"
+  sms:
+    enabled: false
+  feishu_app:
+    enabled: true
+    app_id: "${FEISHU_APP_ID}"
+    app_secret: "${FEISHU_APP_SECRET}"
+    encrypt_key: ""
+    feishu_root_folder_token: "${FEISHU_ROOT_FOLDER_TOKEN}"
+    subfolders:
+      option_greeks: "${FEISHU_SUBFOLDER_OPTION_GREEKS}"
+      index_minute: "${FEISHU_SUBFOLDER_INDEX_MINUTE}"
+      etf_minute: "${FEISHU_SUBFOLDER_ETF_MINUTE}"
+  daily_report_strict_tool_payload: false
+  daily_report_allow_degraded_in_prod: false
+  daily_report_self_heal_from_after_close: true
+  daily_report_volatility_relaxed_with_key_levels: true
+  dingtalk_max_chars_per_message: 5000
+  dingtalk_max_chars_hard_ceiling: 20000
+
+trend_analysis_plugin:
+  enabled: true
+  overlay:
+    northbound_lookback_days: 5
+    global_index_codes: "^N225,^HSI,^KS11,^GDAXI,^STOXX50E,^FTSE,^GSPC,^IXIC,^DJI"
+    key_levels_index: "000300"
+    daily_volatility_range_enabled: true
+    volatility_underlying: "510300"
+    option_signals_enabled: true
+    signals_underlying: "510300"
+    tavily_fallback_enabled: true
+    tavily_northbound_query: "沪深港通 北向资金 净流入 最新"
+    tavily_global_query: "全球股市 道琼斯 纳斯达克 标普 恒生 最新 涨跌"
+    tavily_global_deep: true
+    tavily_global_days: 2
+    tavily_global_max_results: 6
+    global_index_tavily_llm_enabled: true
+    global_index_llm_min_expected_rows: 5
+    global_index_llm_fill_ratio: 0.45
+    llm_structured_extract_profile: default
+    sector_heat_enabled: true
+    market_volume_digest_enabled: true
+    secondary_benchmark_etf: "510500"
+    adx_enabled: true
+    adx_index: "000300"
+    adx_lookback_days: 60
+  fallback:
+    use_simple_opening: true
+    simple_opening_include_volume_weighted: true
+
+llm_enhancer:
+  enabled: false
+  provider: deepseek
+  api_base_url: "https://api.deepseek.com/v1"
+  api_key: "${LLM_API_KEY}"
+  model: deepseek-chat
+  temperature: 0.7
+  max_tokens: 500
+  timeout_seconds: 60
+  retry_attempts: 2
+  retry_delay: 2.0
+  analysis_types:
+    - before_open
+    - opening_market
+    - after_close
+    - volatility_prediction
+    - intraday_summary
+    - signal_watch
+  prompt_config_path: "Prompt_config.yaml"
+  context_enabled: true
+  context_file: "data/cache/llm_context_today.json"
+  summary_max_items: 6
+
+llm_structured_extract:
+  enabled: true
+  openclaw_config_path: "~/.openclaw/openclaw.json"
+  timeout_seconds: 90
+  max_raw_text_chars: 12000
+  temperature: 0.05
+  max_tokens: 4096
+  use_json_object_response_format: true
+  profiles:
+    default:
+      models:
+        - "z-ai-glm5-nvidia-com-sxxiefg/deepseek-ai/deepseek-v3.1"
+        - "glm5-api-nvidia-com/deepseek-ai/deepseek-v3.1"

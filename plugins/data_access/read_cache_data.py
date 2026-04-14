@@ -99,6 +99,30 @@ def _try_refill_minute_cache(
         return None
 
 
+def _try_refill_daily_cache(
+    *,
+    data_type: str,
+    symbol: str,
+    start_date: str,
+    end_date: str,
+) -> None:
+    """
+    当检测到日线缓存缺失时，尝试从数据源补齐并写回缓存。
+    仅用于 index_daily / etf_daily。
+    """
+    try:
+        from src.data_collector import fetch_index_daily_em, fetch_etf_daily_em  # type: ignore
+    except Exception:
+        return
+    try:
+        if data_type == "index_daily":
+            fetch_index_daily_em(symbol=symbol, start_date=start_date, end_date=end_date)  # type: ignore
+        elif data_type == "etf_daily":
+            fetch_etf_daily_em(symbol=symbol, start_date=start_date, end_date=end_date)  # type: ignore
+    except Exception:
+        return
+
+
 def read_cache_data(
     *,
     data_type: str,
@@ -180,6 +204,13 @@ def read_cache_data(
             df, missing = data_cache.get_cached_index_daily(sym, start_date, end_date)
         else:
             df, missing = data_cache.get_cached_etf_daily(sym, start_date, end_date)
+        if df is None or missing:
+            # 尝试补拉一次（失败则继续按 miss/partial 返回）
+            _try_refill_daily_cache(data_type=dt, symbol=sym, start_date=start_date, end_date=end_date)
+            if dt == "index_daily":
+                df, missing = data_cache.get_cached_index_daily(sym, start_date, end_date)
+            else:
+                df, missing = data_cache.get_cached_etf_daily(sym, start_date, end_date)
         if df is None:
             return fail(f"Cache miss (missing {len(missing)} dates)", missing_dates=missing)
         if missing:

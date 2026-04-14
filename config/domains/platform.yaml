@@ -1,0 +1,63 @@
+logging:
+  level: INFO
+  console: true
+  file: true
+  file_path: "logs/option_trading_{date}.log"
+  max_file_size_mb: 10
+  backup_count: 7
+
+system:
+  data_storage:
+    data_dir: "data"
+    volatility_ranges:
+      enabled: true
+      dir: "data/volatility_ranges"
+      file_format: "json"
+    trend_analysis:
+      enabled: true
+      dir: "data/trend_analysis"
+      after_close_dir: "data/trend_analysis/after_close"
+      before_open_dir: "data/trend_analysis/before_open"
+      opening_dir: "data/trend_analysis/opening"
+    signals:
+      enabled: true
+      dir: "data/signals"
+  trading_hours:
+    morning_start: "09:30"
+    morning_end: "11:30"
+    afternoon_start: "13:00"
+    afternoon_end: "15:00"
+    timezone: "Asia/Shanghai"
+    calendar_source: "files"
+    calendar_path_glob: "config/reference/holidays_*.yaml"
+    holidays: {}
+
+opening_analysis:
+  scheduler:
+    enabled: true
+    hour: 9
+    minute: 28
+  indices:
+    沪深300: "000300"
+    上证50: "000016"
+    上证指数: "000001"
+    深证成指: "399001"
+    创业板指: "399006"
+    科创50: "000688"
+    中证500: "000905"
+  weights:
+    沪深300: 0.32
+    上证50: 0.22
+    上证指数: 0.14
+    深证成指: 0.11
+    创业板指: 0.10
+    科创50: 0.07
+    中证500: 0.04
+  lookback_days: 5
+  strength_threshold:
+    strong: 0.55
+    weak: -0.55
+  trend_threshold:
+    up: 0.32
+    down: -0.32
+  enable_browse_supplement: false

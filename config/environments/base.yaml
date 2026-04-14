@@ -1,0 +1,5 @@
+# Shared layered entrypoint.
+# 实际业务配置拆分在 config/domains/*.yaml；
+# 环境差异仍放在 config/environments/<profile>.yaml；
+# 年度交易日历放在 config/reference/holidays_*.yaml。
+{}

@@ -1,0 +1,53 @@
+# ETF 轮动研究：因子权重、过滤与标的池（研究级，不构成交易指令）
+version: 1
+
+pool:
+  symbol_groups:
+    - core
+    - industry_etf
+  extra_etf_codes:
+    - "512100"
+    - "512880"
+    - "512690"
+
+features:
+  use_correlation: true
+  use_ma: true
+  use_trend_r2: true
+  use_vol_gate: false
+  use_mdd_gate: false
+
+factors:
+  w_m20: 0.30
+  w_m60: 0.25
+  w_vol: 0.15
+  w_mdd: 0.05
+  w_trend_r2: 0.10
+  w_corr_penalty: 0.20
+
+legacy_factors:
+  w_m20: 0.45
+  w_m60: 0.35
+  w_vol: 0.15
+  w_mdd: 0.05
+
+filters:
+  min_history_days: 70
+  correlation_lookback: 252
+  correlation_mode: penalize
+  correlation_threshold: 0.70
+  correlation_pairwise_max: 0.85
+  ma_period: 200
+  ma_mode: soft
+  ma_below_penalty: 0.5
+  trend_r2_window: 60
+  vol_min: 0.0
+  vol_max: 1.0
+  vol_gate_mode: off
+  vol_soft_penalty: 0.5
+  mdd60_threshold: -0.99
+  mdd_gate_mode: off
+  mdd_soft_penalty: 0.7
+
+paths:
+  history_jsonl: "data/etf_rotation_runs.jsonl"

@@ -34,10 +34,17 @@ steps:
     
   - name: technical_analysis
     tool: tool_calculate_technical_indicators
-    description: 技术指标分析
+    description: 技术指标分析（分钟线 + ATR；standard 下可加 kdj 等，注意 lookback 要够）
     params:
       symbol: "510300"
       data_type: "etf_minute"
+      lookback_days: 5
+      indicators:
+        - ma
+        - macd
+        - rsi
+        - bollinger
+        - atr
     
   - name: volatility_prediction
     tool: tool_predict_volatility
@@ -52,7 +59,7 @@ steps:
       symbol: "510300"
     
   - name: generate_intraday_signals
-    tool: tool_generate_signals
+    tool: tool_generate_option_trading_signals
     description: 生成日内交易信号
     depends_on: [technical_analysis, volatility_prediction, intraday_range]
     

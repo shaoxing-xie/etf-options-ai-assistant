@@ -5,6 +5,8 @@ Rule 适配器：将现有可执行工具输出转为 SignalCandidate。
 from __future__ import annotations
 
 import json
+from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Any, List, Optional
 
 from strategy_engine.schemas import SignalCandidate
@@ -60,17 +62,71 @@ def _direction_to_score(direction: str, strength: float) -> float:
     return 0.0
 
 
+def _src_option_features(data: Dict[str, Any]) -> Dict[str, Any]:
+    """从期权信号 ``data`` 抽取可审计、体积可控的字段写入 ``SignalCandidate.features``。"""
+    feat: Dict[str, Any] = {}
+    for k in ("asset_class", "signal_id", "signal_type"):
+        if data.get(k) is not None:
+            feat[k] = data.get(k)
+    sym = data.get("symbol")
+    if sym is not None:
+        feat["underlying_symbol"] = sym
+    meta = data.get("meta")
+    if isinstance(meta, dict):
+        feat["meta_keys"] = list(meta.keys())
+        for mk in ("index_symbol", "underlying", "resolved_name", "option_chain_hint"):
+            if meta.get(mk) is not None:
+                feat[mk] = meta[mk]
+    signals = data.get("signals")
+    if isinstance(signals, list) and signals:
+        first = next((s for s in signals if isinstance(s, dict)), None)
+        if first:
+            for k in (
+                "contract_code",
+                "strike_price",
+                "strike",
+                "option_type",
+                "risk_reward_ratio",
+                "risk_reward",
+                "etf_position",
+                "position_pct",
+                "volatility_range",
+                "expected_move",
+                "iv_rank",
+                "delta",
+                "gamma",
+                "vega",
+            ):
+                if first.get(k) is not None:
+                    feat[f"primary_signal_{k}"] = first.get(k)
+    return feat
+
+
+def _trend_features(data: Dict[str, Any], raw: Dict[str, Any]) -> Dict[str, Any]:
+    out: Dict[str, Any] = {
+        "consistency": data.get("consistency"),
+        "reason": data.get("reason"),
+        "signal_type_raw": data.get("signal_type"),
+        "etf_symbol": data.get("etf_symbol"),
+        "index_code": data.get("index_code"),
+    }
+    src = raw.get("source")
+    if src is not None:
+        out["source"] = src
+    return {k: v for k, v in out.items() if v is not None}
+
+
 def collect_from_src_signal_generation(
     underlying: str,
     inputs_hash: str,
     mode: str = "production",
 ) -> List[SignalCandidate]:
-    """调用 src.signal_generation.tool_generate_signals。"""
+    """调用 src.signal_generation.tool_generate_option_trading_signals（与 tool_generate_signals 等价）。"""
     out: List[SignalCandidate] = []
     try:
-        from src.signal_generation import tool_generate_signals
+        from src.signal_generation import tool_generate_option_trading_signals
 
-        raw = tool_generate_signals(underlying=str(underlying), mode=mode)
+        raw = tool_generate_option_trading_signals(underlying=str(underlying), mode=mode)
     except Exception as e:
         return [
             SignalCandidate(
@@ -124,6 +180,9 @@ def collect_from_src_signal_generation(
 
     rationale_refs = refs[:5] if refs else ["src.signal_generation"]
 
+    feat = {"signal_count": len(signals), "trend_strength": data.get("trend_strength")}
+    feat.update(_src_option_features(data))
+
     out.append(
         SignalCandidate(
             strategy_id="src_signal_generation",
@@ -134,12 +193,41 @@ def collect_from_src_signal_generation(
             rationale=str(raw.get("message", ""))[:300],
             rationale_refs=rationale_refs,
             inputs_hash=inputs_hash,
-            features={"signal_count": len(signals), "trend_strength": data.get("trend_strength")},
+            features=feat,
             metadata={"source": "rule", "provider": "src_signal_generation", "ok": True},
             timestamp=str(data.get("signal_id", ""))[:20],
         )
     )
     return out
+
+
+def _trend_following_entry_refs(etf_symbol: str, index_code: str) -> List[str]:
+    """
+    从 strategy_config 取趋势策略 entry 描述作 rationale_refs。
+    优先 trend_following_{etf_symbol}；若无则回退 trend_following_510300，
+    并把文案中的 510300/000300 替换为当前标的与指数，避免多 ETF 组合时张冠李戴。
+    """
+    try:
+        from strategy_config import get_strategy_config
+
+        sid = f"trend_following_{etf_symbol}"
+        try:
+            cfg = get_strategy_config(sid)
+        except KeyError:
+            cfg = get_strategy_config("trend_following_510300")
+        entry = (cfg.get("triggers") or {}).get("entry") or []
+        if not isinstance(entry, list):
+            return []
+
+        def _rewrite(s: Any) -> str:
+            t = str(s)
+            t = t.replace("510300", str(etf_symbol))
+            t = t.replace("000300", str(index_code))
+            return t
+
+        return [_rewrite(x) for x in entry[:4]]
+    except Exception:
+        return []
 
 
 def collect_from_trend_following(
@@ -179,19 +267,13 @@ def collect_from_trend_following(
     else:
         score = _direction_to_score(direction, strength if strength else conf)
 
-    refs: List[str] = [
+    refs: List[str] = _trend_following_entry_refs(etf_symbol, index_code) + [
         f"consistency={data.get('consistency')}",
         f"reason={data.get('reason', '')}",
     ]
-    try:
-        from strategy_config import get_strategy_config
 
-        cfg = get_strategy_config("trend_following_510300")
-        entry = (cfg.get("triggers") or {}).get("entry") or []
-        if isinstance(entry, list):
-            refs = [str(x) for x in entry[:4]] + refs
-    except Exception:
-        pass
+    tfeat = _trend_features(data, raw)
+    tfeat.setdefault("index_code", str(index_code))
 
     return [
         SignalCandidate(
@@ -203,8 +285,93 @@ def collect_from_trend_following(
             rationale=str(raw.get("message", ""))[:300],
             rationale_refs=refs,
             inputs_hash=inputs_hash,
-            features={"index_code": str(index_code)},
+            features=tfeat,
             metadata={"source": "rule", "provider": "etf_trend_following", "ok": True},
             timestamp=str(data.get("timestamp", "")),
+        )
+    ]
+
+
+def collect_from_internal_chart_alert(
+    symbol: str,
+    inputs_hash: str,
+    lookback_minutes: int = 120,
+) -> List[SignalCandidate]:
+    """Collect recent internal chart alerts from jsonl event store."""
+    events_file = Path(__file__).resolve().parents[2] / "data" / "alerts" / "internal_alert_events.jsonl"
+    if not events_file.is_file():
+        return []
+
+    now = datetime.now()
+    rows: List[dict[str, Any]] = []
+    for line in events_file.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            obj = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(obj, dict):
+            continue
+        if obj.get("source") != "internal_chart_alert":
+            continue
+        if obj.get("symbol") != str(symbol):
+            continue
+        if obj.get("status") != "triggered":
+            continue
+        ts_raw = obj.get("trigger_ts")
+        if not isinstance(ts_raw, str):
+            continue
+        try:
+            ts = datetime.fromisoformat(ts_raw)
+        except ValueError:
+            continue
+        if now - ts > timedelta(minutes=lookback_minutes):
+            continue
+        rows.append(obj)
+
+    if not rows:
+        return []
+    latest = rows[-1]
+    snapshot = latest.get("condition_snapshot") if isinstance(latest.get("condition_snapshot"), dict) else {}
+    metric = str(snapshot.get("metric", "")).lower()
+    operator = str(snapshot.get("operator", ""))
+    actual = snapshot.get("actual")
+    target = snapshot.get("value")
+
+    direction = "neutral"
+    score = 0.0
+    confidence = 0.4
+    if metric == "rsi":
+        if isinstance(actual, (int, float)):
+            v = float(actual)
+            if v <= 30:
+                direction = "long"
+                score = 0.55
+                confidence = 0.6
+            elif v >= 70:
+                direction = "short"
+                score = -0.55
+                confidence = 0.6
+
+    return [
+        SignalCandidate(
+            strategy_id="internal_chart_alert",
+            symbol=str(symbol),
+            direction=direction,
+            score=score,
+            confidence=confidence,
+            rationale=f"internal alert triggered: {metric} {operator} {target}, actual={actual}",
+            rationale_refs=[json.dumps(latest, ensure_ascii=False, default=str)[:400]],
+            inputs_hash=inputs_hash,
+            features={
+                "rule_id": latest.get("rule_id"),
+                "group": latest.get("group"),
+                "priority": latest.get("priority"),
+                "condition_snapshot": snapshot,
+            },
+            metadata={"source": "rule", "provider": "internal_chart_alert", "ok": True},
+            timestamp=str(latest.get("trigger_ts", "")),
         )
     ]

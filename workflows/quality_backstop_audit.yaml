@@ -33,3 +33,9 @@ structured_message: |
   - 自动修复仅允许使用 github 能力发起 PR（exec + gh / github skill），禁止直接 merge 到 main。
   - 无 RAW 证据不得给 TEAM_OK；证据不足必须使用 NO_EVIDENCE / UNKNOWN_CAUSE 失败码。
 
+  通知幂等与渠道判定（硬约束）：
+  - 单次巡检运行（同一 runId / sessionId）最多只允许调用 1 次 `tool_send_dingtalk_message`。
+  - 若首次投递已返回成功（如 errcode=0 / success=true），后续同一运行内严禁再次投递同内容或改写后重复投递。
+  - `WRONG_NOTIFICATION_CHANNEL` 仅用于“任务规范要求钉钉但实际发飞书”的场景。
+  - 对任务规范中明确要求飞书的作业（例如 `jobId=9d8e5b7d-f7b1-4116-ac02-055598a74781`），不得判为 `WRONG_NOTIFICATION_CHANNEL`。
+

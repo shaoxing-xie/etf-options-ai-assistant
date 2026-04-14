@@ -1,6 +1,6 @@
 """
 交易日判断工具
-从config.yaml读取节假日配置，判断是否是交易日
+从分层系统配置（load_system_config）读取节假日，判断是否是交易日。
 """
 
 import os
@@ -12,41 +12,32 @@ import pytz
 
 def load_config_holidays(config_path: Optional[str] = None) -> Set[str]:
     """
-    从config.yaml加载节假日配置
-    
+    加载节假日配置（YYYYMMDD 字符串集合）。
+
     Args:
-        config_path: config.yaml路径，如果为None则自动查找
-    
+        config_path: 若为 None，使用 ``load_system_config``；否则从该 YAML 文件读取（测试或自定义路径）。
+
     Returns:
         Set[str]: 节假日日期集合（格式：YYYYMMDD字符串）
     """
     holidays_set = set()
-    
+
     try:
-        # 尝试多个可能的 config.yaml 路径（优先使用项目目录）
         if config_path is None:
-            possible_paths = [
-                os.path.join(os.path.dirname(__file__), "../../../config.yaml"),
-                os.path.join(os.path.dirname(__file__), "../../../../config.yaml"),
-                "config.yaml"
-            ]
-            
-            for path in possible_paths:
-                if os.path.exists(path):
-                    config_path = path
-                    break
-        
-        if config_path is None or not os.path.exists(config_path):
-            # 如果找不到配置文件，返回空集合
+            from src.config_loader import get_holidays_config, load_system_config
+
+            return get_holidays_config(load_system_config(use_cache=True))
+
+        if not os.path.exists(config_path):
             return holidays_set
-        
-        # 读取配置文件
-        with open(config_path, 'r', encoding='utf-8') as f:
+
+        with open(config_path, encoding="utf-8") as f:
             config = yaml.safe_load(f)
-        
-        # 获取节假日配置
-        trading_hours = config.get('system', {}).get('trading_hours', {})
-        holidays_config = trading_hours.get('holidays', {})
+        if not isinstance(config, dict):
+            return holidays_set
+
+        trading_hours = config.get("system", {}).get("trading_hours", {})
+        holidays_config = trading_hours.get("holidays", {})
         
         # 支持按年份组织：holidays: {2026: [...]}
         if isinstance(holidays_config, dict):

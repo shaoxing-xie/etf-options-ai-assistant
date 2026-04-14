@@ -1,0 +1,191 @@
+technical_indicators:
+  engine: standard
+  ma_periods: [5, 10, 20, 60]
+  macd:
+    fast: 12
+    slow: 26
+    signal: 9
+  rsi:
+    length: 14
+  bollinger:
+    length: 20
+    std: 2
+  kdj:
+    fast_k: 9
+    slow_k: 3
+    slow_d: 3
+  cci:
+    length: 20
+  adx:
+    length: 14
+  atr:
+    length: 14
+  default_indicators: [ma, macd, rsi, bollinger]
+
+historical_snapshot:
+  enabled: true
+  default_windows: [5, 10, 20, 60, 252]
+  max_symbols: 20
+  cone_history_calendar_days: 756
+  include_vol_cone_default: false
+  include_iv_default: false
+  iv:
+    sse_only: true
+    near_month_min_days: 7
+    atm_method: average_call_put
+    eq_30d_enabled: true
+
+volatility_engine:
+  ab_test:
+    active_profile: fusion_safe
+    emergency_rollback_to_fusion: false
+    profiles:
+      fusion_safe:
+        primary_method: fusion
+        garch_blend_weight: 0.35
+        etf_garch:
+          enabled: true
+          min_data_points: 40
+          garch_p: 1
+          garch_q: 1
+          arima_order: [1, 1, 1]
+          confidence_level: 0.95
+        iv_hv_fusion:
+          enabled: true
+          weight_iv: 0.5
+          weight_hv: 0.5
+          min_scale: 0.75
+          max_scale: 1.25
+        volume_adjustment:
+          enabled: true
+          recent_points: 3
+          lookback_points: 20
+          influence: 0.2
+          min_factor: 0.9
+          max_factor: 1.15
+      hybrid_balance:
+        primary_method: hybrid
+        garch_blend_weight: 0.45
+        etf_garch:
+          enabled: true
+          min_data_points: 40
+          garch_p: 1
+          garch_q: 1
+          arima_order: [1, 1, 1]
+          confidence_level: 0.95
+        iv_hv_fusion:
+          enabled: true
+          weight_iv: 0.55
+          weight_hv: 0.45
+          min_scale: 0.7
+          max_scale: 1.3
+        volume_adjustment:
+          enabled: true
+          recent_points: 3
+          lookback_points: 20
+          influence: 0.25
+          min_factor: 0.88
+          max_factor: 1.2
+      garch_aggressive:
+        primary_method: garch
+        garch_blend_weight: 0.6
+        etf_garch:
+          enabled: true
+          min_data_points: 50
+          garch_p: 1
+          garch_q: 1
+          arima_order: [1, 1, 1]
+          confidence_level: 0.95
+        iv_hv_fusion:
+          enabled: true
+          weight_iv: 0.6
+          weight_hv: 0.4
+          min_scale: 0.7
+          max_scale: 1.35
+        volume_adjustment:
+          enabled: true
+          recent_points: 3
+          lookback_points: 20
+          influence: 0.3
+          min_factor: 0.85
+          max_factor: 1.25
+  primary_method: fusion
+  garch_blend_weight: 0.4
+  etf_garch:
+    enabled: true
+    min_data_points: 40
+    garch_p: 1
+    garch_q: 1
+    arima_order: [1, 1, 1]
+    confidence_level: 0.95
+  volume_adjustment:
+    enabled: true
+    recent_points: 3
+    lookback_points: 20
+    influence: 0.2
+    min_factor: 0.85
+    max_factor: 1.2
+  market_calibration:
+    enabled: true
+    bid_adjustment: 0.98
+    ask_adjustment: 1.02
+    max_deviation_pct: 20.0
+  iv_percentile_adjustment:
+    enabled: true
+    lookback_days: 30
+    high_percentile: 70
+    low_percentile: 30
+    high_compress: 0.85
+    low_expand: 1.15
+  garch_iv:
+    enabled: true
+    lookback_days: 30
+    garch_order: [1, 1]
+    distribution: normal
+    confidence_level: 0.95
+  iv_hv_fusion:
+    enabled: true
+    weight_iv: 0.5
+    weight_hv: 0.5
+    min_scale: 0.7
+    max_scale: 1.3
+  liquidity_thresholds:
+    excellent:
+      max_spread_pct: 0.5
+      min_depth: 100
+    good:
+      max_spread_pct: 1.0
+      min_depth: 50
+    fair:
+      max_spread_pct: 2.0
+      min_depth: 20
+    poor:
+      max_spread_pct: 5.0
+      min_depth: 10
+    critical:
+      max_spread_pct: 10.0
+      min_depth: 5
+
+daily_volatility_range:
+  enabled: true
+  horizon: 1d
+  target_session: current
+  windows: [5, 22, 63]
+  hv_weights: [0.25, 0.35, 0.4]
+  atr_period: 14
+  atr_weight: 0.2
+  parkinson_enabled: false
+  min_data_days: 120
+  min_data_days_soft_fallback: true
+  min_data_days_floor: 45
+  fetch_lookback_days: 600
+  range_multiplier: 2.2
+  anchor_price:
+    mode: auto
+  intraday_adjustment:
+    enabled: true
+    minute_lookback: 30
+    max_adjust_pct: 0.8
+  range_clamp:
+    min_range_pct: 1.0
+    max_range_pct: 12.0

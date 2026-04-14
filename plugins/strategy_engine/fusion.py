@@ -165,17 +165,33 @@ def fuse_for_symbol(
     )
 
 
+def fuse_all_by_symbol(
+    candidates: List[SignalCandidate],
+    weights: Dict[str, float],
+    policy: Dict[str, float],
+) -> Dict[str, FusionResult]:
+    """按 symbol 分组，对每个标的分别融合（多 ETF 组合）。"""
+    if not candidates:
+        return {}
+    by_sym: Dict[str, List[SignalCandidate]] = defaultdict(list)
+    for c in candidates:
+        by_sym[c.symbol].append(c)
+    out: Dict[str, FusionResult] = {}
+    for sym in sorted(by_sym.keys()):
+        r = fuse_for_symbol(by_sym[sym], weights, policy)
+        if r is not None:
+            out[sym] = r
+    return out
+
+
 def fuse_all(
     candidates: List[SignalCandidate],
     weights: Dict[str, float],
     policy: Dict[str, float],
 ) -> Optional[FusionResult]:
-    """按 symbol 分组；当前 v1 只支持单标的主融合（取第一组或合并单 symbol）。"""
-    if not candidates:
+    """按 symbol 分组；多标的时返回字典序第一个标的的融合结果（与历史行为一致）。"""
+    fused_map = fuse_all_by_symbol(candidates, weights, policy)
+    if not fused_map:
         return None
-    by_sym: Dict[str, List[SignalCandidate]] = defaultdict(list)
-    for c in candidates:
-        by_sym[c.symbol].append(c)
-    # 若多 symbol，逐 symbol 融合返回第一个（v1）；后续可扩展多标的
-    first_key = sorted(by_sym.keys())[0]
-    return fuse_for_symbol(by_sym[first_key], weights, policy)
+    first_key = sorted(fused_map.keys())[0]
+    return fused_map[first_key]

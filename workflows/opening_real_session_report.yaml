@@ -1,0 +1,159 @@
+# 9:40 开盘实盘报告（开盘后确认版）
+# 执行时间：工作日 9:40。
+# 功能：开盘后成交与资金状态确认、跟踪标的实盘强弱与当日执行调整。
+
+name: opening_real_session_report
+description: 9:40 开盘实盘报告（开盘后确认版）
+
+schedule: "40 9 * * 1-5"
+timezone: "Asia/Shanghai"
+
+steps:
+  - name: check_trading_status
+    agent: data_collector_agent
+    tool: tool_check_trading_status
+    description: A股时段门禁（必选）
+    params: {}
+    continue_on_failure: true
+
+  - name: fetch_index_opening
+    agent: data_collector_agent
+    tool: tool_fetch_index_opening
+    description: 指数开盘/竞价快照
+    params: {}
+    continue_on_failure: true
+    depends_on: [check_trading_status]
+
+  - name: fetch_global_index_spot
+    agent: data_collector_agent
+    tool: tool_fetch_global_index_spot
+    description: 全球指数背景
+    params: {}
+    continue_on_failure: true
+    depends_on: [check_trading_status]
+
+  - name: fetch_global_index_hist_sina
+    agent: data_collector_agent
+    tool: tool_fetch_global_index_hist_sina
+    description: 全球指数收盘口径补齐（欧股）
+    params:
+      symbol: "^GDAXI"
+      limit: 2
+    continue_on_failure: true
+    depends_on: [fetch_global_index_spot]
+
+  - name: fetch_policy_news
+    agent: data_collector_agent
+    tool: tool_fetch_policy_news
+    description: 政策要闻
+    params:
+      max_items: 5
+    continue_on_failure: true
+
+  - name: fetch_macro_commodities
+    agent: data_collector_agent
+    tool: tool_fetch_macro_commodities
+    description: 原油/黄金/铜
+    params: {}
+    continue_on_failure: true
+
+  - name: fetch_overnight_digest
+    agent: data_collector_agent
+    tool: tool_fetch_overnight_futures_digest
+    description: A50/金龙背景摘要
+    params: {}
+    continue_on_failure: true
+
+  - name: fetch_sector_heat
+    agent: data_collector_agent
+    tool: tool_sector_heat_score
+    description: 板块温度
+    params: {}
+    continue_on_failure: true
+
+  - name: compute_key_levels
+    agent: analysis_agent
+    tool: tool_compute_index_key_levels
+    description: 沪深300 关键位
+    params:
+      index_code: "000300"
+    continue_on_failure: true
+
+  - name: fetch_index_realtime
+    agent: data_collector_agent
+    tool: tool_fetch_index_realtime
+    description: 主要指数实时（开盘后）
+    params:
+      index_code: "000300,000016,000001,399006"
+    continue_on_failure: true
+
+  - name: fetch_etf_realtime
+    agent: data_collector_agent
+    tool: tool_fetch_etf_realtime
+    description: 跟踪ETF实时
+    params:
+      etf_code: "510300,510050,510500"
+    continue_on_failure: true
+
+  - name: technical_indicators
+    agent: analysis_agent
+    tool: tool_calculate_technical_indicators
+    description: 技术指标（日线）
+    params:
+      symbol: "510300"
+      data_type: "etf_daily"
+      indicators: [ma, macd, rsi, bollinger, atr]
+    continue_on_failure: true
+
+  - name: analyze_opening_market
+    agent: analysis_agent
+    tool: tool_analyze_opening_market
+    description: 开盘市场分析
+    params: {}
+    depends_on: [fetch_global_index_spot]
+
+  - name: predict_volatility
+    agent: analysis_agent
+    tool: tool_predict_volatility
+    description: 波动率预测
+    params:
+      underlying: "510300"
+    depends_on: [analyze_opening_market]
+
+  - name: predict_intraday_range
+    agent: analysis_agent
+    tool: tool_predict_intraday_range
+    description: 日内区间
+    params:
+      symbol: "510300"
+    depends_on: [predict_volatility]
+
+  - name: predict_daily_volatility_range
+    agent: analysis_agent
+    tool: tool_predict_daily_volatility_range
+    description: 日频全日波动区间
+    params:
+      underlying: "510300"
+    depends_on: [predict_intraday_range]
+
+  - name: generate_opening_signals
+    agent: analysis_agent
+    tool: tool_generate_option_trading_signals
+    description: 生成开盘交易信号
+    params:
+      underlying: "510300"
+    depends_on: [technical_indicators, predict_intraday_range, predict_daily_volatility_range, analyze_opening_market]
+    continue_on_failure: true
+
+  - name: send_opening_report
+    agent: notification_agent
+    tool: tool_send_analysis_report
+    description: 发送开盘实盘报告（钉钉）
+    params:
+      report_type: "opening"
+    depends_on: [analyze_opening_market, predict_volatility, predict_intraday_range, predict_daily_volatility_range, generate_opening_signals]
+
+structured_message: |
+  【9:40 开盘实盘报告】唯一动作：调用一次 `tool_run_opening_analysis_and_send(mode='prod', fetch_mode='production', report_variant='realtime')`。
+  输出必须聚焦：开盘后大盘与ETF快照、板块温度、资金与成交状态、跟踪标的强弱、当日执行动作。
+  删除北向资金独立小节；隔夜信息仅背景化。

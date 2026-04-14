@@ -2,6 +2,28 @@
 
 本项目除了自定义插件与工具（`option-trading-assistant` 等）外，还会在部分工作流/Agent 编排中依赖 OpenClaw 生态中的**第三方 SKILL（技能包）**。
 
+## 与本仓库 `skills/` 目录的关系
+
+- **`etf-options-ai-assistant/skills/`** 仅保留**项目自研** Skill 源文件；**不要**把 Clawhub / 外网下载的第三方包放进该目录。
+- 自研 Skill 调通后，用仓库脚本同步到 OpenClaw 加载路径（**只覆盖同名自研包，不会清空**全局目录里其他技能）：
+
+```bash
+bash scripts/sync_repo_skills_to_openclaw.sh
+```
+
+- 第三方 Skill 一律安装到 `~/.openclaw/skills/` 或 `~/.openclaw/workspaces/shared/skills/`（见下文），例如通过 Clawhub CLI；与本仓库 `skills/` 分离。
+
+### 自研 Skill 改完后同步到本机 OpenClaw
+
+在仓库中新增或修改 **`skills/<name>/SKILL.md`** 后，于**仓库根目录**执行（将自研包 rsync 到上述 OpenClaw 路径，**不删除**目录内其他第三方 Skill）：
+
+```bash
+cd /path/to/etf-options-ai-assistant
+bash scripts/sync_repo_skills_to_openclaw.sh
+```
+
+然后**重启或重载 Gateway**，并用 `openclaw doctor` 或实际工作流验收。
+
 本页用于回答两个问题：
 
 - 第一次安装时，需要安装哪些第三方 SKILL？
@@ -29,15 +51,59 @@
 
 ---
 
+## 1b. 进化流水线必备（Evolution）：本机是否存在
+
+以下工作流与文档依赖 **`capability-evolver`、`agent-team-orchestration`**，并常与 **`github`** Skill（GitHub 操作约定）一并使用，见 `docs/openclaw/三Skill驱动ETF研究自动进化实施方案.md` 与 `workflows/*_evolution_on_demand.yaml`。
+
+它们必须安装在 OpenClaw **会加载**的技能目录中（通常是下面二者之一或两者；以你本机 `openclaw.json` / workspace 为准）：
+
+- `~/.openclaw/skills/<skill-name>/SKILL.md`
+- `~/.openclaw/workspaces/shared/skills/<skill-name>/SKILL.md`
+
+**快速检查（文件层）**：下列命令若输出路径则表示该处已安装且含 `SKILL.md`（无输出表示该路径未安装）。
+
+```bash
+for s in capability-evolver agent-team-orchestration github; do
+  for d in "$HOME/.openclaw/skills" "$HOME/.openclaw/workspaces/shared/skills"; do
+    f="$d/$s/SKILL.md"
+    [[ -f "$f" ]] && echo "OK $f"
+  done
+done
+```
+
+说明：**同一 Skill 可以只存在于其中一处**即可被加载（不必两处各装一份）。例如本机常见情况为 `github` 仅在 `workspaces/shared/skills` 下，而 `capability-evolver` 在两处各有一份副本。
+
+也可用脚本中的「可选」扫描（含上述三项）：
+
+```bash
+bash scripts/check_third_party_skills.sh
+```
+
+（该脚本对「Recommended」仍只校验 `tavily-search` 等盯盘向技能；进化相关三项在 **Optional** 段落中列出。）
+
+---
+
 ## 2. 可选（Optional）
 
 - **`mootdx-china-stock-data`（A 股行情底座）**
   - **用途**：A 股实时行情、分钟线、Tick 等数据能力。
   - **备注**：本项目主链路（A股 / ETF）已有自己的采集/缓存工具；如果你希望把盯盘扩展到更多个股/板块，则建议安装。
 
-- **`Capability Evolver`（能力演化/审阅顾问）**
-  - **用途**：以“review 顾问”模式审阅研究流程与输出结构，提出改进建议（不直接改交易链路）。
-  - **备注**：强烈建议仅在只读/评审模式使用，避免自动写文件或改关键策略参数。
+- **`Capability Evolver` / `capability-evolver`（能力演化）**
+  - **用途**：研究自动进化流水线中的 Evolver 角色；与 `docs/openclaw/三Skill驱动ETF研究自动进化实施方案.md`、工作流 `*_evolution_on_demand.yaml` 等配合。
+  - **安装**：通过 Clawhub 等安装到 **`~/.openclaw/skills/`**（或 shared skills），**不要**再放进本仓库 `skills/`。
+
+- **`agent-team-orchestration`（多 Agent 编排）**
+  - **用途**：Builder / Reviewer 分角色与 handoff；与上一条同一套进化流水线。
+  - **安装**：同上，安装到 OpenClaw 技能目录即可。
+
+- **`github`（GitHub 协作 Skill）**
+  - **用途**：进化流水线中与 PR、分支、Actions 日志等相关的约定与操作指引（与 `docs/openclaw/execution_contract.md` 等配合）。
+  - **安装**：安装到 **`~/.openclaw/skills/`** 或 **`~/.openclaw/workspaces/shared/skills/`**；部分环境仅装在 shared 路径即可。
+
+- **妙想 / 东方财富系 Clawhub Skill**（如历史使用过的 `mx-data`、`mx-search`、`mx-moni` 等）
+  - **用途**：外部金融数据或自选等能力；与本项目主链路采集工具独立。
+  - **安装**：仅通过 Clawhub 安装到 OpenClaw 技能目录；**不要**提交到本仓库 `skills/`。
 
 ---
 

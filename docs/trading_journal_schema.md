@@ -43,7 +43,10 @@ Payload fields (best-effort; may be null for partial updates):
 - `policy_version`
 - `weights_effective`
 - `candidates`（摘要列表或完整结构，注意体积）
-- `fused`（融合结果 dict）
+- `fused`（主标的融合结果 dict，与工具 `data.fused` 对齐）
+- `fused_by_symbol`（多 ETF 时各标的融合结果，可选）
+- `underlyings` / `index_codes`（解析后的列表，可选）
+- `summary`（与 `tool_strategy_engine` 返回的 `data.summary` 对齐，可选）
 - `inputs_hash`（与引擎输出一致）
 
 Notes:

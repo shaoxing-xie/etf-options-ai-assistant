@@ -1,1114 +1,1252 @@
-# 工具清单 - 单一数据源，用于生成 OpenClaw 插件注册与文档
-# 修改后请运行: python scripts/generate_tools_json.py
+# 工具清单 — 与 Gateway 扩展 option-trading-assistant 对齐。
+# 行情/参考数据 tool_* 由插件 openclaw-data-china-stock 注册；本仓库 plugins/data_collection 链向 ~/.openclaw/extensions/openclaw-data-china-stock/plugins/data_collection。
+# 修改后请运行: python3 scripts/generate_tools_json.py
 
 tools:
-  # ---------- 数据采集 - 指数 ----------
-  - id: tool_fetch_index_realtime
-    label: 获取指数实时数据
-    description: 获取主要指数的实时行情数据（融合Coze get_index_realtime.py）。何时用：盘前/盘中快扫。
-    description_short: 获取指数实时行情，支持多代码逗号分隔。
-    parameters:
-      type: object
-      properties:
-        index_code: { type: string, description: "指数代码，支持逗号分隔多个，如 000001 或 000300,000001", default: "000001" }
-
-  - id: tool_fetch_index_historical
-    label: 获取指数历史数据
-    description: 获取指数历史K线数据（日线/周线/月线）。
-    description_short: 获取指数历史K线数据（日线/周线/月线）。
-    parameters:
-      type: object
-      properties:
-        index_code: { type: string, description: "指数代码，如 000300" }
-        period: { type: string, description: "daily|weekly|monthly", default: "daily" }
-        start_date: { type: string, description: "开始日期 YYYYMMDD" }
-        end_date: { type: string, description: "结束日期 YYYYMMDD" }
-      required: [index_code]
-
-  - id: tool_fetch_index_minute
-    label: 获取指数分钟数据
-    description: 获取指数分钟K线数据。
-    description_short: 获取指数分钟K线数据。
-    parameters:
-      type: object
-      properties:
-        index_code: { type: string, description: "指数代码" }
-        period: { type: string, description: "5|15|30|60 或 5,15,30|all", default: "5" }
-        lookback_days: { type: number, description: "回溯天数", default: 5 }
-      required: [index_code]
-
-  - id: tool_fetch_index_opening
-    label: 获取指数开盘数据
-    description: 获取指数开盘数据（9:28 集合竞价）。不维护指数白名单；支持 6 位代码或 sh/sz 前缀、逗号多代码；39 开头深证，其余上证映射（见 index_code_utils）。优先 akshare（新浪/东财），akshare 不可用时降级 mootdx quotes（开盘为近似）。
-    description_short: 指数开盘数据（9:28），无白名单。
-    parameters:
-      type: object
-      properties:
-        index_codes: { type: string, description: "6 位指数代码或 sh/sz 前缀，逗号多代码，如 000001,sh000300,sz399001" }
-      required: []
-
-  - id: tool_fetch_global_index_spot
-    label: 获取全球指数实时数据
-    description: 获取全球主要指数实时行情（道琼斯、纳斯达克、标普500等）。
-    description_short: 获取全球主要指数实时行情（道琼斯、纳斯达克、标普500等）。
-    parameters: { type: object, properties: {} }
-
-  # ---------- 合并工具 - 数据采集统一入口（merged/，委托 data_collection） ----------
-  - id: tool_fetch_index_data
-    label: 获取指数数据（统一入口）
-    description: data_type=realtime|historical|minute|opening|global_spot，内部委托 plugins.data_collection.index.*。
-    description_short: 指数数据统一入口（merged）。
-    parameters:
-      type: object
-      properties:
-        data_type: { type: string, description: "realtime|historical|minute|opening|global_spot" }
-        index_code: { type: string, description: "指数代码", default: "000001" }
-        period: { type: string }
-        start_date: { type: string }
-        end_date: { type: string }
-        lookback_days: { type: number, default: 5 }
-        mode: { type: string, default: "production" }
-      required: [data_type]
-
-  - id: tool_fetch_etf_data
-    label: 获取ETF数据（统一入口）
-    description: data_type=realtime|historical|minute，内部委托 plugins.data_collection.etf.*。
-    description_short: ETF 数据统一入口（merged）。
-    parameters:
-      type: object
-      properties:
-        data_type: { type: string, description: "realtime|historical|minute" }
-        etf_code: { type: string, default: "510300" }
-        period: { type: string }
-        start_date: { type: string }
-        end_date: { type: string }
-        lookback_days: { type: number, default: 5 }
-      required: [data_type]
-
-  - id: tool_fetch_option_data
-    label: 获取期权数据（统一入口）
-    description: data_type=realtime|greeks|minute，内部委托 plugins.data_collection.option.*。
-    description_short: 期权数据统一入口（merged）。
-    parameters:
-      type: object
-      properties:
-        data_type: { type: string, description: "realtime|greeks|minute" }
-        contract_code: { type: string, description: "期权合约代码" }
-        period: { type: string, default: "15" }
-      required: [data_type, contract_code]
-
-  # ---------- 数据采集 - ETF ----------
-  - id: tool_fetch_etf_realtime
-    label: 获取ETF实时数据
-    description: 获取ETF实时行情数据。
-    description_short: 获取ETF实时行情数据。
-    parameters:
-      type: object
-      properties:
-        etf_code: { type: string, description: "ETF代码，如 510300", default: "510300" }
-
-  - id: tool_fetch_etf_historical
-    label: 获取ETF历史数据
-    description: 获取ETF历史K线数据。
-    description_short: 获取ETF历史K线数据。
-    parameters:
-      type: object
-      properties:
-        etf_code: { type: string, description: "ETF代码" }
-        period: { type: string, description: "周期", default: "daily" }
-        start_date: { type: string, description: "开始日期" }
-        end_date: { type: string, description: "结束日期" }
-      required: [etf_code]
-
-  - id: tool_fetch_etf_minute
-    label: 获取ETF分钟数据
-    description: 获取ETF分钟K线数据。
-    description_short: 获取ETF分钟K线数据。
-    parameters:
-      type: object
-      properties:
-        etf_code: { type: string, description: "ETF代码" }
-        period: { type: string, description: "5|15|30|60 或 5,15,30|all", default: "5" }
-        lookback_days: { type: number, description: "回溯天数", default: 5 }
-      required: [etf_code]
-
-  - id: tool_fetch_etf_iopv_snapshot
-    label: 获取 ETF IOPV/折价率
-    description: 从东财 ETF 列表（AkShare fund_etf_spot_em）按代码筛选 IOPV 实时估值、基金折价率等字段。
-    description_short: ETF IOPV/折价率快照（东财列表）。
-    parameters:
-      type: object
-      properties:
-        etf_code: { type: string, description: "ETF代码，支持逗号分隔多代码", default: "510300" }
-
-  # ---------- 数据采集 - 期权 ----------
-  - id: tool_fetch_option_realtime
-    label: 获取期权实时数据
-    description: 获取期权实时行情数据。
-    description_short: 获取期权实时行情数据。
-    parameters:
-      type: object
-      properties:
-        contract_code: { type: string, description: "期权合约代码" }
-      required: [contract_code]
-
-  - id: tool_fetch_option_greeks
-    label: 获取期权Greeks数据
-    description: 获取期权的Delta、Gamma、Theta、Vega等Greeks数据。
-    description_short: 获取期权的Delta、Gamma、Theta、Vega等Greeks数。
-    parameters:
-      type: object
-      properties:
-        contract_code: { type: string, description: "期权合约代码" }
-      required: [contract_code]
-
-  - id: tool_fetch_option_minute
-    label: 获取期权分钟数据
-    description: 获取期权分钟K线数据。
-    description_short: 获取期权分钟K线数据。
-    parameters:
-      type: object
-      properties:
-        contract_code: { type: string, description: "期权合约代码" }
-        period: { type: string, description: "周期", default: "15" }
-      required: [contract_code]
-
-  # ---------- 数据采集 - 期货/工具 ----------
-  - id: tool_fetch_a50_data
-    label: 获取A50期指数据
-    description: 获取富时A50期指（期货）的实时和历史数据。
-    description_short: 获取富时A50期指（期货）的实时和历史数据。
-    parameters:
-      type: object
-      properties:
-        data_type: { type: string, description: "realtime|historical", default: "realtime" }
-        start_date: { type: string, description: "开始日期（历史数据）" }
-        end_date: { type: string, description: "结束日期（历史数据）" }
-
-  - id: tool_fetch_sector_data
-    label: 获取板块轮动数据
-    description: 行业/概念板块涨跌与轮动（东财优先，AkShare 备用）。sector_type=industry|concept，period=today|week|month。
-    description_short: 板块轮动（行业/概念）。
-    parameters:
-      type: object
-      properties:
-        sector_type: { type: string, description: "industry|concept", default: "industry" }
-        period: { type: string, description: "today|week|month", default: "today" }
-
-  - id: tool_get_option_contracts
-    label: 获取期权合约列表
-    description: 获取上交所 ETF 期权合约列表；返回中含 expiry_months_queried（本次请求所查询的到期月份）。
-    description_short: 获取期权合约信息列表（含到期月份查询列表）。
-    parameters:
-      type: object
-      properties:
-        underlying: { type: string, description: "标的物代码，如 510300" }
-
-  - id: tool_check_trading_status
-    label: 判断交易时间状态
-    description: |
-      判断 A 股当前是否处于连续竞价等。返回 data.allows_intraday_continuous_wording：为 false 时（开盘前/午休/收盘后/非交易日）
-      禁止将指数/ETF 行情写成「已开盘、今日今开、盘中最高最低」；须遵守 data.quote_narration_rule_cn。
-      Agent 在写 A 股「实时/盘中」正文前**必须先调用**本工具。
-    description_short: 交易时段判断；写A股盘中表述前必调，见 quote_narration_rule_cn。
-    parameters: { type: object, properties: {} }
-
-  # ---------- 时段/编排 ----------
-  - id: tool_get_a_share_market_regime
-    label: A股市场时段细分
-    description: 细分A股时段（集合竞价/连续竞价/午休/收盘集合竞价/盘后/非交易日）并给出推荐模式。
-    description_short: 细分A股时段（集合竞价/连续竞价/午休/收盘集合竞价/盘后/非交易日…
-    parameters:
-      type: object
-      properties:
-        timezone: { type: string, description: "时区", default: "Asia/Shanghai" }
-        now: { type: string, description: "用于测试的时间（可选，ISO 或 YYYY-MM-DD HH:MM:SS）" }
-        holidays: { type: array, description: "节假日列表（YYYYMMDD，可选）" }
-
-  - id: tool_trading_copilot
-    label: 交易助手统一入口
-    description: 统一入口：交易状态→A股时段→快扫→(条件触发)信号→持仓检查，输出低上下文摘要。
-    description_short: 统一入口：交易状态→A股时段→快扫→(条件触发)信号→持仓检查，输出…
-    parameters:
-      type: object
-      properties:
-        focus_etfs: { type: string, description: "ETF关注列表（逗号分隔），为空使用默认核心池" }
-        focus_stocks: { type: string, description: "A股关注列表（逗号分隔，可选）" }
-        mode: { type: string, description: "light|normal|deep", default: "normal" }
-        run_signal: { type: boolean, description: "是否强制运行信号重流程（可选）" }
-        signal_etf: { type: string, description: "指定跑信号的 ETF（可选）" }
-        throttle_minutes: { type: number, description: "信号重流程节流分钟数", default: 5 }
-        timezone: { type: string, description: "时区", default: "Asia/Shanghai" }
-        disable_network_fetch: { type: boolean, description: "禁用外部联网行情抓取", default: false }
-        output_format: { type: string, description: "feishu_card|json", default: "feishu_card" }
-        include_snapshot: { type: boolean, description: "是否在返回中包含原始快照数据", default: false }
-        send_feishu_card: { type: boolean, description: "是否发送飞书交互卡片", default: false }
-        feishu_webhook_url: { type: string, description: "可选覆盖 notification.feishu_webhook" }
-
-  - id: tool_filter_a_share_tradability
-    label: A股可交易性过滤
-    description: 对A股标的做可交易性过滤（疑似停牌/涨跌停等启发式判断）。
-    description_short: 对A股标的做可交易性过滤（疑似停牌/涨跌停等启发式判断）。
-    parameters:
-      type: object
-      properties:
-        stock_codes: { type: string, description: "股票代码（逗号分隔），如 600519,000001" }
-        assume_tradable_if_unknown: { type: boolean, description: "无法获取行情时是否默认可交易", default: false }
-      required: [stock_codes]
-
-  - id: tool_event_sentinel
-    label: 事件哨兵
-    description: 外部事件/政策/公告检索与摘要，输出对宽基ETF/A股影响提示。
-    description_short: 外部事件/政策/公告检索与摘要，输出对宽基ETF/A股影响提示。
-    parameters:
-      type: object
-      properties:
-        query: { type: string, description: "事件关键词或一句话描述" }
-        topic: { type: string, description: "general|news", default: "news" }
-        n: { type: number, description: "sources 数量", default: 5 }
-        days: { type: number, description: "news 回溯天数", default: 3 }
-        deep: { type: boolean, description: "是否深搜", default: false }
-        disable_network_fetch: { type: boolean, description: "禁用联网（受限环境降级）", default: false }
-      required: [query]
-
-  # ---------- 通知 ----------
-  - id: tool_send_feishu_card_webhook
-    label: 发送飞书交互卡片（Webhook）
-    description: 通过飞书 bot webhook 发送 interactive 卡片。
-    description_short: 通过飞书 bot webhook 发送 interactive 卡片。
-    parameters:
-      type: object
-      properties:
-        card: { type: string, description: "卡片 payload（JSON 字符串或对象）" }
-        webhook_url: { type: string, description: "可选覆盖 notification.feishu_webhook" }
-        timeout_seconds: { type: number, description: "HTTP 超时秒数", default: 10 }
-      required: [card]
-
-  # ---------- 分析 ----------
-  - id: tool_calculate_technical_indicators
-    label: 计算技术指标
-    description: 计算MA、MACD、RSI、布林带等技术指标。
-    description_short: 计算MA、MACD、RSI、布林带等技术指标。
-    parameters:
-      type: object
-      properties:
-        symbol: { type: string, description: "标的代码", default: "510300" }
-        data_type: { type: string, description: "数据类型", default: "etf_daily" }
-        period: { type: string, description: "周期（分钟数据）" }
-        indicators: { type: array, description: "需要计算的指标列表" }
-
-  - id: tool_analyze_after_close
-    label: 盘后趋势分析
-    description: 执行盘后趋势分析（15:30执行）。
-    description_short: 执行盘后趋势分析（15:30执行）。
-    parameters: { type: object, properties: {} }
-
-  - id: tool_analyze_before_open
-    label: 开盘前趋势分析
-    description: 执行开盘前趋势分析（9:15执行）。
-    description_short: 执行开盘前趋势分析（9:15执行）。
-    parameters: { type: object, properties: {} }
-
-  - id: tool_analyze_opening_market
-    label: 开盘行情分析
-    description: 执行开盘行情分析（9:28执行）。
-    description_short: 执行开盘行情分析（9:28执行）。
-    parameters: { type: object, properties: {} }
-
-  - id: tool_predict_volatility
-    label: 波动率预测
-    description: 使用GARCH/ARIMA模型预测波动率。
-    description_short: 使用GARCH/ARIMA模型预测波动率。
-    parameters:
-      type: object
-      properties:
-        underlying: { type: string, description: "标的物代码", default: "510300" }
-        contract_codes: { type: array, description: "期权合约代码列表" }
-
-  - id: tool_calculate_historical_volatility
-    label: 计算历史波动率
-    description: 计算历史波动率和波动率锥。
-    description_short: 计算历史波动率和波动率锥。
-    parameters:
-      type: object
-      properties:
-        symbol: { type: string, description: "标的代码" }
-        data_type: { type: string, description: "数据类型" }
-        lookback_days: { type: number, description: "回溯天数", default: 30 }
-      required: [symbol]
-
-  - id: tool_generate_signals
-    label: 生成交易信号
-    description: 根据多种策略生成买卖信号。
-    description_short: 根据多种策略生成买卖信号。
-    parameters:
-      type: object
-      properties:
-        underlying: { type: string, description: "标的物代码", default: "510300" }
-        contract_codes: { type: array, description: "期权合约代码列表" }
-
-  - id: tool_assess_risk
-    label: 风险评估
-    description: 评估交易风险和仓位建议（凯利公式）。
-    description_short: 评估交易风险和仓位建议（凯利公式）。
-    parameters:
-      type: object
-      properties:
-        symbol: { type: string, description: "标的代码", default: "510300" }
-        entry_price: { type: number, description: "入场价格" }
-        position_size: { type: number, description: "仓位大小" }
-        account_value: { type: number, description: "账户价值" }
-      required: [symbol, entry_price, position_size, account_value]
-
-  - id: tool_predict_intraday_range
-    label: 预测日内波动区间
-    description: 预测日内价格波动区间。
-    description_short: 预测日内价格波动区间。
-    parameters:
-      type: object
-      properties:
-        underlying: { type: string, description: "标的物代码", default: "510300" }
-
-  # ---------- ETF趋势 ----------
-  - id: tool_check_etf_index_consistency
-    label: 检查ETF与指数趋势一致性
-    description: 检查ETF与其跟踪指数的趋势一致性，计算相关性和一致性得分。
-    description_short: 检查ETF与其跟踪指数的趋势一致性，计算相关性和一致性得分。
-    parameters:
-      type: object
-      properties:
-        etf_symbol: { type: string, description: "ETF代码", default: "510300" }
-        index_code: { type: string, description: "指数代码", default: "000300" }
-        lookback_days: { type: number, description: "回看天数", default: 60 }
-
-  - id: tool_generate_trend_following_signal
-    label: 生成趋势跟踪信号
-    description: 基于ETF与指数趋势一致性生成趋势跟踪交易信号。
-    description_short: 基于ETF与指数趋势一致性生成趋势跟踪交易信号。
-    parameters:
-      type: object
-      properties:
-        etf_symbol: { type: string, description: "ETF代码", default: "510300" }
-        index_code: { type: string, description: "指数代码", default: "000300" }
-        min_trend_strength: { type: number, description: "最小趋势强度", default: 0.6 }
-        min_consistency_score: { type: number, description: "最小一致性得分", default: 0.7 }
-
-  - id: tool_strategy_engine
-    label: 策略引擎与信号融合
-    description: |
-      【何时优先调用】用户问「多路信号是否一致」「综合偏多/偏空」「合成交易观点」「纪律化融合」、或需在单路 tool_generate_signals 之外要统一审计视图时，应调用本工具。
-      聚合多路 Rule 信号（src 信号生成 + ETF 趋势等），按 config/strategy_fusion.yaml 与动态/落盘权重融合，返回 data.candidates、data.fused、data.weights_effective、data.inputs_hash；可选写 Journal（strategy_fusion）。
-      不替代 tool_generate_signals；单路明细仍可用原工具。进化闭环见 config/openclaw_strategy_engine.yaml（persist_effective_weights + 周期性 tool_adjust_strategy_weights）。
-    description_short: 多策略加权融合；综合信号/一致性场景优先
-    parameters:
-      type: object
-      properties:
-        underlying: { type: string, description: "ETF 标的代码", default: "510300" }
-        index_code: { type: string, description: "指数代码", default: "000300" }
-        mode: { type: string, description: "传给 src 信号生成的模式", default: "production" }
-        use_dynamic_weights: { type: boolean, description: "是否合并动态权重（优先 data/strategy_fusion_effective_weights.json，其次 get_strategy_weights）", default: true }
-        write_journal: { type: boolean, description: "是否追加 strategy_fusion 事件到 Journal", default: true }
-        config_path: { type: string, description: "自定义 strategy_fusion.yaml 路径（可选）" }
-
-  # ---------- 风险控制 ----------
-  - id: tool_calculate_position_size
-    label: 计算建议仓位（含硬锁定）
-    description: 根据趋势强度和信号置信度计算建议仓位，支持2%硬锁定限制。
-    description_short: 根据趋势强度和信号置信度计算建议仓位，支持2%硬锁定限制。
-    parameters:
-      type: object
-      properties:
-        trend_strength: { type: number, description: "趋势强度 (0-1)", default: 0.7 }
-        signal_confidence: { type: number, description: "信号置信度 (0-1)", default: 0.8 }
-        account_value: { type: number, description: "账户总值", default: 100000 }
-        etf_current_price: { type: number, description: "ETF当前价格", default: 4.0 }
-        apply_hard_limit: { type: boolean, description: "是否应用硬锁定", default: true }
-        hard_limit_pct: { type: number, description: "硬锁定百分比", default: 0.02 }
-      required: [trend_strength, signal_confidence]
-
-  - id: tool_check_position_limit
-    label: 检查仓位是否超限
-    description: 检查当前仓位是否超过硬锁定限制（2%）。
-    description_short: 检查当前仓位是否超过硬锁定限制（2%）。
-    parameters:
-      type: object
-      properties:
-        current_position_value: { type: number, description: "当前仓位价值" }
-        account_value: { type: number, description: "账户总值", default: 100000 }
-        hard_limit_pct: { type: number, description: "硬锁定百分比", default: 0.02 }
-      required: [current_position_value, account_value]
-
-  - id: tool_apply_hard_limit
-    label: 应用硬锁定限制
-    description: 对建议仓位应用硬锁定限制（2%）。
-    description_short: 对建议仓位应用硬锁定限制（2%）。
-    parameters:
-      type: object
-      properties:
-        recommended_size: { type: number, description: "建议仓位 (0-1)" }
-        account_value: { type: number, description: "账户总值", default: 100000 }
-        etf_current_price: { type: number, description: "ETF当前价格", default: 4.0 }
-        hard_limit_pct: { type: number, description: "硬锁定百分比", default: 0.02 }
-      required: [recommended_size, account_value, etf_current_price]
-
-  - id: tool_calculate_stop_loss_take_profit
-    label: 计算止盈止损价格
-    description: 根据入场价格和趋势方向计算止盈止损价格。
-    description_short: 根据入场价格和趋势方向计算止盈止损价格。
-    parameters:
-      type: object
-      properties:
-        entry_price: { type: number, description: "入场价格" }
-        current_price: { type: number, description: "当前价格" }
-        trend_direction: { type: string, description: "趋势方向：up 或 down" }
-      required: [entry_price, current_price, trend_direction]
-
-  - id: tool_check_stop_loss_take_profit
-    label: 检查止盈止损
-    description: 检查当前价格是否触发止盈或止损。
-    description_short: 检查当前价格是否触发止盈或止损。
-    parameters:
-      type: object
-      properties:
-        etf_symbol: { type: string, description: "ETF代码", default: "510300" }
-        entry_price: { type: number, description: "入场价格" }
-        current_price: { type: number, description: "当前价格" }
-        highest_price: { type: number, description: "持仓期间最高价" }
-      required: [etf_symbol, entry_price, current_price, highest_price]
-
-  # ---------- 策略效果跟踪 ----------
-  - id: tool_record_signal_effect
-    label: 记录信号效果
-    description: 记录交易信号的执行效果和盈亏情况。
-    description_short: 记录交易信号的执行效果和盈亏情况。
-    parameters:
-      type: object
-      properties:
-        signal_id: { type: string, description: "信号唯一ID" }
-        signal_type: { type: string, description: "buy|sell|call|put" }
-        etf_symbol: { type: string, description: "ETF代码", default: "510300" }
-        signal_strength: { type: number, description: "信号强度 (0-1)" }
-        strategy: { type: string, description: "策略名称" }
-        entry_price: { type: number, description: "入场价格" }
-        exit_price: { type: number, description: "出场价格（可选）" }
-        profit_loss: { type: number, description: "盈亏金额（可选）" }
-        profit_loss_pct: { type: number, description: "盈亏比例（可选）" }
-        status: { type: string, description: "pending|executed|closed", default: "pending" }
-        journal_extra:
-          type: object
-          description: "可选，合并写入 trading_journal signal_recorded（如 raw_signals/fused/weights）"
-      required: [signal_id, signal_type, etf_symbol, signal_strength, strategy, entry_price]
-
-  - id: tool_get_strategy_performance
-    label: 获取策略表现
-    description: 获取指定策略的历史表现统计。
-    description_short: 获取指定策略的历史表现统计。
-    parameters:
-      type: object
-      properties:
-        strategy: { type: string, description: "策略名称" }
-        lookback_days: { type: number, description: "回看天数", default: 60 }
-      required: [strategy]
-
-  - id: tool_calculate_strategy_score
-    label: 计算策略评分
-    description: 根据策略表现计算综合评分（0-100分）。
-    description_short: 根据策略表现计算综合评分（0-100分）。
-    parameters:
-      type: object
-      properties:
-        strategy: { type: string, description: "策略名称" }
-        lookback_days: { type: number, description: "回看天数", default: 60 }
-        min_signals: { type: number, description: "最少信号数", default: 10 }
-      required: [strategy]
-
-  - id: tool_adjust_strategy_weights
-    label: 调整策略权重
-    description: 根据策略评分动态调整策略权重。
-    description_short: 根据策略评分动态调整策略权重。
-    parameters:
-      type: object
-      properties:
-        current_weights: { type: object, description: "当前权重 {strategy: weight}" }
-        lookback_days: { type: number, description: "回看天数", default: 60 }
-        adjustment_rate: { type: number, description: "调整幅度", default: 0.1 }
-      required: [current_weights]
-
-  - id: tool_get_strategy_weights
-    label: 获取策略权重
-    description: 获取策略权重配置。
-    description_short: 获取策略权重配置。
-    parameters:
-      type: object
-      properties:
-        strategies: { type: array, description: "策略列表（可选）", items: { type: string } }
-
-  # ---------- 通知（飞书） ----------
-  - id: tool_send_feishu_message
-    label: 发送飞书消息
-    description: 发送文本或卡片消息到飞书。
-    description_short: 发送文本或卡片消息到飞书。
-    parameters:
-      type: object
-      properties:
-        title: { type: string, description: "消息标题" }
-        message: { type: string, description: "消息内容" }
-        message_type: { type: string, description: "text|rich_text", default: "text" }
-      required: [message]
-
-  - id: tool_send_signal_alert
-    label: 发送交易信号提醒
-    description: 发送交易信号卡片提醒。
-    description_short: 发送交易信号卡片提醒。
-    parameters:
-      type: object
-      properties:
-        signals: { type: array, description: "信号列表" }
-      required: [signals]
-
-  - id: tool_send_daily_report
-    label: 发送市场日报
-    description: 发送每日市场分析报告到钉钉自定义机器人（支持 SEC 加签）。
-    description_short: 发送市场日报到钉钉（SEC 加签）。
-    parameters:
-      type: object
-      properties:
-        report_data: { type: object, description: "报告数据" }
-
-  - id: tool_send_analysis_report
-    label: 发送分析报告到钉钉
-    description: 发送交易时间分析类/研究类报告到钉钉自定义机器人（支持 SEC 加签）。
-    description_short: 发送分析报告到钉钉。
-    parameters:
-      type: object
-      properties:
-        report_data: { type: object, description: "报告数据" }
-        report_date: { type: string, description: "报告日期（可选）" }
-        webhook_url: { type: string, description: "可选：自定义机器人 webhook（包含 access_token）" }
-        secret: { type: string, description: "可选：安全模式 SEC 密钥（用于 sign）" }
-        keyword: { type: string, description: "可选：关键词安全校验用（如果机器人启用关键词）" }
-        mode: { type: string, description: "prod|test", default: "prod" }
-      required: [report_data]
-
-  - id: tool_send_dingtalk_message
-    label: 发送钉钉文本消息
-    description: 发送到钉钉自定义机器人（支持 SEC 安全模式加签）。
-    description_short: 发送钉钉文本消息
-    parameters:
-      type: object
-      properties:
-        message: { type: string, description: "消息内容" }
-        title: { type: string, description: "消息标题", required: false }
-        webhook_url: { type: string, description: "可选：自定义机器人 webhook（包含 access_token）" }
-        secret: { type: string, description: "可选：安全模式 SEC 密钥（用于 sign）" }
-        keyword: { type: string, description: "可选：关键词安全校验用（如果机器人启用关键词）" }
-        mode: { type: string, description: "prod|test", default: "prod" }
-      required: [message]
-
-  - id: tool_send_risk_alert
-    label: 发送风险预警
-    description: 发送风险预警通知。
-    description_short: 发送风险预警通知。
-    parameters:
-      type: object
-      properties:
-        risk_data: { type: object, description: "风险数据" }
-      required: [risk_data]
-
-  # ---------- 数据访问（缓存读取） ----------
-  - id: tool_read_market_data
-    label: 从缓存读取市场数据（统一入口）
-    description: data_type 或 data_types=index_daily|index_minute|etf_daily|etf_minute|option_minute|option_greeks，读本地/原系统缓存。
-    description_short: 缓存市场数据统一读取（merged）。
-    parameters:
-      type: object
-      properties:
-        data_type: { type: string }
-        data_types: { type: array, items: { type: string } }
-        symbol: { type: string }
-        contract_code: { type: string }
-        period: { type: string }
-        start_date: { type: string }
-        end_date: { type: string }
-        date: { type: string }
-
-  - id: tool_read_index_daily
-    label: 读取指数日线数据
-    description: 从原系统缓存读取指数日线数据。
-    description_short: 从原系统缓存读取指数日线数据。
-    parameters:
-      type: object
-      properties:
-        symbol: { type: string, description: "指数代码" }
-        start_date: { type: string, description: "开始日期" }
-        end_date: { type: string, description: "结束日期" }
-      required: [symbol]
-
-  - id: tool_read_index_minute
-    label: 读取指数分钟数据
-    description: 从原系统缓存读取指数分钟数据。
-    description_short: 从原系统缓存读取指数分钟数据。
-    parameters:
-      type: object
-      properties:
-        symbol: { type: string, description: "指数代码" }
-        period: { type: string, description: "周期" }
-        date: { type: string, description: "日期" }
-      required: [symbol, period, date]
-
-  - id: tool_read_etf_daily
-    label: 读取ETF日线数据
-    description: 从原系统缓存读取ETF日线数据。
-    description_short: 从原系统缓存读取ETF日线数据。
-    parameters:
-      type: object
-      properties:
-        symbol: { type: string, description: "ETF代码" }
-        start_date: { type: string, description: "开始日期" }
-        end_date: { type: string, description: "结束日期" }
-      required: [symbol]
-
-  - id: tool_read_etf_minute
-    label: 读取ETF分钟数据
-    description: 从原系统缓存读取ETF分钟数据。
-    description_short: 从原系统缓存读取ETF分钟数据。
-    parameters:
-      type: object
-      properties:
-        symbol: { type: string, description: "ETF代码" }
-        period: { type: string, description: "周期" }
-        date: { type: string, description: "日期" }
-      required: [symbol, period, date]
-
-  - id: tool_read_option_minute
-    label: 读取期权分钟数据
-    description: 从原系统缓存读取期权分钟数据。
-    description_short: 从原系统缓存读取期权分钟数据。
-    parameters:
-      type: object
-      properties:
-        contract_code: { type: string, description: "期权合约代码" }
-        period: { type: string, description: "周期" }
-        date: { type: string, description: "日期" }
-      required: [contract_code, period, date]
-
-  - id: tool_read_option_greeks
-    label: 读取期权Greeks数据
-    description: 从原系统缓存读取期权Greeks数据。
-    description_short: 从原系统缓存读取期权Greeks数据。
-    parameters:
-      type: object
-      properties:
-        contract_code: { type: string, description: "期权合约代码" }
-        date: { type: string, description: "日期" }
-      required: [contract_code, date]
-
-  # ========== 研究/选股/涨停回马枪/回测（全部开放） ==========
-
-  - id: tool_detect_market_regime
-    label: 市场状态识别
-    description: 市场状态识别（研究级）。输出 trending_up|trending_down|range|high_vol_risk 及置信度。
-    description_short: 市场状态识别（研究级）。
-    parameters:
-      type: object
-      properties:
-        symbol: { type: string, description: "标的代码", default: "510300" }
-        mode: { type: string, description: "prod|test", default: "prod" }
-
-  - id: tool_etf_rotation_research
-    label: ETF轮动研究
-    description: ETF轮动研究（研究级）。从缓存读ETF日线，按 rotation_config 计算动量/波动/回撤/相关性等，输出排名与研究报告。
-    description_short: ETF轮动研究（研究级）。
-    parameters:
-      type: object
-      properties:
-        etf_pool: { type: string, description: "逗号分隔ETF代码；留空则用 config/rotation_config.yaml + symbols.json", default: "" }
-        lookback_days: { type: number, description: "回看天数下限（与长窗取 max）", default: 120 }
-        top_k: { type: number, description: "输出前K名", default: 3 }
-        mode: { type: string, description: "prod|test", default: "prod" }
-        config_path: { type: string, description: "可选，rotation 配置文件路径" }
-
-  - id: tool_strategy_research
-    label: 策略研究与回放评估
-    description: 策略研究与回放评估（研究级）。复用策略表现/评分/权重工具，生成研究报告与权重调整建议。
-    description_short: 策略研究与回放评估（研究级）。
-    parameters:
-      type: object
-      properties:
-        lookback_days: { type: number, description: "回看天数", default: 120 }
-        strategies: { type: string, description: "逗号分隔策略名", default: "trend_following,mean_reversion,breakout" }
-        adjustment_rate: { type: number, description: "调整幅度", default: 0.1 }
-        mode: { type: string, description: "prod|test", default: "prod" }
-        enable_split_analysis: { type: boolean, description: "是否做 IS/OOS/Holdback 与务实版 WFE（默认读 config/strategy_research.yaml）", default: null }
-        include_regime_breakdown: { type: boolean, description: "是否按 signal_regime_labels 分组统计", default: false }
-
-  - id: tool_get_strategy_research_history
-    label: 策略研究运行历史
-    description: 读取策略研究工具写入的 JSONL 回测/运行摘要（路径见 config/strategy_research.yaml → backtest_log.path）。
-    description_short: 读取策略研究 JSONL 运行记录。
-    parameters:
-      type: object
-      properties:
-        limit: { type: number, description: "最近条数", default: 20 }
-
-  - id: tool_fetch_stock_financials
-    label: 获取A股财务指标
-    description: 批量获取A股个股最新财务指标（PE_TTM、PB、ROE、股息率等），供量化选股或单独查询。
-    description_short: 批量获取A股个股最新财务指标（PE_TTM、PB、ROE、股息率等）…
-    parameters:
-      type: object
-      properties:
-        symbols: { type: string, description: "股票代码，逗号分隔或数组，如 600000,000001" }
-        lookback_report_count: { type: number, description: "保留最近几个报告期", default: 1 }
-      required: [symbols]
-
-  - id: tool_quantitative_screening
-    label: 量化选股
-    description: 对候选标的做动量/波动率/流动性/估值因子打分，输出排名与 top_picks。
-    description_short: 对候选标的做动量/波动率/流动性/估值因子打分，输出排名与 top_p。
-    parameters:
-      type: object
-      properties:
-        candidates: { type: string, description: "候选标的，逗号分隔或数组，如 510300,510500" }
-        lookback_days: { type: number, description: "回溯天数", default: 20 }
-        universe: { type: string, description: "etf|stock|null 自动判断" }
-        top_k: { type: number, description: "返回前多少名", default: 10 }
-      required: [candidates]
-
-  - id: tool_fetch_stock_historical
-    label: 获取个股历史K线
-    description: 获取A股个股历史K线数据（日线/周线/月线）。
-    description_short: 获取A股个股历史K线数据（日线/周线/月线）。
-    parameters:
-      type: object
-      properties:
-        stock_code: { type: string, description: "股票代码", default: "600000" }
-        period: { type: string, description: "daily|weekly|monthly", default: "daily" }
-        start_date: { type: string, description: "开始日期" }
-        end_date: { type: string, description: "结束日期" }
-
-  - id: tool_fetch_stock_minute
-    label: 获取个股分钟数据
-    description: 获取A股个股分钟K线数据。
-    description_short: 获取A股个股分钟K线数据。
-    parameters:
-      type: object
-      properties:
-        stock_code: { type: string, description: "股票代码", default: "600000" }
-        period: { type: string, description: "5|15|30|60", default: "5" }
-        start_date: { type: string }
-        end_date: { type: string }
-        lookback_days: { type: number, description: "回溯天数", default: 5 }
-
-  - id: tool_fetch_stock_realtime
-    label: 获取个股实时数据
-    description: 获取A股个股实时行情。
-    description_short: 获取A股个股实时行情。
-    parameters:
-      type: object
-      properties:
-        stock_code: { type: string, description: "股票代码", default: "600000" }
-        mode: { type: string, description: "production|test", default: "production" }
-
-  - id: tool_stock_data_fetcher
-    label: 个股数据采集与技术指标汇总
-    description: 批量拉取个股 realtime/daily/minute/financials，并可选计算 MACD/RSI/BOLL/MA 等技术指标与简单分析。
-    description_short: 个股数据采集与技术指标汇总
-    parameters:
-      type: object
-      properties:
-        action: { type: string, enum: ["fetch"], default: "fetch" }
-        symbols: { type: string, description: "股票代码，逗号分隔或数组，如 000539,300895" }
-        data_types:
-          type: array
-          description: "需要获取的数据类型"
-          items:
-            type: string
-            enum: [realtime, daily, minute, financials, technicals]
-          default: [realtime, daily, minute, financials, technicals]
-        minute_period: { type: string, description: "分钟周期，如 5,15,30", default: "5,15,30" }
-        lookback_days: { type: number, description: "回溯天数", default: 20 }
-        indicators:
-          type: array
-          description: "技术指标列表"
-          items: { type: string }
-          default: [ma, macd, rsi, bollinger]
-        include_analysis: { type: boolean, default: false }
-        mode: { type: string, description: "production|test", default: "production" }
-      required: [action, symbols]
-
-  - id: tool_stock_monitor
-    label: 个股监控与触发预警
-    description: 对 watchlist 执行触发器检查（price_change/volume_surge/support_break），触发后可选发送飞书通知。
-    description_short: 个股监控与触发预警
-    parameters:
-      type: object
-      properties:
-        action: { type: string, enum: ["start", "stop", "status", "run_once"], default: "run_once" }
-        watchlist:
-          type: array
-          description: "股票代码列表"
-          items: { type: string }
-        triggers:
-          type: array
-          description: "触发规则"
-          items:
-            type: object
-            properties:
-              type: { type: string, description: "price_change|volume_surge|support_break" }
-              symbol: { type: string, description: "可选，指定单只股票" }
-              pct: { type: number, description: "price_change 阈值（百分比）" }
-              ratio: { type: number, description: "volume_surge 阈值（倍数）" }
-              level: { type: number, description: "support_break 支撑位阈值" }
-            required: [type]
-        output_channel: { type: string, description: "feishu|dingtalk(仅返回消息)", default: "feishu" }
-        cooldown_minutes: { type: number, description: "同类事件去重窗口（分钟）", default: 30 }
-        mode: { type: string, description: "production|test", default: "production" }
-        state_path: { type: string, description: "监控状态文件路径，可选" }
-      required: [action]
-
-  - id: tool_fetch_limit_up_stocks
-    label: 获取涨停股列表
-    description: 获取指定日或区间的涨停股列表（涨停回马枪数据源）。
-    description_short: 获取指定日或区间的涨停股列表（涨停回马枪数据源）。
-    parameters:
-      type: object
-      properties:
-        date: { type: string, description: "单日 YYYYMMDD" }
-        start_date: { type: string, description: "区间开始 YYYYMMDD" }
-        end_date: { type: string, description: "区间结束 YYYYMMDD" }
-        exclude_st: { type: boolean, description: "是否排除ST", default: true }
-        exclude_tail_limit_up: { type: boolean, description: "是否排除尾盘涨停", default: true }
-
-  - id: tool_sector_heat_score
-    label: 板块热度评分
-    description: 计算板块热度评分（涨停回马枪用）。
-    description_short: 计算板块热度评分（涨停回马枪用）。
-    parameters:
-      type: object
-      properties:
-        date: { type: string, description: "日期 YYYYMMDD" }
-        limit_up_data: { type: array, description: "可选，涨停数据" }
-        sector_data: { type: object, description: "可选，板块数据" }
-
-  - id: tool_write_limit_up_with_sector
-    label: 涨停+板块日报写入
-    description: 拉取当日涨停、板块热度与龙头，写入 data/limit_up_research 目录。
-    description_short: 拉取当日涨停、板块热度与龙头，写入 data/limit_up_re…
-    parameters:
-      type: object
-      properties:
-        date: { type: string, description: "日期 YYYYMMDD" }
-        output_path: { type: string, description: "可选输出路径" }
-
-  - id: tool_limit_up_daily_flow
-    label: 涨停每日流程
-    description: 涨停回马枪每日流程：拉取涨停、板块热度、写JSON与报告、可选发飞书。
-    description_short: 涨停回马枪每日流程：拉取涨停、板块热度、写JSON与报告、可选发飞书。
-    parameters:
-      type: object
-      properties:
-        date: { type: string, description: "日期" }
-        write_json: { type: boolean, default: true }
-        write_report: { type: boolean, default: true }
-        send_feishu: { type: boolean, default: false }
-
-  - id: tool_dragon_tiger_list
-    label: 龙虎榜
-    description: 获取龙虎榜数据（涨停回马枪相关）。
-    description_short: 获取龙虎榜数据（涨停回马枪相关）。
-    parameters:
-      type: object
-      properties:
-        date: { type: string, description: "交易日期 YYYYMMDD 或 YYYY-MM-DD" }
-
-  - id: tool_capital_flow
-    label: 资金流向
-    description: 获取个股主力/散户资金流向（capital-flow 技能入口）。
-    description_short: 获取个股主力/散户资金流向（capital-flow 技能入口）。
-    parameters:
-      type: object
-      properties:
-        symbols: { type: string, description: "股票列表，逗号分隔或数组" }
-        lookback_days: { type: number, description: "回溯天数", default: 3 }
-      required: [symbols]
-
-  - id: tool_fetch_northbound_flow
-    label: 北向资金流向
-    description: 获取北向资金流向数据。
-    description_short: 获取北向资金流向数据。
-    parameters:
-      type: object
-      properties:
-        date: { type: string, description: "指定日期 YYYY-MM-DD" }
-        lookback_days: { type: number, description: "回溯天数", default: 1 }
-
-  - id: tool_fetch_policy_news
-    label: 盘前政策要闻
-    description: Tavily 检索宏观/监管要闻，带本地缓存（data/cache/policy_news_*.json）。
-    description_short: 政策要闻 Tavily+缓存。
-    parameters:
-      type: object
-      properties:
-        max_items: { type: number, description: "条数上限", default: 5 }
-        use_cache: { type: boolean, description: "是否读缓存", default: true }
-        disable_network: { type: boolean, description: "禁用联网", default: false }
-
-  - id: tool_fetch_macro_commodities
-    label: 大宗商品现货涨跌
-    description: WTI/黄金/铜 yfinance；失败需 Tavily 降级。
-    description_short: 原油黄金铜 yfinance。
-    parameters:
-      type: object
-      properties:
-        disable_network: { type: boolean, default: false }
-
-  - id: tool_fetch_overnight_futures_digest
-    label: A50与金龙隔夜检索摘要
-    description: 主源失败时定性摘要，numeric_unverified。
-    description_short: A50/金龙 tavily 摘要。
-    parameters:
-      type: object
-      properties:
-        disable_network: { type: boolean, default: false }
-
-  - id: tool_conditional_overnight_futures_digest
-    label: 条件性A50金龙摘要
-    description: 仅当 overnight_overlay_degraded 为 true 时调用 Tavily，节省配额。
-    description_short: 条件性隔夜摘要。
-    parameters:
-      type: object
-      properties:
-        overnight_overlay_degraded: { type: boolean, default: false }
-        before_open_analysis: { type: object, description: "tool_analyze_before_open 的 data" }
-        disable_network: { type: boolean, default: false }
-
-  - id: tool_fetch_announcement_digest
-    label: 重大公告速览
-    description: Tavily 检索 cninfo/东财等公告线索。
-    description_short: 公告 Tavily。
-    parameters:
-      type: object
-      properties:
-        max_items: { type: number, default: 5 }
-        disable_network: { type: boolean, default: false }
-
-  - id: tool_compute_index_key_levels
-    label: 指数关键位
-    description: 沪深300等日线近似支撑/压力（MA20、近窗高低、整数关口）。
-    description_short: 指数关键位。
-    parameters:
-      type: object
-      properties:
-        index_code: { type: string, description: "指数代码", default: "000300" }
-        lookback_days: { type: number, description: "拉取日线跨度", default: 120 }
-
-  - id: tool_record_before_open_prediction
-    label: 落盘盘前预测记录
-    description: 写入 data/prediction_records/{date}.json 供回溯。
-    description_short: 盘前预测落盘。
-    parameters:
-      type: object
-      properties:
-        report_data: { type: object, description: "与发送钉钉相同的 report_data" }
-        trade_date: { type: string, description: "YYYYMMDD，可空" }
-
-  - id: tool_get_yesterday_prediction_review
-    label: 昨日预测回顾
-    description: 读取上一交易日 prediction_records，可选对比现价。
-    description_short: 昨日预测回顾。
-    parameters:
-      type: object
-      properties:
-        underlying_close: { type: number, description: "标的收盘价，可空" }
-
-  - id: tool_backtest_limit_up_pullback
-    label: 涨停回马枪回测
-    description: 涨停回马枪策略回测。
-    description_short: 涨停回马枪策略回测。
-    parameters:
-      type: object
-      properties:
-        start_date: { type: string, description: "开始日期" }
-        end_date: { type: string, description: "结束日期" }
-        data_dir: { type: string, description: "数据目录" }
-        strategies: { type: array, description: "策略列表", items: { type: string } }
-        sector_score_min: { type: number, description: "板块热度最低分", default: 70 }
-        hold_days: { type: number, description: "持仓天数", default: 5 }
-        stop_loss_below_limit_pct: { type: number, description: "止损比例%", default: 5.0 }
-        target_pct: { type: number, description: "目标收益%", default: 5.0 }
-
-  - id: tool_backtest_limit_up_sensitivity
-    label: 涨停回测参数敏感性
-    description: 对涨停回马枪关键参数做网格搜索，返回推荐参数。
-    description_short: 对涨停回马枪关键参数做网格搜索，返回推荐参数。
-    parameters:
-      type: object
-      properties:
-        start_date: { type: string }
-        end_date: { type: string }
-        data_dir: { type: string }
-
-  - id: tool_backtest_etf_rotation
-    label: ETF轮动回测
-    description: 月度调仓、等权 Top-K，与 tool_etf_rotation_research 评分一致；研究级。
-    description_short: ETF轮动策略回测
-    parameters:
-      type: object
-      properties:
-        etf_pool: { type: string, description: "逗号分隔；留空则用 rotation 配置", default: "" }
-        start_date: { type: string, description: "YYYYMMDD", default: "20190101" }
-        end_date: { type: string, description: "YYYYMMDD；默认今日", default: "" }
-        rebalance: { type: string, description: "M=月末", default: "M" }
-        top_k: { type: number, description: "持有只数", default: 3 }
-        commission_bps: { type: number, description: "调仓成本 bps", default: 0 }
-        lookback_days: { type: number, description: "传给评分管道", default: 120 }
-        config_path: { type: string, description: "可选 rotation 配置路径" }
-
-  - id: tool_portfolio_risk_snapshot
-    label: 组合风险快照（VaR/回撤/仓位）
-    description: 基于 config/portfolio_weights.json 与 ETF 日线缓存，输出历史模拟 VaR、最大/当前回撤及仓位标志。
-    description_short: 组合 VaR 与回撤快照
-    parameters:
-      type: object
-      properties:
-        lookback_days: { type: number, description: "回溯交易日近似长度", default: 120 }
-        portfolio_config_path: { type: string, description: "可选，组合 JSON 路径" }
-        risk_thresholds_path: { type: string, description: "可选，risk_thresholds.yaml 路径" }
-        confidence: { type: number, description: "VaR 置信度", default: 0.95 }
-
-  - id: tool_compliance_rules_check
-    label: 合规规则读取（占位）
-    description: 读取 compliance 规则 YAML；未接持仓时不输出违规结论。
-    description_short: 合规规则展示
-    parameters:
-      type: object
-      properties:
-        rules_path: { type: string, description: "可选 YAML 路径" }
-
-  - id: tool_stop_loss_lines_check
-    label: 止损线配置检查
-    description: 读取 stop_loss_lines YAML，计算止损价；现价需另用行情工具比对。
-    description_short: 止损线配置
-    parameters:
-      type: object
-      properties:
-        lines_path: { type: string, description: "可选 YAML 路径" }
-
-  - id: tool_stress_test_linear_scenarios
-    label: 线性压力情景（占位）
-    description: 给定指数冲击百分比，线性估算组合近似变动（beta=1 占位）。
-    description_short: 线性压力测试
-    parameters:
-      type: object
-      properties:
-        index_shocks_pct: { type: array, items: { type: number }, description: "冲击百分比列表，如 -5,-10,-20" }
-        portfolio_config_path: { type: string, description: "可选组合 JSON" }
-
-  - id: tool_risk_attribution_stub
-    label: 风险归因占位
-    description: 占位说明；多因子数据就绪后再实现。
-    description_short: 风险归因占位
-    parameters:
-      type: object
-      properties: {}
+- id: tool_internal_alert_scan
+  label: 内部图表告警扫描
+  description: 扫描配置的内部量价/技术告警规则，输出 events 列表。
+  description_short: 内部告警扫描
+  parameters:
+    type: object
+    properties:
+      symbols:
+        type: string
+        description: 可选，逗号分隔标的代码；空则使用默认列表
+- id: tool_fetch_global_index_spot
+  label: 获取全球指数实时数据
+  description: 获取全球主要指数实时行情（道琼斯、纳斯达克、标普500等）。
+  description_short: 获取全球主要指数实时行情（道琼斯、纳斯达克、标普500等）。
+  parameters:
+    type: object
+    properties: {}
+- id: tool_fetch_global_index_hist_sina
+  label: 全球指数历史日线（收盘口径）
+  description: >-
+    全球指数历史日线（新浪/AkShare）。用于“上一完整交易日收盘”口径（昨收/上周五收市等）与补齐 spot 缺口；
+    典型：^GDAXI/^FTSE/^STOXX50E 等欧股代表。返回 data 为日线 rows（date/open/high/low/close/volume）。
+  description_short: 全球指数历史日线（昨收/收市口径）
+  parameters:
+    type: object
+    properties:
+      symbol:
+        type: string
+        description: 指数名称/代码，或部分 yfinance 符号（如 ^GDAXI/^FTSE/^STOXX50E）
+      limit:
+        type: integer
+        description: 返回最近 N 条（用于计算昨收涨跌时常用 2）
+        default: 2
+    required:
+    - symbol
+- id: tool_trading_copilot
+  label: 交易助手统一入口
+  description: 统一入口：交易状态→A股时段→快扫→(条件触发)信号→持仓检查，输出低上下文摘要。
+  description_short: 统一入口：交易状态→A股时段→快扫→(条件触发)信号→持仓检查，输出…
+  parameters:
+    type: object
+    properties:
+      focus_etfs:
+        type: string
+        description: ETF关注列表（逗号分隔），为空使用默认核心池
+      focus_stocks:
+        type: string
+        description: A股关注列表（逗号分隔，可选）
+      mode:
+        type: string
+        description: light|normal|deep
+        default: normal
+      run_signal:
+        type: boolean
+        description: 是否强制运行信号重流程（可选）
+      signal_etf:
+        type: string
+        description: 指定跑信号的 ETF（可选）
+      throttle_minutes:
+        type: number
+        description: 信号重流程节流分钟数
+        default: 5
+      timezone:
+        type: string
+        description: 时区
+        default: Asia/Shanghai
+      disable_network_fetch:
+        type: boolean
+        description: 禁用外部联网行情抓取
+        default: false
+      output_format:
+        type: string
+        description: feishu_card|json
+        default: feishu_card
+      include_snapshot:
+        type: boolean
+        description: 是否在返回中包含原始快照数据
+        default: false
+      send_feishu_card:
+        type: boolean
+        description: 是否发送飞书交互卡片
+        default: false
+      feishu_webhook_url:
+        type: string
+        description: 可选覆盖 notification.feishu_webhook
+- id: tool_event_sentinel
+  label: 事件哨兵
+  description: 外部事件/政策/公告检索与摘要，输出对宽基ETF/A股影响提示。
+  description_short: 外部事件/政策/公告检索与摘要，输出对宽基ETF/A股影响提示。
+  parameters:
+    type: object
+    properties:
+      query:
+        type: string
+        description: 事件关键词或一句话描述
+      topic:
+        type: string
+        description: general|news
+        default: news
+      n:
+        type: number
+        description: sources 数量
+        default: 5
+      days:
+        type: number
+        description: news 回溯天数
+        default: 3
+      deep:
+        type: boolean
+        description: 是否深搜
+        default: false
+      disable_network_fetch:
+        type: boolean
+        description: 禁用联网（受限环境降级）
+        default: false
+    required:
+    - query
+- id: tool_send_feishu_card_webhook
+  label: 发送飞书交互卡片（Webhook）
+  description: 通过飞书 bot webhook 发送 interactive 卡片。
+  description_short: 通过飞书 bot webhook 发送 interactive 卡片。
+  parameters:
+    type: object
+    properties:
+      card:
+        type: string
+        description: 卡片 payload（JSON 字符串或对象）
+      webhook_url:
+        type: string
+        description: 可选覆盖 notification.feishu_webhook
+      timeout_seconds:
+        type: number
+        description: HTTP 超时秒数
+        default: 10
+    required:
+    - card
+- id: tool_calculate_technical_indicators
+  label: 计算技术指标
+  description: "计算MA、MACD、RSI、布林带等指标；默认 engine=standard（pandas_ta，Wilder RSI 等）。可选 kdj/cci/adx/atr（仅 standard）。legacy 与历史 Coze 数值一致。"
+  description_short: 计算技术指标（pandas_ta / 可选 legacy）
+  parameters:
+    type: object
+    properties:
+      symbol:
+        type: string
+        description: 标的代码
+        default: '510300'
+      data_type:
+        type: string
+        description: 数据类型
+        default: etf_daily
+      period:
+        type: string
+        description: 周期（分钟数据）
+      lookback_days:
+        type: number
+        description: 回溯自然日（日线用；分钟线内部会放大窗口）
+        default: 120
+      engine:
+        type: string
+        description: "standard（默认，pandas_ta）或 legacy（原列表实现，数值与旧版一致）"
+        enum:
+          - standard
+          - legacy
+      indicators:
+        type: array
+        description: "指标列表，如 ma、macd、rsi、bollinger、kdj、cci、adx、atr；默认见合并后配置 technical_indicators.default_indicators（来源：config/domains/analytics.yaml）；亦兼容 MA10/RSI14 写法（与 ma_periods/rsi_length 二选一）"
+      timeframe_minutes:
+        type: number
+        description: "分钟 K 重采样周期（>=2 时生效），如 5m 源数据聚合为 30m 后再计算"
+      ma_periods:
+        type: array
+        description: "单次调用覆盖均线周期，如 [10,20]；与 intraday_monitor 的 30m MA 口径对齐"
+      rsi_length:
+        type: number
+        description: "单次调用覆盖 RSI 周期，默认见 config"
+- id: tool_analyze_after_close
+  label: 盘后趋势分析
+  description: 执行盘后趋势分析（15:30执行）。
+  description_short: 执行盘后趋势分析（15:30执行）。
+  parameters:
+    type: object
+    properties: {}
+- id: tool_analyze_before_open
+  label: 开盘前趋势分析
+  description: 执行开盘前趋势分析（9:15执行）。
+  description_short: 执行开盘前趋势分析（9:15执行）。
+  parameters:
+    type: object
+    properties: {}
+- id: tool_analyze_opening_market
+  label: 开盘行情分析
+  description: 执行开盘行情分析（9:28执行）。
+  description_short: 执行开盘行情分析（9:28执行）。
+  parameters:
+    type: object
+    properties: {}
+- id: tool_compute_index_key_levels
+  label: 指数关键位（支撑压力）
+  description: 基于最近日线计算指数近似支撑/压力位（MA20、近窗高低、整数关口）；供盘前/开盘报告展示。
+  description_short: 沪深300 等指数关键位简算
+  parameters:
+    type: object
+    properties:
+      index_code:
+        type: string
+        description: 指数代码，如 000300（沪深300）
+        default: '000300'
+      lookback_days:
+        type: number
+        description: 回溯自然日样本长度
+        default: 120
+- id: tool_get_yesterday_prediction_review
+  label: 昨日预测粗检
+  description: 读取上一交易日 prediction_records，可选与现价对比是否落入预测区间。
+  description_short: 昨日盘前/波动预测记录回顾
+  parameters:
+    type: object
+    properties:
+      underlying_close:
+        type: number
+        description: 可选；若提供则与记录中的 intraday_range 上下界对比
+- id: tool_record_before_open_prediction
+  label: 盘前预测落盘
+  description: 将盘前报告中的波动/区间等预测写入 data/prediction_records/{date}.json，供次日回顾。
+  description_short: 写入 prediction_records
+  parameters:
+    type: object
+    properties:
+      report_data:
+        type: object
+        description: 报告数据对象（含 report_type、volatility、intraday_range 等）
+      trade_date:
+        type: string
+        description: 可选，交易日 YYYYMMDD；默认上海当日
+    required:
+    - report_data
+- id: tool_predict_volatility
+  label: 波动率预测
+  description: 使用GARCH/ARIMA模型预测波动率。
+  description_short: 使用GARCH/ARIMA模型预测波动率。
+  parameters:
+    type: object
+    properties:
+      underlying:
+        type: string
+        description: "标的物代码或简称；歧义时用 指数:/ETF:/股票: 前缀"
+        default: '510300'
+      contract_codes:
+        type: array
+        description: 期权合约代码列表
+      asset_type_hint:
+        type: string
+        description: 可选 index / etf / stock，与 underlying 联用消歧
+- id: tool_calculate_historical_volatility
+  label: 计算历史波动率
+  description: 单窗口日线已实现波动率（年化%，与 sqrt(252) 口径一致）。多窗口/波动率锥/IV 请用 tool_underlying_historical_snapshot。
+  description_short: 单窗口历史波动率（年化%）
+  parameters:
+    type: object
+    properties:
+      symbol:
+        type: string
+        description: 标的代码
+      data_type:
+        type: string
+        description: 数据类型
+      lookback_days:
+        type: number
+        description: 回溯交易日样本长度（默认与插件实现一致，见 historical_snapshot 或代码默认）
+        default: 60
+    required:
+    - symbol
+- id: tool_underlying_historical_snapshot
+  label: 标的历史波动快照
+  description: 多标的、多窗口年化 HV、可选波动率锥、可选 SSE ETF 近月 ATM IV（含 iv_eq_30d）。股票/ETF/指数日线；默认配置见合并后配置 `historical_snapshot`（来源：config/domains/analytics.yaml）。
+  description_short: 多窗口 HV 与可选 IV 快照
+  parameters:
+    type: object
+    properties:
+      symbols:
+        type: string
+        description: 标的列表，逗号/空格/分号分隔（如 510300,000300）
+      windows:
+        type: array
+        description: 窗口天数列表，缺省用 config historical_snapshot.default_windows
+        items:
+          type: number
+      include_vol_cone:
+        type: boolean
+        description: 是否计算波动率锥（min/max/mean/percentile）
+      include_iv:
+        type: boolean
+        description: 是否拉取近月 ATM IV（仅上交所 ETF 期权标的有效）
+      max_symbols:
+        type: number
+        description: 单次最多标的数
+      start_date:
+        type: string
+        description: 起始 YYYYMMDD（可选）
+      end_date:
+        type: string
+        description: 结束 YYYYMMDD（可选）
+      asset_type:
+        type: string
+        description: auto|stock|etf|index；个股建议 stock
+        default: auto
+    required:
+    - symbols
+- id: tool_historical_snapshot
+  label: 标的历史波动快照（别名）
+  description: 与 tool_underlying_historical_snapshot 等价。
+  description_short: 同 tool_underlying_historical_snapshot
+  parameters:
+    type: object
+    properties:
+      symbols:
+        type: string
+        description: 标的列表，逗号/空格/分号分隔
+      windows:
+        type: array
+        items:
+          type: number
+      include_vol_cone:
+        type: boolean
+      include_iv:
+        type: boolean
+      max_symbols:
+        type: number
+      start_date:
+        type: string
+      end_date:
+        type: string
+      asset_type:
+        type: string
+        default: auto
+    required:
+    - symbols
+- id: tool_generate_signals
+  label: 生成交易信号（兼容别名）
+  description: 期权交易信号；与 tool_generate_option_trading_signals 等价。
+  description_short: 期权信号（别名）
+  parameters:
+    type: object
+    properties:
+      underlying:
+        type: string
+        description: 标的物代码
+        default: '510300'
+      contract_codes:
+        type: array
+        description: 期权合约代码列表
+- id: tool_generate_option_trading_signals
+  label: 生成期权交易信号
+  description: 按配置关联指数与合约生成期权信号；data.asset_class=option。
+  description_short: 期权交易信号
+  parameters:
+    type: object
+    properties:
+      underlying:
+        type: string
+        description: ETF 标的代码
+        default: '510300'
+      mode:
+        type: string
+        default: production
+- id: tool_generate_etf_trading_signals
+  label: 生成 ETF 交易信号
+  description: 基于 signal_generation.etf 与短波段规则。
+  description_short: ETF 交易信号
+  parameters:
+    type: object
+    properties:
+      etf_symbol:
+        type: string
+        description: ETF 代码，空则默认
+      mode:
+        type: string
+        default: production
+- id: tool_generate_stock_trading_signals
+  label: 生成 A 股交易信号
+  description: 基于 signal_generation.stock 与量价规则（非投资建议）。
+  description_short: A 股监控信号
+  parameters:
+    type: object
+    properties:
+      symbol:
+        type: string
+        description: 6 位代码，空则默认
+      mode:
+        type: string
+        default: production
+- id: tool_assess_risk
+  label: 风险评估
+  description: 评估 ETF/指数/A 股持仓风险与仓位建议（凯利简化版）；波动率与 historical_volatility 同口径；显式 asset_type 时缓存优先，无缓存则拉日线。
+  description_short: ETF/指数/A 股风险评估（凯利）。
+  parameters:
+    type: object
+    properties:
+      symbol:
+        type: string
+        description: 标的 6 位代码或 sh600000 / 600000.SH
+        default: '510300'
+      asset_type:
+        type: string
+        description: auto | stock | etf | index；缺省读 config risk_assessment.default_asset_type
+        default: auto
+      lookback_trading_days:
+        type: integer
+        description: 波动率窗口（交易日）；缺省读 config
+        default: 60
+      entry_price:
+        type: number
+        description: 入场价格
+      position_size:
+        type: number
+        description: 仓位大小
+      account_value:
+        type: number
+        description: 账户价值
+      stop_loss:
+        type: number
+        description: 止损价（可选；不传则按年化波动率与 config stop_loss_multiplier 估算）
+    required:
+    - symbol
+    - entry_price
+    - position_size
+    - account_value
+- id: tool_predict_intraday_range
+  label: 预测日内波动区间
+  description: 预测日内价格波动区间。
+  description_short: 预测日内价格波动区间。
+  parameters:
+    type: object
+    properties:
+      underlying:
+        type: string
+        description: "标的物代码或简称；歧义时用 指数:/ETF:/股票: 前缀"
+        default: '510300'
+      asset_type:
+        type: string
+        description: 可选 index / etf / stock，与 underlying 联用消歧
+- id: tool_predict_daily_volatility_range
+  label: 日频波动区间预测（全日）
+  description: 基于日K多窗口HV与ATR估计完整交易日的价格运行区间；交易时段可做有界纠偏。与 tool_predict_volatility（日内剩余时段）勿混用。
+  description_short: 日频全日波动区间（HV多窗+ATR）。
+  parameters:
+    type: object
+    properties:
+      underlying:
+        type: string
+        description: "标的物代码或简称；歧义时用 指数:/ETF:/股票: 前缀"
+        default: '510300'
+      asset_type:
+        type: string
+        description: 可选 index / etf / stock，与 underlying 联用消歧
+- id: tool_check_etf_index_consistency
+  label: 检查ETF与指数趋势一致性
+  description: 检查ETF与其跟踪指数的趋势一致性，计算相关性和一致性得分。
+  description_short: 检查ETF与其跟踪指数的趋势一致性，计算相关性和一致性得分。
+  parameters:
+    type: object
+    properties:
+      etf_symbol:
+        type: string
+        description: ETF代码
+        default: '510300'
+      index_code:
+        type: string
+        description: 指数代码
+        default: '000300'
+      lookback_days:
+        type: number
+        description: 回看天数
+        default: 60
+- id: tool_generate_trend_following_signal
+  label: 生成趋势跟踪信号
+  description: 基于ETF与指数趋势一致性生成趋势跟踪交易信号。
+  description_short: 基于ETF与指数趋势一致性生成趋势跟踪交易信号。
+  parameters:
+    type: object
+    properties:
+      etf_symbol:
+        type: string
+        description: ETF代码
+        default: '510300'
+      index_code:
+        type: string
+        description: 指数代码
+        default: '000300'
+      min_trend_strength:
+        type: number
+        description: 最小趋势强度
+        default: 0.6
+      min_consistency_score:
+        type: number
+        description: 最小一致性得分
+        default: 0.7
+- id: tool_strategy_engine
+  label: 策略引擎与信号融合
+  description: '【何时优先调用】用户问「多路信号是否一致」「综合偏多/偏空」「合成交易观点」「纪律化融合」、或需在单路 tool_generate_option_trading_signals（别名 tool_generate_signals）
+    之外要统一审计视图时，应调用本工具。
+
+    聚合多路 Rule 信号（src 期权信号生成 + ETF 趋势等），按 config/strategy_fusion.yaml 与动态/落盘权重融合，返回 data.candidates、data.fused、data.fused_by_symbol（多标的）、data.summary、data.weights_effective、data.inputs_hash（含
+    policy_version、fusion_policy、strategy_weights_yaml 等快照）；可选写 Journal（strategy_fusion）。
+
+    不替代 tool_generate_option_trading_signals / tool_generate_etf_trading_signals / tool_generate_stock_trading_signals；单路明细仍可用各信号工具。进化闭环见 config/openclaw_strategy_engine.yaml（persist_effective_weights
+    + 周期性 tool_adjust_strategy_weights）。
+
+    '
+  description_short: 多策略加权融合；综合信号/一致性场景优先
+  parameters:
+    type: object
+    properties:
+      underlying:
+        type: string
+        description: ETF 标的代码；多标的组合用英文逗号分隔，如 510300,510500
+        default: '510300'
+      index_code:
+        type: string
+        description: 指数代码（趋势策略）；单个则复用于所有标的，或与 underlying 同序逗号列表，如 000300,000905
+        default: '000300'
+      mode:
+        type: string
+        description: 传给 src 信号生成的模式
+        default: production
+      use_dynamic_weights:
+        type: boolean
+        description: 是否合并动态权重（优先 data/strategy_fusion_effective_weights.json，其次 get_strategy_weights）
+        default: true
+      write_journal:
+        type: boolean
+        description: 是否追加 strategy_fusion 事件到 Journal
+        default: true
+      config_path:
+        type: string
+        description: 自定义 strategy_fusion.yaml 路径（可选）
+- id: tool_calculate_position_size
+  label: 计算建议仓位（含硬锁定）
+  description: 根据趋势强度和信号置信度计算建议仓位，支持2%硬锁定限制。
+  description_short: 根据趋势强度和信号置信度计算建议仓位，支持2%硬锁定限制。
+  parameters:
+    type: object
+    properties:
+      trend_strength:
+        type: number
+        description: 趋势强度 (0-1)
+        default: 0.7
+      signal_confidence:
+        type: number
+        description: 信号置信度 (0-1)
+        default: 0.8
+      account_value:
+        type: number
+        description: 账户总值
+        default: 100000
+      etf_current_price:
+        type: number
+        description: ETF当前价格
+        default: 4.0
+      apply_hard_limit:
+        type: boolean
+        description: 是否应用硬锁定
+        default: true
+      hard_limit_pct:
+        type: number
+        description: 硬锁定百分比
+        default: 0.02
+    required:
+    - trend_strength
+    - signal_confidence
+- id: tool_check_position_limit
+  label: 检查仓位是否超限
+  description: 检查当前仓位是否超过硬锁定限制（2%）。
+  description_short: 检查当前仓位是否超过硬锁定限制（2%）。
+  parameters:
+    type: object
+    properties:
+      current_position_value:
+        type: number
+        description: 当前仓位价值
+      account_value:
+        type: number
+        description: 账户总值
+        default: 100000
+      hard_limit_pct:
+        type: number
+        description: 硬锁定百分比
+        default: 0.02
+    required:
+    - current_position_value
+    - account_value
+- id: tool_apply_hard_limit
+  label: 应用硬锁定限制
+  description: 对建议仓位应用硬锁定限制（2%）。
+  description_short: 对建议仓位应用硬锁定限制（2%）。
+  parameters:
+    type: object
+    properties:
+      recommended_size:
+        type: number
+        description: 建议仓位 (0-1)
+      account_value:
+        type: number
+        description: 账户总值
+        default: 100000
+      etf_current_price:
+        type: number
+        description: ETF当前价格
+        default: 4.0
+      hard_limit_pct:
+        type: number
+        description: 硬锁定百分比
+        default: 0.02
+    required:
+    - recommended_size
+    - account_value
+    - etf_current_price
+- id: tool_calculate_stop_loss_take_profit
+  label: 计算止盈止损价格
+  description: 根据入场价格和趋势方向计算止盈止损价格。
+  description_short: 根据入场价格和趋势方向计算止盈止损价格。
+  parameters:
+    type: object
+    properties:
+      entry_price:
+        type: number
+        description: 入场价格
+      current_price:
+        type: number
+        description: 当前价格
+      trend_direction:
+        type: string
+        description: 趋势方向：up 或 down
+    required:
+    - entry_price
+    - current_price
+    - trend_direction
+- id: tool_check_stop_loss_take_profit
+  label: 检查止盈止损
+  description: 检查当前价格是否触发止盈或止损。
+  description_short: 检查当前价格是否触发止盈或止损。
+  parameters:
+    type: object
+    properties:
+      etf_symbol:
+        type: string
+        description: ETF代码
+        default: '510300'
+      entry_price:
+        type: number
+        description: 入场价格
+      current_price:
+        type: number
+        description: 当前价格
+      highest_price:
+        type: number
+        description: 持仓期间最高价
+    required:
+    - etf_symbol
+    - entry_price
+    - current_price
+    - highest_price
+- id: tool_record_signal_effect
+  label: 记录信号效果
+  description: 记录交易信号的执行效果和盈亏情况。
+  description_short: 记录交易信号的执行效果和盈亏情况。
+  parameters:
+    type: object
+    properties:
+      signal_id:
+        type: string
+        description: 信号唯一ID
+      signal_type:
+        type: string
+        description: buy|sell|call|put
+      etf_symbol:
+        type: string
+        description: ETF代码
+        default: '510300'
+      signal_strength:
+        type: number
+        description: 信号强度 (0-1)
+      strategy:
+        type: string
+        description: 策略名称
+      entry_price:
+        type: number
+        description: 入场价格
+      exit_price:
+        type: number
+        description: 出场价格（可选）
+      profit_loss:
+        type: number
+        description: 盈亏金额（可选）
+      profit_loss_pct:
+        type: number
+        description: 盈亏比例（可选）
+      status:
+        type: string
+        description: pending|executed|closed
+        default: pending
+      journal_extra:
+        type: object
+        description: 可选，合并写入 trading_journal signal_recorded（如 raw_signals/fused/weights）
+    required:
+    - signal_id
+    - signal_type
+    - etf_symbol
+    - signal_strength
+    - strategy
+    - entry_price
+- id: tool_get_strategy_performance
+  label: 获取策略表现
+  description: 获取指定策略的历史表现统计。
+  description_short: 获取指定策略的历史表现统计。
+  parameters:
+    type: object
+    properties:
+      strategy:
+        type: string
+        description: 策略名称
+      lookback_days:
+        type: number
+        description: 回看天数
+        default: 60
+    required:
+    - strategy
+- id: tool_calculate_strategy_score
+  label: 计算策略评分
+  description: 根据策略表现计算综合评分（0-100分）。
+  description_short: 根据策略表现计算综合评分（0-100分）。
+  parameters:
+    type: object
+    properties:
+      strategy:
+        type: string
+        description: 策略名称
+      lookback_days:
+        type: number
+        description: 回看天数
+        default: 60
+      min_signals:
+        type: number
+        description: 最少信号数
+        default: 10
+    required:
+    - strategy
+- id: tool_adjust_strategy_weights
+  label: 调整策略权重
+  description: 根据策略评分动态调整策略权重。
+  description_short: 根据策略评分动态调整策略权重。
+  parameters:
+    type: object
+    properties:
+      current_weights:
+        type: object
+        description: '当前权重 {strategy: weight}'
+      lookback_days:
+        type: number
+        description: 回看天数
+        default: 60
+      adjustment_rate:
+        type: number
+        description: 调整幅度
+        default: 0.1
+    required:
+    - current_weights
+- id: tool_get_strategy_weights
+  label: 获取策略权重
+  description: 获取策略权重配置。
+  description_short: 获取策略权重配置。
+  parameters:
+    type: object
+    properties:
+      strategies:
+        type: array
+        description: 策略列表（可选）
+        items:
+          type: string
+- id: tool_send_feishu_message
+  label: 发送飞书消息
+  description: 发送文本或卡片消息到飞书。
+  description_short: 发送文本或卡片消息到飞书。
+  parameters:
+    type: object
+    properties:
+      title:
+        type: string
+        description: 消息标题
+      message:
+        type: string
+        description: 消息内容
+      message_type:
+        type: string
+        description: text|rich_text
+        default: text
+    required:
+    - message
+- id: tool_send_signal_alert
+  label: 发送交易信号提醒
+  description: 发送交易信号卡片提醒。
+  description_short: 发送交易信号卡片提醒。
+  parameters:
+    type: object
+    properties:
+      signals:
+        type: array
+        description: 信号列表
+    required:
+    - signals
+- id: tool_send_daily_report
+  label: 发送市场日报
+  description: 发送每日市场分析报告到钉钉自定义机器人（支持 SEC 加签）。
+  description_short: 发送市场日报到钉钉（SEC 加签）。
+  parameters:
+    type: object
+    properties:
+      report_data:
+        type: object
+        description: >-
+          必填。默认「市场日报」须将当轮 tool_analyze_after_close 的完整工具返回（含 success、message、data）
+          原样写入 report_data.tool_analyze_after_close，并把其 data 写入 report_data.analysis（须为对象，禁止
+          「盘后分析完成」等短句）；补采工具整段结果挂在同名键（如 tool_fetch_global_index_spot、
+          tool_predict_daily_volatility_range）或合并进 daily_report_overlay。禁止省略大块 JSON 以省 token。
+      split_markdown_sections:
+        type: boolean
+        description: "是否按 ##/### 章节合并分条（与每日市场分析报告一致）；省略时默认为 true，显式 false 可关。"
+        default: true
+      max_chars_per_message:
+        type: integer
+        description: 单条目标字符上限；省略则读合并后配置 notification.dingtalk_max_chars_per_message（来源：config/domains/outbound.yaml；硬顶 dingtalk_max_chars_hard_ceiling）。
+    required:
+    - report_data
+- id: tool_analyze_after_close_and_send_daily_report
+  label: 盘后分析并发送日报（串接）
+  description: >-
+    进程内先执行 tool_analyze_after_close，再将完整返回并入 report_data 后调用 tool_send_daily_report；
+    单次工具调用即可，避免主模型在两次工具之间传递大段 JSON 导致截断。可选 extra_report_data 与结果浅合并（补采字段）。
+  description_short: 盘后分析并发送日报（单工具串接）。
+  parameters:
+    type: object
+    properties:
+      report_date:
+        type: string
+        description: 报告日期（可选）
+      webhook_url:
+        type: string
+        description: 可选：钉钉自定义机器人 webhook（含 access_token）
+      mode:
+        type: string
+        description: prod|test
+        default: prod
+      extra_report_data:
+        type: object
+        description: >-
+          可选；与 analyze 产物浅合并到 report_data 顶层。每个 tool_* 键的值须为**完整工具返回 JSON**（含 success/data/items 等）；禁止只传参数字典（如仅 index_codes），否则将跳过合并以免覆盖发送层补采。
+      secret:
+        type: string
+        description: 可选：SEC 加签密钥
+      keyword:
+        type: string
+        description: 可选：关键词安全校验
+      split_markdown_sections:
+        type: boolean
+        description: "是否按 ##/### 章节合并分条（与每日市场分析报告一致）；省略时默认为 true，显式 false 可关。"
+        default: true
+      max_chars_per_message:
+        type: integer
+        description: 单条最大字符；省略则用合并后配置 notification.dingtalk_max_chars_per_message（来源：config/domains/outbound.yaml，默认 1600）；硬顶 notification.dingtalk_max_chars_hard_ceiling（默认 20000）
+        default: 1600
+- id: tool_send_analysis_report
+  label: 发送分析报告到钉钉
+  description: 发送交易时间分析类/研究类报告到钉钉自定义机器人（支持 SEC 加签）。
+  description_short: 发送分析报告到钉钉。
+  parameters:
+    type: object
+    properties:
+      report_data:
+        type: object
+        description: 报告数据
+      report_date:
+        type: string
+        description: 报告日期（可选）
+      webhook_url:
+        type: string
+        description: 可选：自定义机器人 webhook（包含 access_token）
+      secret:
+        type: string
+        description: 可选：安全模式 SEC 密钥（用于 sign）
+      keyword:
+        type: string
+        description: 可选：关键词安全校验用（如果机器人启用关键词）
+      mode:
+        type: string
+        description: prod|test
+        default: prod
+      split_markdown_sections:
+        type: boolean
+        description: "是否按 ##/### 章节合并分条；分析类报告默认 true，显式 false 可关。"
+        default: true
+      max_chars_per_message:
+        type: integer
+        description: 单条目标字符上限；省略则用合并后配置 notification.dingtalk_max_chars_per_message（来源：config/domains/outbound.yaml；默认 1600）；硬顶 dingtalk_max_chars_hard_ceiling。
+    required:
+    - report_data
+- id: tool_send_dingtalk_message
+  label: 发送钉钉文本消息
+  description: 发送到钉钉自定义机器人（支持 SEC 安全模式加签）。
+  description_short: 发送钉钉文本消息
+  parameters:
+    type: object
+    properties:
+      message:
+        type: string
+        description: 消息内容
+      title:
+        type: string
+        description: 消息标题
+      webhook_url:
+        type: string
+        description: 可选：自定义机器人 webhook（包含 access_token）
+      secret:
+        type: string
+        description: 可选：安全模式 SEC 密钥（用于 sign）
+      keyword:
+        type: string
+        description: 可选：关键词安全校验用（如果机器人启用关键词）
+      mode:
+        type: string
+        description: prod|test
+        default: prod
+      split_markdown_sections:
+        type: boolean
+        description: "是否显式按章节分条（超长时仍会合并 ## 节至单条上限）"
+        default: false
+      max_chars_per_message:
+        type: integer
+        description: 单条最大字符；省略则用合并后配置 notification.dingtalk_max_chars_per_message（来源：config/domains/outbound.yaml；默认 1600）
+        default: 1600
+    required:
+    - message
+- id: tool_send_signal_risk_inspection
+  label: 发送巡检快报
+  description: 以结构化字段渲染“宽基ETF巡检快报”固定模板，并发送到钉钉。
+  description_short: 渲染并发送巡检快报
+  parameters:
+    type: object
+    properties:
+      report:
+        type: object
+        description: 巡检结构化字段对象；字段名使用模板占位符名（不含大括号）
+      phase:
+        type: string
+        description: morning|midday|afternoon
+        default: midday
+      mode:
+        type: string
+        description: prod|test
+        default: prod
+      webhook_url:
+        type: string
+        description: 可选：自定义机器人 webhook（包含 access_token）
+      secret:
+        type: string
+        description: 可选：安全模式 SEC 密钥（用于 sign）
+      keyword:
+        type: string
+        description: 可选：关键词安全校验用（如果机器人启用关键词）
+    required:
+    - report
+- id: tool_run_signal_risk_inspection_and_send
+  label: 巡检采集并发送
+  description: 进程内拉取沪深300/创业板/中证500指数与三只宽基ETF实时、组合风险快照，组装标准 report 后渲染并发送钉钉巡检快报（Cron 推荐单次调用）。
+  description_short: 宽基巡检采集+发送
+  parameters:
+    type: object
+    properties:
+      phase:
+        type: string
+        description: morning|midday|afternoon（与三档 Cron 对应）
+        default: midday
+      mode:
+        type: string
+        description: prod|test（钉钉发送）
+        default: prod
+      fetch_mode:
+        type: string
+        description: production|test（指数/ETF 实时采集；test 跳过交易日门禁，仅用于调试）
+        default: production
+      webhook_url:
+        type: string
+        description: 可选：自定义机器人 webhook（包含 access_token）
+      secret:
+        type: string
+        description: 可选：安全模式 SEC 密钥（用于 sign）
+      keyword:
+        type: string
+        description: 可选：关键词安全校验用（如果机器人启用关键词）
+- id: tool_run_opening_analysis_and_send
+  label: 开盘晨报采集并发送
+  description: 进程内按 opening_analysis.yaml 顺序采集机构晨报字段并组装 report_data，调用 tool_send_analysis_report 发送钉钉开盘独立完整版（report_type=opening）；Cron 9:28 推荐单次调用。
+  description_short: 开盘分析采集+发送
+  parameters:
+    type: object
+    properties:
+      mode:
+        type: string
+        description: prod|test（钉钉发送）
+        default: prod
+      fetch_mode:
+        type: string
+        description: production|test（指数/ETF 等采集门禁）
+        default: production
+      webhook_url:
+        type: string
+        description: 可选：自定义机器人 webhook（包含 access_token）
+      secret:
+        type: string
+        description: 可选：安全模式 SEC 密钥（用于 sign）
+      keyword:
+        type: string
+        description: 可选：关键词安全校验用（如果机器人启用关键词）
+      split_markdown_sections:
+        type: boolean
+        description: 是否按章节分条；默认 true（与每日市场分析报告一致）。
+        default: true
+      max_chars_per_message:
+        type: integer
+        description: 可选；单条目标字符上限，省略读 config notification.dingtalk_max_chars_per_message。
+- id: tool_run_before_open_analysis_and_send
+  label: 盘前晨报采集并发送
+  description: 进程内按 before_open_analysis.yaml 顺序采集并组装 report_data，调用 tool_send_analysis_report 发送钉钉盘前机构晨报（report_type=before_open）；Cron 9:20 推荐单次调用，避免多轮合并 JSON 与 idle 超时。
+  description_short: 盘前分析采集+发送
+  parameters:
+    type: object
+    properties:
+      mode:
+        type: string
+        description: prod|test（钉钉发送）
+        default: prod
+      fetch_mode:
+        type: string
+        description: production|test（指数等采集门禁）
+        default: production
+      webhook_url:
+        type: string
+        description: 可选：自定义机器人 webhook（包含 access_token）
+      secret:
+        type: string
+        description: 可选：安全模式 SEC 密钥（用于 sign）
+      keyword:
+        type: string
+        description: 可选：关键词安全校验用（如果机器人启用关键词）
+      split_markdown_sections:
+        type: boolean
+        description: 是否按章节分条；默认 true（与每日市场分析报告一致）。
+        default: true
+      max_chars_per_message:
+        type: integer
+        description: 可选；单条目标字符上限，省略读 config notification.dingtalk_max_chars_per_message。
+- id: tool_portfolio_risk_snapshot
+  label: 组合风险快照
+  description: 基于真实持仓（优先）或配置权重 + ETF 日线缓存，计算历史模拟 VaR、最大/当前回撤、仓位风险标志。
+  description_short: 组合风险快照（VaR/回撤/仓位标志）
+  parameters:
+    type: object
+    properties:
+      lookback_days:
+        type: number
+        description: 回看天数（用于读取日线缓存并计算收益序列）
+        default: 120
+      portfolio_config_path:
+        type: string
+        description: 可选：组合权重配置路径（json）。若未能读取真实持仓则使用该配置。
+      positions_path:
+        type: string
+        description: 可选：真实持仓快照路径（json）。优先级高于 portfolio_config_path。
+      risk_thresholds_path:
+        type: string
+        description: 可选：风险阈值配置路径（yaml）
+      confidence:
+        type: number
+        description: VaR 置信度
+        default: 0.95
+- id: tool_send_risk_alert
+  label: 发送风险预警
+  description: 发送风险预警通知。
+  description_short: 发送风险预警通知。
+  parameters:
+    type: object
+    properties:
+      risk_data:
+        type: object
+        description: 风险数据
+    required:
+    - risk_data
+- id: tool_detect_market_regime
+  label: 市场状态识别
+  description: 市场状态识别（研究级）。输出 trending_up|trending_down|range|high_vol_risk 及置信度。
+  description_short: 市场状态识别（研究级）。
+  parameters:
+    type: object
+    properties:
+      symbol:
+        type: string
+        description: 标的代码
+        default: '510300'
+      mode:
+        type: string
+        description: prod|test
+        default: prod
+- id: tool_etf_rotation_research
+  label: ETF轮动研究
+  description: ETF轮动研究（研究级）。从缓存读ETF日线，计算动量/波动/回撤，输出排名与研究报告。
+  description_short: ETF轮动研究（研究级）。
+  parameters:
+    type: object
+    properties:
+      etf_pool:
+        type: string
+        description: 逗号分隔ETF代码列表
+        default: 510300,510500,159915,512100,512880,512690
+      lookback_days:
+        type: number
+        description: 回看天数
+        default: 120
+      top_k:
+        type: number
+        description: 输出前K名
+        default: 3
+      mode:
+        type: string
+        description: prod|test
+        default: prod
+- id: tool_strategy_research
+  label: 策略研究与回放评估
+  description: 策略研究与回放评估（研究级）。复用策略表现/评分/权重工具，生成研究报告与权重调整建议。
+  description_short: 策略研究与回放评估（研究级）。
+  parameters:
+    type: object
+    properties:
+      lookback_days:
+        type: number
+        description: 回看天数
+        default: 120
+      strategies:
+        type: string
+        description: 逗号分隔策略名
+        default: trend_following,mean_reversion,breakout
+      adjustment_rate:
+        type: number
+        description: 调整幅度
+        default: 0.1
+      mode:
+        type: string
+        description: prod|test
+        default: prod
+- id: tool_quantitative_screening
+  label: 量化选股
+  description: 对候选标的做动量/波动率/流动性/估值因子打分，输出排名与 top_picks。
+  description_short: 对候选标的做动量/波动率/流动性/估值因子打分，输出排名与 top_p。
+  parameters:
+    type: object
+    properties:
+      candidates:
+        type: string
+        description: 候选标的，逗号分隔或数组，如 510300,510500
+      lookback_days:
+        type: number
+        description: 回溯天数
+        default: 20
+      universe:
+        type: string
+        description: etf|stock|null 自动判断
+      top_k:
+        type: number
+        description: 返回前多少名
+        default: 10
+    required:
+    - candidates
+- id: tool_backtest_limit_up_pullback
+  label: 涨停回马枪回测
+  description: 涨停回马枪策略回测。
+  description_short: 涨停回马枪策略回测。
+  parameters:
+    type: object
+    properties:
+      start_date:
+        type: string
+        description: 开始日期
+      end_date:
+        type: string
+        description: 结束日期
+      data_dir:
+        type: string
+        description: 数据目录
+      strategies:
+        type: array
+        description: 策略列表
+        items:
+          type: string
+      sector_score_min:
+        type: number
+        description: 板块热度最低分
+        default: 70
+      hold_days:
+        type: number
+        description: 持仓天数
+        default: 5
+      stop_loss_below_limit_pct:
+        type: number
+        description: 止损比例%
+        default: 5.0
+      target_pct:
+        type: number
+        description: 目标收益%
+        default: 5.0
+- id: tool_backtest_limit_up_sensitivity
+  label: 涨停回测参数敏感性
+  description: 对涨停回马枪关键参数做网格搜索，返回推荐参数。
+  description_short: 对涨停回马枪关键参数做网格搜索，返回推荐参数。
+  parameters:
+    type: object
+    properties:
+      start_date:
+        type: string
+      end_date:
+        type: string
+      data_dir:
+        type: string
+- id: tool_sector_heat_score
+  label: 板块热度评分
+  description: 按涨停股聚合行业/板块，结合行业涨跌与净流入计算 0–100 热度分与周期 phase；内部调用 tool_fetch_limit_up_stocks 与 tool_fetch_sector_data。
+  description_short: 板块热度评分与周期阶段
+  parameters:
+    type: object
+    properties:
+      date:
+        type: string
+        description: 交易日 YYYYMMDD；省略则按当前日历日
+      limit_up_data:
+        type: array
+        description: 可选，已获取的涨停列表
+      sector_data:
+        type: object
+        description: 可选，行业板块行情

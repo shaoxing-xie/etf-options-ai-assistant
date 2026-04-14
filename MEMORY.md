@@ -8,6 +8,7 @@
 
 ## 交易与通知
 - 通知渠道：飞书、钉钉群聊。
+- 交互命令路由（强制）：`dingtalk` 来就回 `dingtalk`，`feishu` 来就回 `feishu`；历史“避免钉钉回复/仅发飞书”偏好已废弃，不再生效。
 - 常用标的、阈值与工作流等可在本文件或 workspace 中按需补充。
 
 ## 工具状态
@@ -39,7 +40,7 @@
 | 工作流 | target | 结果 | 关键发现 |
 |--------|--------|------|----------|
 | research_checklist_evolution | factor_research_checklist.md | TEAM_OK | 文档存在，需增强可执行性 |
-| factor_evolution | factor_momentum_20d | TEAM_OK | 因子定义在 etf_rotation_research.py:26 |
+| factor_evolution | factor_momentum_20d | TEAM_OK | 轮动因子见 `config/rotation_config.yaml`；实现见 `plugins/analysis/etf_rotation_core.py` |
 | volatility_range_evolution | 510300 | TEAM_OK | data/ 目录缺失，tavily_search 成功 |
 
 ### 关键配置文件
@@ -166,9 +167,7 @@
 - 修复：`9ee39ac fix: remove absolute path leak`
 - 验证：新运行 `23621527878` 成功通过
 
-**新增技能**（2026-03-27 通过 clawhub 安装）：
-- `skills/agent-team-orchestration`
-- `skills/capability-evolver`
+**技能目录策略**（2026-04-04）：仓库 **`skills/`** 仅保留项目自研 Skill；`agent-team-orchestration`、`capability-evolver` 等第三方改由 Clawhub 安装到 **`~/.openclaw/skills/`**（或 shared skills），同步自研包用 `scripts/sync_repo_skills_to_openclaw.sh`。
 
 ---
 

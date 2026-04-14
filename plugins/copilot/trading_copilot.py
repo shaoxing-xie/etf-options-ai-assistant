@@ -22,7 +22,7 @@ from plugins.merged.fetch_etf_data import tool_fetch_etf_data
 from plugins.data_collection.futures.fetch_a50 import tool_fetch_a50_data
 from plugins.data_collection.utils.check_trading_status import tool_check_trading_status
 from plugins.data_collection.utils.a_share_market_regime import tool_get_a_share_market_regime
-from src.signal_generation import tool_generate_signals
+from src.signal_generation import tool_generate_option_trading_signals
 
 # 股票实时工具（用于持仓检查 / 可交易性过滤兜底）
 from plugins.data_collection.stock.fetch_realtime import tool_fetch_stock_realtime
@@ -573,7 +573,7 @@ def tool_trading_copilot(
         if should_run_signal and allow_signal and not disable_network_fetch:
             # 非连续交易时段降级：仍可生成“预案”，但标注不可立即执行
             primary = signal_etf or (etf_codes[0] if etf_codes else "510300")
-            signal_data = tool_generate_signals(underlying=primary)
+            signal_data = tool_generate_option_trading_signals(underlying=primary)
             state["last_signal_ts"] = now.isoformat()
             state["last_signal_etf"] = primary
             _save_state(openclaw_workspace_dir, state)

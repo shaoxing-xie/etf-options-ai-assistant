@@ -8,6 +8,7 @@ enabled: true
 analysis_agent_tool: tool_strategy_engine
 
 # 默认调用参数（Agent / Cron message 可照抄）
+# 多 ETF：underlying 与 index_code 可用英文逗号分隔且同序，例如 "510300,510500" / "000300,000905"
 default_tool_args:
   underlying: "510300"
   index_code: "000300"
@@ -33,9 +34,9 @@ evolution:
 agent_routing_hints: |
   【策略引擎与信号融合 tool_strategy_engine】
   - 当用户关心「多路信号是否一致」「综合偏多偏空」「纪律化合成观点」时，优先调用 tool_strategy_engine，
-    再视需要调用 tool_assess_risk；不要只用 tool_generate_signals 代替融合结论。
-  - 当用户明确只要单路 src 信号或只要趋势模块时，可单独调用 tool_generate_signals 或 tool_generate_trend_following_signal。
-  - 输出解读请引用 data.fused（direction、score、confidence）与 data.candidates 摘要；提及 data.inputs_hash 便于审计。
+    再视需要调用 tool_assess_risk；不要只用 tool_generate_option_trading_signals（别名 tool_generate_signals）代替融合结论。
+  - 当用户明确只要单路 src 期权信号或只要趋势模块时，可单独调用 tool_generate_option_trading_signals（或别名 tool_generate_signals）或 tool_generate_trend_following_signal；ETF/A 股单路见 tool_generate_etf_trading_signals / tool_generate_stock_trading_signals。
+  - 输出解读请引用 data.fused（主标的）、data.fused_by_symbol（多标的）、data.summary（聚合摘要）与 data.candidates；提及 data.inputs_hash 便于审计（含 policy 与权重快照）。
   - 若 config/strategy_fusion.yaml 中 providers.llm=true，融合可能包含 LLM 路；默认 llm=false，主链路可解释。
   - 进化：开启 persist_effective_weights 后，重复运行会沿用上次有效权重；策略反思任务请使用 evolution.fusion_weight_keys 对齐键名。
 
@@ -52,4 +53,4 @@ prediction_monitoring:
   weekly_script: "scripts/prediction_metrics_weekly.py"
   fusion_contract: "docs/research/prediction_fusion_contract.md"
   fusion_experiment_script: "scripts/prediction_fusion_experiment.py"
-  note: "质量门禁阈值见 config.yaml prediction_quality；周报见 prediction_monitoring；融合仅离线试验。"
+  note: "质量门禁阈值见合并后配置 prediction_quality（来源：config/domains/risk_quality.yaml）；周报见 prediction_monitoring；融合仅离线试验。"

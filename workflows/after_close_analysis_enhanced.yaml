@@ -46,7 +46,7 @@ steps:
 
   - name: generate_signals
     agent: analysis_agent
-    tool: tool_generate_signals
+    tool: tool_generate_option_trading_signals
     description: 生成交易信号
     params:
       underlying: "510300"
@@ -75,17 +75,12 @@ steps:
 
 # OpenClaw cron（etf_analysis_agent）：research.md 第十节「盘后完整分析」+ 钉钉（与 jobs.json 对齐）
 structured_message: |
-  执行盘后完整分析流程（增强版）。先读取并严格遵循 /home/xie/.openclaw/prompts/research.md 第一至六节及第十节「盘后完整分析」步骤与口径，按序执行并输出完整 Markdown 报告。
+  执行盘后完整分析流程（增强版）。先读取并严格遵循 research.md 第一至六节及第十节「盘后完整分析」步骤与口径，按序执行并输出完整 Markdown 报告。
 
-  【钉钉投递（硬约束）】
-  - cron delivery=none：禁止依赖调度器；须用工具推到钉钉自定义机器人。
-  - **优先** tool_send_daily_report（report_data 与 /home/xie/.openclaw/prompts/research.md 第十节一致；本工作区映射为钉钉 webhook，非飞书）。若不便拼 report_data，则用 tool_send_dingtalk_message：message=完整 Markdown 正文，title 可选，**mode 必须为 prod**（禁止用 test 当作已发送）。
-  - 环境变量：OPENCLAW_DINGTALK_CUSTOM_ROBOT_WEBHOOK_URL、OPENCLAW_DINGTALK_CUSTOM_ROBOT_SECRET（OpenClaw/Gateway 进程须加载 ~/.openclaw/.env）。
-  - **禁止**：tool_send_feishu_message、飞书 webhook 扇出同一份长文、message 工具做多通道/飞书投递（避免与「仅钉钉」冲突）。
-  - 群备注：cid0dqwAYvqu94+QEoODXL1uw==（实际落群以 webhook 绑定为准）。
-  - 失败勿令任务以 error 结束；在输出末尾记录原因与重试建议（可重试 1 次）。
+  【钉钉投递（硬约束）】完整条款见仓库 docs/openclaw/dingtalk_delivery_contract.md §标准长文。
+  摘要：delivery=none；须钉钉自定义机器人；优先 tool_send_daily_report 或 tool_send_dingtalk_message(mode=prod)；禁飞书扇出同文；需 OPENCLAW_DINGTALK_*；失败不以 error 结束。
 
-  【通知要求】delivery.mode 保持 none。
+  【通知要求】delivery.mode 保持 none（同上文档）。
 
 # 历史：工具链逐步执行（测试模式）说明，供对照；定时任务以 structured_message 为准
 structured_message_legacy_test: |
@@ -97,9 +92,9 @@ structured_message_legacy_test: |
   
   步骤3：使用 tool_analyze_after_close 工具执行盘后市场分析。此工具会分析当日市场情况并预测下一交易日趋势。
   
-  步骤4：使用 tool_calculate_historical_volatility 工具计算历史波动率，参数：symbol="510300", lookback_days=60。
+  步骤4：使用 tool_calculate_historical_volatility 计算单窗历史波动率，参数：symbol="510300", lookback_days=60。若需多窗口/可选波动率锥或 IV，可改用 tool_underlying_historical_snapshot（symbols、include_vol_cone、include_iv；默认见 config historical_snapshot）。
   
-  步骤5：使用 tool_generate_signals 工具生成交易信号，参数：underlying="510300"。请保存返回的signal_id用于下一步。
+  步骤5：使用 tool_generate_option_trading_signals 工具生成期权交易信号（别名 tool_generate_signals），参数：underlying="510300"。请保存返回的signal_id用于下一步。
   
   步骤6：使用 tool_record_signal_effect 工具记录信号效果。请使用步骤5返回的signal_id和信号信息作为参数。如果记录失败，继续执行下一步。
   

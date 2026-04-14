@@ -1,0 +1,67 @@
+{
+  "version": 1,
+  "groups": {
+    "F": {
+      "description": "Fast / low-cost: tool orchestration, data collection, ops log scanning.",
+      "model": {
+        "primary": "custom-openrouter-alpha-free/stepfun/step-3.5-flash:free",
+        "fallbacks": [
+          "custom-openrouter-alpha-free/openrouter/free",
+          "custom-openrouter-alpha-free/nvidia/nemotron-3-super-120b-a12b:free",
+          "custom-openrouter-alpha-free/qwen/qwen3.6-plus-preview:free",
+          "custom-openrouter-alpha-free/arcee-ai/trinity-mini:free",
+          "custom-openrouter-alpha-free/z-ai/glm-4.5-air:free",
+          "custom-openrouter-alpha-free/nvidia/nemotron-3-nano-30b-a3b:free",
+          "z-ai-glm5-nvidia-com-sxxiefg/minimaxai/minimax-m2.5",
+          "glm5-api-nvidia-com/z-ai/glm4.7"
+        ]
+      }
+    },
+    "M": {
+      "description": "Medium: strict template compliance, inspection briefs, code-health summaries.",
+      "model": {
+        "primary": "custom-openrouter-alpha-free/nvidia/nemotron-3-super-120b-a12b:free",
+        "fallbacks": [
+          "glm5-api-nvidia-com/z-ai/glm4.7",
+          "z-ai-glm5-nvidia-com-sxxiefg/deepseek-ai/deepseek-v3.2",
+          "glm5-api-nvidia-com/deepseek-ai/deepseek-v3.1",
+          "custom-openrouter-alpha-free/stepfun/step-3.5-flash:free",
+          "custom-openrouter-alpha-free/openrouter/free",
+          "custom-openrouter-alpha-free/z-ai/glm-4.5-air:free",
+          "custom-openrouter-alpha-free/nvidia/nemotron-3-nano-30b-a3b:free",
+          "custom-qianfan-baidubce-com/ernie-4.5-21b-a3b",
+          "custom-api-deepseek-com/deepseek-chat"
+        ]
+      }
+    },
+    "S": {
+      "description": "Strong: research reports, long-form reasoning, complex multi-step analysis.",
+      "model": {
+        "primary": "custom-openrouter-alpha-free/qwen/qwen3.6-plus-preview:free",
+        "fallbacks": [
+          "z-ai-glm5-nvidia-com-sxxiefg/deepseek-ai/deepseek-v3.2",
+          "custom-openrouter-alpha-free/nvidia/nemotron-3-super-120b-a12b:free",
+          "glm5-api-nvidia-com/nvidia/nemotron-3-super-120b-a12b",
+          "custom-openrouter-alpha-free/z-ai/glm-4.5-air:free",
+          "custom-openrouter-alpha-free/nvidia/nemotron-3-nano-30b-a3b:free",
+          "z-ai-glm5-nvidia-com-sxxiefg/minimaxai/minimax-m2.5",
+          "custom-openrouter-alpha-free/stepfun/step-3.5-flash:free",
+          "custom-qianfan-baidubce-com/ernie-4.5-21b-a3b",
+          "custom-api-deepseek-com/deepseek-chat"
+        ]
+      }
+    }
+  },
+  "agents": {
+    "defaultsGroup": "F",
+    "overrides": {
+      "etf_main": "M",
+      "etf_analysis_agent": "S",
+      "etf_business_core_agent": "M",
+      "code_maintenance_agent": "M",
+      "ops_agent": "F",
+      "etf_data_collector_agent": "F",
+      "etf_notification_agent": "F"
+    }
+  }
+}

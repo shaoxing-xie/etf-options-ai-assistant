@@ -116,15 +116,20 @@ def _load_yaml_config(path: str) -> Dict[str, Any]:
 
 def _merge_tick_capabilities(data_feeds: Dict[str, Any]) -> None:
     """
-    根据 etf-options-ai-assistant 根目录下 config.yaml 中的 data_sources.tick 段更新 Tick 能力标记。
+    根据分层配置（合并后视图）中的 Tick 配置段更新 Tick 能力标记。
 
     仅负责把“已正确配置且启用的 Tick 源”反映到 data_feeds 中，
     具体的探测成功/失败由数据采集层负责。
     """
-    config_path = "/home/xie/etf-options-ai-assistant/config.yaml"
-    cfg = _load_yaml_config(config_path)
-    data_sources = cfg.get("data_sources") or {}
-    tick_cfg = data_sources.get("tick") or {}
+    try:
+        from src.config_loader import load_system_config
+
+        cfg = load_system_config(use_cache=True)
+    except Exception:
+        cfg = {}
+
+    market_data = cfg.get("market_data") or {}
+    tick_cfg = market_data.get("tick") or {}
     providers = tick_cfg.get("providers") or {}
     symbols = tick_cfg.get("symbols") or {}
 
@@ -165,8 +170,8 @@ def get_runtime_environment_view() -> Dict[str, Any]:
         "broker": broker,
         "data_feeds": data_feeds,
         "assumptions": [
-            "当前环境视图基于本地静态配置、config.yaml 以及保守假设。",
-            "如有实盘与期权权限，请在 `broker_and_data_config.py` 与 config.yaml 中补充真实信息。",
+            "当前环境视图基于本地静态配置、合并后配置（分层 YAML）以及保守假设。",
+            "如有实盘与期权权限，请在 `broker_and_data_config.py` 与分层配置中补充真实信息。",
         ],
     }
 

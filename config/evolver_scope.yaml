@@ -5,7 +5,7 @@ allowed_paths:
   - "docs/research/**"
   - "docs/openclaw/**"
   # 宽基 ETF 波动区间：工具与缓存同源；Reviewer 须拒绝与本主题无关的 diff
-  - "config.yaml"
+  - "config/environments/base.yaml"
   - "src/volatility_range.py"
   - "src/volatility_range_fallback.py"
   - "src/on_demand_predictor.py"
@@ -17,6 +17,7 @@ denied_paths:
   - "plugins/data_collection/**"
   - "scripts/**"
   - "config/openclaw_*.yaml"
+  # 人工 PR；合并须在描述或首评标注 AUTOFIX_ALLOWED=false（见 CONTRIBUTING.md、.github/pull_request_template.md）
   - "plugins/notification/**"
   - ".github/**"
 

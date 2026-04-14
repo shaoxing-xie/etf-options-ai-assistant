@@ -11,7 +11,7 @@ import os
 from pathlib import Path
 import io
 from contextlib import redirect_stdout, redirect_stderr
-from typing import Any, Callable, Dict, Optional, Type
+from typing import Any, Callable, Dict, List, Optional, Type
 
 from pydantic import BaseModel, ValidationError
 
@@ -40,29 +40,85 @@ def _load_dotenv_for_tools() -> None:
 _load_dotenv_for_tools()
 
 # 旧工具名 -> (新工具名, 注入参数) 用于兼容 cron/工作流
+# 数据采集类 tool_fetch_* / tool_read_* 已迁至 Gateway 插件 openclaw-data-china-stock，此处不再做别名映射。
+def _coerce_cli_value(raw: str) -> Any:
+    """将 key=value 中的 value 转为 bool / int / float / str。"""
+    s = raw.strip()
+    low = s.lower()
+    if low == "true":
+        return True
+    if low == "false":
+        return False
+    if low in ("null", "none"):
+        return None
+    if s.isdigit():
+        # 保留前导零代码（如 000300）为字符串，避免 json.loads 以外的 CLI 路径丢零
+        if len(s) > 1 and s.startswith("0"):
+            return s
+        try:
+            return int(s)
+        except ValueError:
+            pass
+    if s.startswith("-") and len(s) > 1 and s[1:].isdigit():
+        try:
+            return int(s)
+        except ValueError:
+            pass
+    try:
+        if "." in s or "e" in low:
+            return float(s)
+    except ValueError:
+        pass
+    return s
+
+
+def _parse_tool_cli_args(argv_tail: List[str]) -> Dict[str, Any]:
+    """
+    解析 tool_runner 在工具名之后的参数。
+
+    - 无参数：{}
+    - 单参数且以 @ 开头：从文件读 JSON
+    - 单参数且以 { 开头：JSON 对象
+    - 否则：若每个 token 均含 ``=``，按 key=value 解析（value 可含逗号，如多标的）
+    - 单参数其它情况：仍尝试 json.loads（兼容旧行为）
+    """
+    if not argv_tail:
+        return {}
+    if len(argv_tail) == 1 and argv_tail[0].startswith("@"):
+        arg_path = Path(argv_tail[0][1:]).expanduser()
+        if not arg_path.is_file():
+            raise FileNotFoundError(f"参数文件不存在: {arg_path}")
+        text = arg_path.read_text(encoding="utf-8")
+        return json.loads(text) if text.strip() else {}
+    first = argv_tail[0].strip()
+    if len(argv_tail) == 1 and first.startswith("{"):
+        return json.loads(first)
+    if all("=" in x for x in argv_tail):
+        out: Dict[str, Any] = {}
+        for item in argv_tail:
+            k, _, v = item.partition("=")
+            key = k.strip()
+            if not key:
+                continue
+            out[key] = _coerce_cli_value(v)
+        return out
+    if len(argv_tail) == 1:
+        return json.loads(argv_tail[0])
+    raise ValueError(
+        "参数须为 JSON 对象、@文件路径，或多个 key=value（例如 underlying=510300,510500 index_code=000300,000905）"
+    )
+
+
 ALIASES = {
     "tool_fetch_index_realtime": ("tool_fetch_index_data", {"data_type": "realtime"}),
     "tool_fetch_index_historical": ("tool_fetch_index_data", {"data_type": "historical"}),
     "tool_fetch_index_minute": ("tool_fetch_index_data", {"data_type": "minute"}),
     "tool_fetch_index_opening": ("tool_fetch_index_data", {"data_type": "opening"}),
     "tool_fetch_global_index_spot": ("tool_fetch_index_data", {"data_type": "global_spot"}),
+    "tool_fetch_global_index_hist_sina": ("tool_fetch_global_index_hist_sina", {}),
     "tool_fetch_etf_realtime": ("tool_fetch_etf_data", {"data_type": "realtime"}),
-    "tool_fetch_etf_historical": ("tool_fetch_etf_data", {"data_type": "historical"}),
-    # ETF 分钟数据改为走 plugins.data_collection.etf.fetch_minute（新浪优先），而不是 akshare-only
-    "tool_fetch_etf_minute": ("tool_fetch_etf_minute_direct", {}),
-    "tool_fetch_option_realtime": ("tool_fetch_option_data", {"data_type": "realtime"}),
-    "tool_fetch_option_greeks": ("tool_fetch_option_data", {"data_type": "greeks"}),
-    "tool_fetch_option_minute": ("tool_fetch_option_data", {"data_type": "minute"}),
-    "tool_read_index_daily": ("tool_read_market_data", {"data_type": "index_daily"}),
-    "tool_read_index_minute": ("tool_read_market_data", {"data_type": "index_minute"}),
-    "tool_read_etf_daily": ("tool_read_market_data", {"data_type": "etf_daily"}),
-    "tool_read_etf_minute": ("tool_read_market_data", {"data_type": "etf_minute"}),
-    "tool_read_option_minute": ("tool_read_market_data", {"data_type": "option_minute"}),
-    "tool_read_option_greeks": ("tool_read_market_data", {"data_type": "option_greeks"}),
     "tool_send_feishu_message": ("tool_send_feishu_notification", {"notification_type": "message"}),
     "tool_send_signal_alert": ("tool_send_feishu_notification", {"notification_type": "signal_alert"}),
-    # 市场日报也走钉钉（兼容旧工具名）：复用 tool_send_analysis_report 的 SEC 加签与关键词校验
-    "tool_send_daily_report": ("tool_send_analysis_report", {}),
     "tool_send_risk_alert": ("tool_send_feishu_notification", {"notification_type": "risk_alert"}),
     "tool_analyze_after_close": ("tool_analyze_market", {"moment": "after_close"}),
     "tool_analyze_before_open": ("tool_analyze_market", {"moment": "before_open"}),
@@ -78,11 +134,6 @@ ALIASES = {
     "tool_calculate_strategy_score": ("tool_strategy_analytics", {"action": "score"}),
     "tool_get_strategy_weights": ("tool_strategy_weights", {"action": "get"}),
     "tool_adjust_strategy_weights": ("tool_strategy_weights", {"action": "adjust"}),
-    # 股票行情工具（直接映射到 plugins.data_collection.stock）
-    "tool_fetch_stock_historical": ("tool_fetch_stock_historical", {}),
-    "tool_fetch_stock_minute": ("tool_fetch_stock_minute", {}),
-    "tool_fetch_stock_realtime": ("tool_fetch_stock_realtime", {}),
-    "tool_fetch_etf_iopv_snapshot": ("tool_fetch_etf_iopv_snapshot", {}),
 }
 
 class TradingCopilotParams(BaseModel):
@@ -117,30 +168,34 @@ TOOL_ERROR_CODES = {
 }
 
 
-# 工具函数映射（合并后 21 个主工具 + 未合并的保留）
+# 工具函数映射（与 config/tools_manifest.json 对齐；数据采集由 openclaw-data-china-stock 在 Gateway 注册）
+# merged.fetch_* 仍供 copilot / 分析模块 Python 导入；实现来自 plugins.data_collection（符号链接至外部插件仓库）
 TOOL_MAP: Dict[str, ToolSpec] = {
-    # 合并工具 - 数据采集
+    # 保留：供 tool_fetch_global_index_spot 别名与 copilot 内部调用
     "tool_fetch_index_data": ToolSpec(
         module_path="merged.fetch_index_data",
         function_name="tool_fetch_index_data",
+    ),
+    "tool_fetch_global_index_hist_sina": ToolSpec(
+        module_path="plugins.data_collection.index.fetch_global_hist_sina",
+        function_name="tool_fetch_global_index_hist_sina",
     ),
     "tool_fetch_etf_data": ToolSpec(
         module_path="merged.fetch_etf_data",
         function_name="tool_fetch_etf_data",
     ),
-    # 直连版 ETF 分钟数据（新浪优先 + 东方财富 + 原系统缓存）
-    "tool_fetch_etf_minute_direct": ToolSpec(
-        module_path="plugins.data_collection.etf.fetch_minute",
-        function_name="tool_fetch_etf_minute",
+    # Data-collection tools (implemented in openclaw-data-china-stock extension; available via symlinked plugins/data_collection)
+    "tool_fetch_stock_realtime": ToolSpec(
+        module_path="plugins.data_collection.stock.fetch_realtime",
+        function_name="tool_fetch_stock_realtime",
     ),
-    "tool_fetch_option_data": ToolSpec(
-        module_path="merged.fetch_option_data",
-        function_name="tool_fetch_option_data",
+    "tool_fetch_stock_historical": ToolSpec(
+        module_path="plugins.data_collection.stock.fetch_historical",
+        function_name="tool_fetch_stock_historical",
     ),
-    # 数据采集 - 期货与工具（保留）
-    "tool_fetch_a50_data": ToolSpec(
-        module_path="plugins.data_collection.futures.fetch_a50",
-        function_name="tool_fetch_a50_data",
+    "tool_fetch_stock_minute": ToolSpec(
+        module_path="plugins.data_collection.stock.fetch_minute",
+        function_name="tool_fetch_stock_minute",
     ),
     "tool_fetch_etf_iopv_snapshot": ToolSpec(
         module_path="plugins.data_collection.etf.fetch_realtime",
@@ -150,40 +205,23 @@ TOOL_MAP: Dict[str, ToolSpec] = {
         module_path="plugins.data_collection.utils.get_contracts",
         function_name="tool_get_option_contracts",
     ),
-    "tool_check_trading_status": ToolSpec(
-        module_path="plugins.data_collection.utils.check_trading_status",
-        function_name="tool_check_trading_status",
+    "tool_internal_alert_scan": ToolSpec(
+        module_path="analysis.internal_alert_scan",
+        function_name="tool_internal_alert_scan",
     ),
-    "tool_get_a_share_market_regime": ToolSpec(
-        module_path="plugins.data_collection.utils.a_share_market_regime",
-        function_name="tool_get_a_share_market_regime",
-    ),
-    "tool_filter_a_share_tradability": ToolSpec(
-        module_path="plugins.data_collection.utils.a_share_tradability_filter",
-        function_name="tool_filter_a_share_tradability",
-    ),
-    # Copilot（编排入口）
     "tool_trading_copilot": ToolSpec(
         module_path="copilot.trading_copilot",
         function_name="tool_trading_copilot",
         params_model=TradingCopilotParams,
     ),
-    # 事件哨兵
     "tool_event_sentinel": ToolSpec(
         module_path="sentinel.event_sentinel",
         function_name="tool_event_sentinel",
     ),
-    # 飞书交互卡片（webhook）
     "tool_send_feishu_card_webhook": ToolSpec(
         module_path="notification.send_feishu_card_webhook",
         function_name="tool_send_feishu_card_webhook",
     ),
-    # 合并工具 - 数据访问
-    "tool_read_market_data": ToolSpec(
-        module_path="merged.read_market_data",
-        function_name="tool_read_market_data",
-    ),
-    # 分析工具（保留）
     "tool_calculate_technical_indicators": ToolSpec(
         module_path="analysis.technical_indicators",
         function_name="tool_calculate_technical_indicators",
@@ -192,16 +230,48 @@ TOOL_MAP: Dict[str, ToolSpec] = {
         module_path="src.signal_generation",
         function_name="tool_generate_signals",
     ),
+    "tool_generate_option_trading_signals": ToolSpec(
+        module_path="src.signal_generation",
+        function_name="tool_generate_option_trading_signals",
+    ),
+    "tool_generate_etf_trading_signals": ToolSpec(
+        module_path="src.etf_signal_generation",
+        function_name="tool_generate_etf_trading_signals",
+    ),
+    "tool_generate_stock_trading_signals": ToolSpec(
+        module_path="src.stock_signal_generation",
+        function_name="tool_generate_stock_trading_signals",
+    ),
     "tool_assess_risk": ToolSpec(
         module_path="analysis.risk_assessment",
         function_name="tool_assess_risk",
+    ),
+    "tool_compute_index_key_levels": ToolSpec(
+        module_path="analysis.key_levels",
+        function_name="tool_compute_index_key_levels",
+    ),
+    "tool_get_yesterday_prediction_review": ToolSpec(
+        module_path="analysis.accuracy_tracker",
+        function_name="tool_get_yesterday_prediction_review",
+    ),
+    "tool_record_before_open_prediction": ToolSpec(
+        module_path="analysis.accuracy_tracker",
+        function_name="tool_record_before_open_prediction",
     ),
     "tool_predict_intraday_range": ToolSpec(
         module_path="analysis.intraday_range",
         function_name="tool_predict_intraday_range",
         param_mapping={"underlying": "symbol"},
     ),
-    # 合并工具 - 分析
+    "tool_predict_daily_volatility_range": ToolSpec(
+        module_path="analysis.daily_volatility_range",
+        function_name="tool_predict_daily_volatility_range",
+        param_mapping={"underlying": "symbol"},
+    ),
+    "tool_fetch_northbound_flow": ToolSpec(
+        module_path="data_collection.northbound",
+        function_name="tool_fetch_northbound_flow",
+    ),
     "tool_analyze_market": ToolSpec(
         module_path="merged.analyze_market",
         function_name="tool_analyze_market",
@@ -210,7 +280,14 @@ TOOL_MAP: Dict[str, ToolSpec] = {
         module_path="merged.volatility",
         function_name="tool_volatility",
     ),
-    # ETF趋势（保留）
+    "tool_underlying_historical_snapshot": ToolSpec(
+        module_path="analysis.underlying_historical_snapshot",
+        function_name="tool_underlying_historical_snapshot",
+    ),
+    "tool_historical_snapshot": ToolSpec(
+        module_path="analysis.underlying_historical_snapshot",
+        function_name="tool_historical_snapshot",
+    ),
     "tool_check_etf_index_consistency": ToolSpec(
         module_path="analysis.etf_trend_tracking",
         function_name="tool_check_etf_index_consistency",
@@ -223,7 +300,6 @@ TOOL_MAP: Dict[str, ToolSpec] = {
         module_path="strategy_engine.tool_strategy_engine",
         function_name="tool_strategy_engine",
     ),
-    # Market Regime / Research
     "tool_detect_market_regime": ToolSpec(
         module_path="analysis.market_regime",
         function_name="tool_detect_market_regime",
@@ -236,11 +312,6 @@ TOOL_MAP: Dict[str, ToolSpec] = {
         module_path="analysis.strategy_research",
         function_name="tool_strategy_research",
     ),
-    "tool_get_strategy_research_history": ToolSpec(
-        module_path="analysis.strategy_research",
-        function_name="tool_get_strategy_research_history",
-    ),
-    # 合并工具 - 风险控制
     "tool_position_limit": ToolSpec(
         module_path="merged.position_limit",
         function_name="tool_position_limit",
@@ -249,7 +320,6 @@ TOOL_MAP: Dict[str, ToolSpec] = {
         module_path="merged.stop_loss_take_profit",
         function_name="tool_stop_loss_take_profit",
     ),
-    # 策略效果（保留 + 合并）
     "tool_record_signal_effect": ToolSpec(
         module_path="analysis.strategy_tracker",
         function_name="tool_record_signal_effect",
@@ -262,134 +332,54 @@ TOOL_MAP: Dict[str, ToolSpec] = {
         module_path="merged.strategy_weights",
         function_name="tool_strategy_weights",
     ),
-    # 合并工具 - 通知
     "tool_send_feishu_notification": ToolSpec(
         module_path="merged.send_feishu_notification",
         function_name="tool_send_feishu_notification",
     ),
-    # 通知（钉钉）
     "tool_send_dingtalk_message": ToolSpec(
         module_path="notification.send_dingtalk_message",
         function_name="tool_send_dingtalk_message",
     ),
-    # 分析类报告（钉钉发送，替代 flyish 报日）
+    "tool_send_signal_risk_inspection": ToolSpec(
+        module_path="notification.send_signal_risk_inspection",
+        function_name="tool_send_signal_risk_inspection",
+    ),
+    "tool_run_signal_risk_inspection_and_send": ToolSpec(
+        module_path="notification.run_signal_risk_inspection",
+        function_name="tool_run_signal_risk_inspection_and_send",
+    ),
+    "tool_run_opening_analysis_and_send": ToolSpec(
+        module_path="notification.run_opening_analysis",
+        function_name="tool_run_opening_analysis_and_send",
+    ),
+    "tool_run_before_open_analysis_and_send": ToolSpec(
+        module_path="notification.run_before_open_analysis",
+        function_name="tool_run_before_open_analysis_and_send",
+    ),
     "tool_send_analysis_report": ToolSpec(
         module_path="notification.send_analysis_report",
         function_name="tool_send_analysis_report",
     ),
-    # 股票行情
-    "tool_fetch_stock_historical": ToolSpec(
-        module_path="plugins.data_collection.stock.fetch_historical",
-        function_name="tool_fetch_stock_historical",
+    "tool_send_daily_report": ToolSpec(
+        module_path="notification.send_daily_report",
+        function_name="tool_send_daily_report",
     ),
-    "tool_fetch_stock_minute": ToolSpec(
-        module_path="plugins.data_collection.stock.fetch_minute",
-        function_name="tool_fetch_stock_minute",
+    "tool_analyze_after_close_and_send_daily_report": ToolSpec(
+        module_path="notification.send_daily_report",
+        function_name="tool_analyze_after_close_and_send_daily_report",
     ),
-    "tool_fetch_stock_realtime": ToolSpec(
-        module_path="plugins.data_collection.stock.fetch_realtime",
-        function_name="tool_fetch_stock_realtime",
-    ),
-    # 个股数据聚合
-    "tool_stock_data_fetcher": ToolSpec(
-        module_path="plugins.data_collection.stock.stock_data_fetcher",
-        function_name="tool_stock_data_fetcher",
-    ),
-    "tool_stock_monitor": ToolSpec(
-        module_path="plugins.data_collection.stock.stock_data_fetcher",
-        function_name="tool_stock_monitor",
-    ),
-    # 涨停回马枪 - 数据与回测
-    "tool_fetch_limit_up_stocks": ToolSpec(
-        module_path="plugins.data_collection.limit_up.fetch_limit_up",
-        function_name="tool_fetch_limit_up_stocks",
-    ),
-    "tool_sector_heat_score": ToolSpec(
-        module_path="plugins.data_collection.limit_up.sector_heat",
-        function_name="tool_sector_heat_score",
-    ),
-    "tool_write_limit_up_with_sector": ToolSpec(
-        module_path="plugins.data_collection.limit_up.daily_report",
-        function_name="tool_write_limit_up_with_sector",
-    ),
-    "tool_limit_up_daily_flow": ToolSpec(
-        module_path="plugins.data_collection.limit_up.daily_report",
-        function_name="tool_limit_up_daily_flow",
-    ),
-    # 涨停回马枪相关技能封装
-    "tool_dragon_tiger_list": ToolSpec(
-        module_path="plugins.data_collection.dragon_tiger",
-        function_name="tool_dragon_tiger_list",
-    ),
-    "tool_capital_flow": ToolSpec(
-        module_path="plugins.data_collection.capital_flow",
-        function_name="tool_capital_flow",
-    ),
-    "tool_fetch_northbound_flow": ToolSpec(
-        module_path="plugins.data_collection.northbound",
-        function_name="tool_fetch_northbound_flow",
-    ),
-    "tool_fetch_policy_news": ToolSpec(
-        module_path="plugins.data_collection.morning_brief_fetchers",
-        function_name="tool_fetch_policy_news",
-    ),
-    "tool_fetch_macro_commodities": ToolSpec(
-        module_path="plugins.data_collection.morning_brief_fetchers",
-        function_name="tool_fetch_macro_commodities",
-    ),
-    "tool_fetch_overnight_futures_digest": ToolSpec(
-        module_path="plugins.data_collection.morning_brief_fetchers",
-        function_name="tool_fetch_overnight_futures_digest",
-    ),
-    "tool_conditional_overnight_futures_digest": ToolSpec(
-        module_path="plugins.data_collection.morning_brief_fetchers",
-        function_name="tool_conditional_overnight_futures_digest",
-    ),
-    "tool_fetch_announcement_digest": ToolSpec(
-        module_path="plugins.data_collection.morning_brief_fetchers",
-        function_name="tool_fetch_announcement_digest",
-    ),
-    "tool_fetch_industry_news_brief": ToolSpec(
-        module_path="plugins.data_collection.morning_brief_fetchers",
-        function_name="tool_fetch_industry_news_brief",
-    ),
-    "tool_overnight_calibration": ToolSpec(
-        module_path="plugins.analysis.overnight_calibration",
-        function_name="tool_overnight_calibration",
-    ),
-    "tool_build_limitup_scenarios": ToolSpec(
-        module_path="plugins.analysis.scenario_analysis",
-        function_name="tool_build_limitup_scenarios",
-    ),
-    "tool_compute_index_key_levels": ToolSpec(
-        module_path="plugins.analysis.key_levels",
-        function_name="tool_compute_index_key_levels",
-    ),
-    "tool_record_before_open_prediction": ToolSpec(
-        module_path="plugins.analysis.accuracy_tracker",
-        function_name="tool_record_before_open_prediction",
-    ),
-    "tool_get_yesterday_prediction_review": ToolSpec(
-        module_path="plugins.analysis.accuracy_tracker",
-        function_name="tool_get_yesterday_prediction_review",
-    ),
-    "tool_record_limitup_watch_outcome": ToolSpec(
-        module_path="plugins.analysis.accuracy_tracker",
-        function_name="tool_record_limitup_watch_outcome",
-    ),
-    "tool_fetch_sector_data": ToolSpec(
-        module_path="plugins.data_collection.sector",
-        function_name="tool_fetch_sector_data",
-    ),
-    "tool_fetch_stock_financials": ToolSpec(
-        module_path="plugins.data_collection.financials",
-        function_name="tool_fetch_stock_financials",
+    "tool_portfolio_risk_snapshot": ToolSpec(
+        module_path="risk.portfolio_risk_snapshot",
+        function_name="tool_portfolio_risk_snapshot",
     ),
     "tool_quantitative_screening": ToolSpec(
         module_path="analysis.quantitative_screening",
         function_name="tool_quantitative_screening",
     ),
-    # 回测
+    "tool_sector_heat_score": ToolSpec(
+        module_path="data_collection.limit_up.sector_heat",
+        function_name="tool_sector_heat_score",
+    ),
     "tool_backtest_limit_up_pullback": ToolSpec(
         module_path="backtest.limit_up_pullback",
         function_name="tool_backtest_limit_up_pullback",
@@ -398,30 +388,9 @@ TOOL_MAP: Dict[str, ToolSpec] = {
         module_path="backtest.limit_up_pullback",
         function_name="tool_backtest_limit_up_sensitivity",
     ),
-    "tool_backtest_etf_rotation": ToolSpec(
-        module_path="backtest.etf_rotation_backtest",
-        function_name="tool_backtest_etf_rotation",
-    ),
-    # 组合风险（VaR / 回撤 / 仓位）
-    "tool_portfolio_risk_snapshot": ToolSpec(
-        module_path="risk.portfolio_risk_snapshot",
-        function_name="tool_portfolio_risk_snapshot",
-    ),
-    "tool_compliance_rules_check": ToolSpec(
-        module_path="risk.institutional_risk",
-        function_name="tool_compliance_rules_check",
-    ),
-    "tool_stop_loss_lines_check": ToolSpec(
-        module_path="risk.institutional_risk",
-        function_name="tool_stop_loss_lines_check",
-    ),
-    "tool_stress_test_linear_scenarios": ToolSpec(
-        module_path="risk.institutional_risk",
-        function_name="tool_stress_test_linear_scenarios",
-    ),
-    "tool_risk_attribution_stub": ToolSpec(
-        module_path="risk.institutional_risk",
-        function_name="tool_risk_attribution_stub",
+    "tool_llm_json_extract": ToolSpec(
+        module_path="utils.llm_structured_extract",
+        function_name="tool_llm_json_extract",
     ),
 }
 
@@ -431,26 +400,23 @@ def main():
             json.dumps(
                 {
                     "error": "缺少工具名称",
-                    "usage": "python3 tool_runner.py <tool_name> [args_json|@path/to/args.json]",
+                    "usage": "python3 tool_runner.py <tool_name> [@path/to/args.json | JSON对象 | key=value ...]",
                 }
             )
         )
         sys.exit(1)
 
     tool_name = sys.argv[1]
-    args_json = sys.argv[2] if len(sys.argv) > 2 else "{}"
-    if isinstance(args_json, str) and args_json.startswith("@"):
-        arg_path = Path(args_json[1:]).expanduser()
-        if not arg_path.is_file():
-            print(json.dumps({"error": f"参数文件不存在: {arg_path}"}, ensure_ascii=False))
-            sys.exit(1)
-        args_json = arg_path.read_text(encoding="utf-8")
+    argv_tail = sys.argv[2:]
 
-    # 解析参数
+    # 解析参数：JSON 对象 / @path / key=value ...
     try:
-        args = json.loads(args_json) if args_json else {}
-    except json.JSONDecodeError as e:
-        print(json.dumps({"error": f"参数JSON格式错误: {e}"}))
+        args = _parse_tool_cli_args(argv_tail)
+    except FileNotFoundError as e:
+        print(json.dumps({"error": str(e)}, ensure_ascii=False))
+        sys.exit(1)
+    except (json.JSONDecodeError, ValueError) as e:
+        print(json.dumps({"error": f"参数格式错误: {e}"}, ensure_ascii=False))
         sys.exit(1)
     
     # 别名解析：旧工具名 -> 新工具名 + 注入参数（兼容 cron/工作流）

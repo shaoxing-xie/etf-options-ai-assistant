@@ -18,10 +18,16 @@ steps:
     
   - name: technical_indicators
     tool: tool_calculate_technical_indicators
-    description: 计算技术指标（MA、MACD、RSI、布林带等）
+    description: 计算技术指标（默认四件套 + ATR 波动尺度；可按需在 indicators 中加 kdj/cci/adx）
     params:
       symbol: "510300"
       data_type: "etf_daily"
+      indicators:
+        - ma
+        - macd
+        - rsi
+        - bollinger
+        - atr
     
   - name: historical_volatility
     tool: tool_calculate_historical_volatility
@@ -41,11 +47,24 @@ steps:
     description: 预测日内波动区间
     params:
       symbol: "510300"
+
+  - name: daily_volatility_range
+    tool: tool_predict_daily_volatility_range
+    description: 日频全日波动区间（可与日内/剩余时段对照，勿混用口径）
+    params:
+      underlying: "510300"
     
   - name: generate_signals
-    tool: tool_generate_signals
+    tool: tool_generate_option_trading_signals
     description: 生成综合交易信号（综合技术指标、趋势、波动率等因子）
-    depends_on: [technical_indicators, historical_volatility, volatility_prediction, intraday_range]
+    depends_on:
+      [
+        technical_indicators,
+        historical_volatility,
+        volatility_prediction,
+        intraday_range,
+        daily_volatility_range,
+      ]
     
   - name: risk_assessment
     tool: tool_assess_risk

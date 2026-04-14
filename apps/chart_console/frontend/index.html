@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Chart Console Pro</title>
+    <style>
+      body { margin: 0; font-family: "Microsoft YaHei", sans-serif; background: #0b1020; color: #d6ddf5; }
+      .wrap { padding: 12px; display: grid; grid-template-rows: auto auto 1fr; gap: 10px; min-height: 100vh; }
+      .bar, .panel { background: #101831; border: 1px solid #28335f; border-radius: 10px; padding: 10px; }
+      .bar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+      input, select, button { background: #15224a; color: #d6ddf5; border: 1px solid #334483; border-radius: 6px; padding: 6px 8px; }
+      button { cursor: pointer; }
+      .grid { display: grid; grid-template-columns: 2fr 1fr; gap: 10px; }
+      #chartMain, #chartSecond, #chartMacd, #chartRsi { width: 100%; }
+      #chartMain { height: 420px; }
+      #chartSecond { height: 180px; margin-top: 8px; }
+      #chartMacd, #chartRsi { height: 140px; margin-top: 8px; }
+      .small { font-size: 12px; opacity: 0.85; }
+      .badge { font-size: 12px; padding: 4px 8px; border-radius: 999px; }
+      .ok { background: #1f5f38; }
+      .warn { background: #7a5a1d; }
+      .bad { background: #7b2323; }
+      .error-banner { margin-top: 8px; background: #5a1f2f; border: 1px solid #a0435a; padding: 8px; border-radius: 8px; font-size: 12px; }
+      table { width: 100%; border-collapse: collapse; font-size: 12px; }
+      td, th { border-bottom: 1px solid #2a3562; padding: 4px 6px; text-align: left; }
+    </style>
+    <script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
+  </head>
+  <body>
+    <div class="wrap">
+      <div id="bootError" class="error-banner" style="display:none;"></div>
+      <div class="bar">
+        <select id="symbol"><option>510300</option><option>510500</option><option>510050</option></select>
+        <select id="tf"><option value="5">5m</option><option value="15">15m</option><option value="30" selected>30m</option><option value="60">1h</option><option value="None">1d</option></select>
+        <input id="lookback" type="number" value="180" min="60" max="600" />
+        <input id="ma" type="text" value="5,10,20,60" />
+        <button id="btnLoad">加载图表</button>
+        <button id="btnBacktest">跑回测</button>
+        <input id="feeBps" type="number" value="3" step="0.5" title="手续费(bps)" />
+        <input id="slippageBps" type="number" value="2" step="0.5" title="滑点(bps)" />
+        <span id="statusBadge" class="badge warn">数据源: unknown</span>
+      </div>
+
+      <div class="panel small">
+        绘图对象（二期）：支持 line / hline / rect / text，保存到工作区。
+        <select id="drawType"><option>line</option><option>hline</option><option>rect</option><option>text</option></select>
+        <input id="drawX0" placeholder="x0: 2026-01-01" />
+        <input id="drawY0" placeholder="y0" />
+        <input id="drawX1" placeholder="x1: 2026-01-31" />
+        <input id="drawY1" placeholder="y1" />
+        <input id="drawText" placeholder="text" />
+        <button id="btnAddDraw">添加绘图</button>
+        <button id="btnClearDraw">清空绘图</button>
+        <input id="wsName" placeholder="workspace name" />
+        <button id="btnSaveWs">保存工作区</button>
+        <select id="wsPick"></select>
+        <button id="btnLoadWs">加载</button>
+        <button id="btnDeleteWs">删除</button>
+        <label><input id="layerVolume" type="checkbox" checked />Vol</label>
+        <label><input id="layerMacd" type="checkbox" checked />MACD</label>
+        <label><input id="layerRsi" type="checkbox" checked />RSI</label>
+        <label><input id="layerMa" type="checkbox" checked />MA</label>
+      </div>
+
+      <div class="grid">
+        <div class="panel">
+          <div id="chartMain"></div>
+          <div id="chartSecond"></div>
+          <div id="chartMacd"></div>
+          <div id="chartRsi"></div>
+        </div>
+        <div class="panel">
+          <h4>指标/回测/告警回放</h4>
+          <pre id="indicatorJson" class="small"></pre>
+          <h4>回测指标</h4>
+          <pre id="backtestJson" class="small"></pre>
+          <h4>告警事件（最近20）</h4>
+          <table id="alertTable"><thead><tr><th>ts</th><th>symbol</th><th>status</th><th>rule</th></tr></thead><tbody></tbody></table>
+        </div>
+      </div>
+    </div>
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>

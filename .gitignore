@@ -44,6 +44,9 @@ memory/
 workflows/data/
 workflows/logs/
 
+# Local-only config overlay (merged after base + profile)
+config/local.yaml
+
 # OpenClaw runtime data (local only)
 .openclaw/
 

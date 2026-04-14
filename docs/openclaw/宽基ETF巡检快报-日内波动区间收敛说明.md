@@ -19,9 +19,9 @@
 
 缓存生成入口为 `src/volatility_range.py -> calculate_volatility_ranges()`。
 
-在 `calculate_volatility_ranges()` 内部，会读取 `config.yaml` 的如下配置，并对输出做统一收敛：
+在 `calculate_volatility_ranges()` 内部，会读取合并后配置的如下键，并对输出做统一收敛（域文件：`config/domains/signals.yaml`）：
 
-`config.yaml -> signal_params -> intraday_monitor_510300 -> volatility`
+合并后配置 -> `signal_params -> intraday_monitor_510300 -> volatility`
 
 - `min_intraday_pct`：单日有效波动下限（默认 `0.005`，即 `0.5%`）
 - `max_intraday_pct`：单日合理波动上限（默认 `0.04`，即 `4%`）
@@ -135,7 +135,7 @@ python3 scripts/monitor_intraday_range_method_metrics.py --days 14
 
 ## 7. 与配置的对应关系速查
 
-- 收敛上限/下限：`config.yaml` 的 `signal_params.intraday_monitor_510300.volatility`
+- 收敛上限/下限：合并后配置的 `signal_params.intraday_monitor_510300.volatility`（域文件：`config/domains/signals.yaml`）
 - 缓存读取文件：`data/volatility_ranges/{date}.json`
 - 缓存诊断字段：`clamp_applied`、`clamp_bounds_pct`
 - 预测评估记录：`data/prediction_records/predictions_{date}.json`

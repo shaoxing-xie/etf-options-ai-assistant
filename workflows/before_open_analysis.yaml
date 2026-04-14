@@ -1,5 +1,6 @@
 # 9:20 盘前机构晨报 — 契约全文见文末 structured_message（勿读 research.md）
 # 仓库内唯一盘前工作流 YAML（由原 before_open_analysis_enhanced 重命名合并）。
+# Cron 硬推荐（单次调用）：tool_run_before_open_analysis_and_send(mode='prod', fetch_mode='production')
 
 name: before_open_analysis
 description: 盘前机构晨报工作流（采集 + 分析 + 波动 + 日内区间 + 预测回顾 + 钉钉）
@@ -8,12 +9,20 @@ schedule: "20 9 * * 1-5"
 timezone: "Asia/Shanghai"
 
 steps:
+  - name: check_trading_status
+    agent: data_collector_agent
+    tool: tool_check_trading_status
+    description: A股时段/连续竞价措辞门禁（必选；结果并入 report_data）
+    params: {}
+    continue_on_failure: true
+
   - name: fetch_index_opening
     agent: data_collector_agent
     tool: tool_fetch_index_opening
     description: 指数开盘数据（早市若有则近似）
     params: {}
     continue_on_failure: true
+    depends_on: [check_trading_status]
 
   - name: fetch_global_index_spot
     agent: data_collector_agent
@@ -21,6 +30,17 @@ steps:
     description: 全球指数
     params: {}
     continue_on_failure: true
+    depends_on: [check_trading_status]
+
+  - name: fetch_global_index_hist_sina
+    agent: data_collector_agent
+    tool: tool_fetch_global_index_hist_sina
+    description: 全球指数历史日线（上一完整交易日收盘口径；用于“昨收/上周五收市”等措辞与补齐 spot 缺口）
+    params:
+      symbol: "^GDAXI"
+      limit: 2
+    continue_on_failure: true
+    depends_on: [fetch_global_index_spot]
 
   - name: fetch_northbound
     agent: data_collector_agent
@@ -93,10 +113,18 @@ steps:
   - name: predict_intraday_range
     agent: analysis_agent
     tool: tool_predict_intraday_range
-    description: 日内区间
+    description: 日内区间（剩余时段/轻量分钟口径）
     params:
       symbol: "510300"
     depends_on: [predict_volatility]
+
+  - name: predict_daily_volatility_range
+    agent: analysis_agent
+    tool: tool_predict_daily_volatility_range
+    description: 日频全日波动区间（5/22/63+ATR；与上两项口径不同，单独落字段）
+    params:
+      underlying: "510300"
+    depends_on: [predict_intraday_range]
 
   - name: prediction_review
     agent: analysis_agent
@@ -116,17 +144,26 @@ steps:
         analyze_before_open,
         predict_volatility,
         predict_intraday_range,
+        predict_daily_volatility_range,
         prediction_review,
       ]
 
 structured_message: |
   【9:20 盘前机构晨报 — 执行说明（全文自包含，勿再读外部 research.md）】
 
-  **目标**：按下列顺序调用工具，合并为**一份** `report_data`，`report_type` **"before_open"**，再 `tool_send_analysis_report`（生产 `mode=prod`）。`tool_send_daily_report` 在本仓库映射同上。
+  **【Cron 硬推荐 · 单次工具】** 与 `daily_market_report.yaml` 中 `tool_analyze_after_close_and_send_daily_report` 同级：调度侧**优先一次**调用 `tool_run_before_open_analysis_and_send(mode='prod', fetch_mode='production')`（进程内按本 YAML 顺序采集、合并 `report_data`、再调发送层），**禁止**在多轮对话中反复搬运整份 `report_data` / 工具 JSON（易触发网关 **LLM idle timeout** 与截断）。排障或缺字段补采时，再按下列逐步 `tool_*`；补采仍建议每轮**最多一个**工具名，且总补采轮数遵守下文上限。
+
+  **目标**：合并为**一份** `report_data`，`report_type` **"before_open"**，再 `tool_send_analysis_report`（生产 `mode=prod`）。`tool_send_daily_report` 在本仓库映射同上。单次复合工具已内含上述发送步骤，无需再单独调用 send 才算「已投递」（以该工具返回的钉钉结果为准）。
+
+  **时段门禁（必选）**
+  0) `tool_check_trading_status`（与本 YAML 首步 `check_trading_status` 一致）→ 写入 `report_data.trading_status`。
+     - `data.allows_intraday_continuous_wording` 为 **false**（开盘前/午休/盘后/非交易日）时：**禁止**在 `llm_summary` 与正文中使用「市场已开盘」「今日实时行情」「今开/盘中」等连续竞价表述。
+     - 建议将 `data.quote_narration_rule_cn` 写入 `report_data.a_share_regime_note`，以覆盖报告模板默认「时段与口径」句。
 
   **字段映射**
   1) `tool_fetch_index_opening` → 并入 `market_overview` / 竞价相关摘要。
   2) `tool_fetch_global_index_spot` → `report_data.market_overview.indices`。
+  2b) 若正文需要“昨收/上周五收市”等**收盘口径**，或 spot 对欧股代表等缺 `change_pct`：直接调 `tool_fetch_global_index_hist_sina(symbol='^GDAXI'|'^FTSE'|'^STOXX50E', limit=2)`，并将返回整段挂 `report_data.tool_fetch_global_index_hist_sina`（复合工具 `tool_run_before_open_analysis_and_send` 已内置补齐逻辑）。
   3) `tool_fetch_northbound_flow` lookback_days=5 → `report_data.capital_flow.northbound`（正文标注 **T-1 / 昨日收盘后**）。
   4) `tool_fetch_policy_news` → `report_data.policy_news`（`data`）。
   5) `tool_fetch_macro_commodities` → `report_data.macro_snapshot`。
@@ -135,16 +172,32 @@ structured_message: |
   8) `tool_sector_heat_score` → `report_data.sector_rotation`（可写 `summary` 文本）。
   9) `tool_compute_index_key_levels` index_code=000300 → `report_data.key_levels`。
   10) `tool_analyze_before_open` → `report_data.analysis`；汇总 `overall_trend`、`trend_strength` 与 `final_trend`/`final_strength`。
-  11) `tool_predict_volatility` underlying=510300 → `report_data.volatility`。
+  11) `tool_predict_volatility` underlying=510300 → `report_data.volatility`（日内剩余时段等）。
   12) `tool_predict_intraday_range` symbol=510300 → `report_data.intraday_range`。
-  13) `tool_get_yesterday_prediction_review` → `report_data.prediction_review`（可选）。
+  13) `tool_predict_daily_volatility_range` underlying=510300 → `report_data.daily_volatility_range`（**完整交易日**全日区间；勿与 volatility/intraday 混为一谈）。
+  14) `tool_get_yesterday_prediction_review` → `report_data.prediction_review`（可选）。
 
   **评估与可达性（内嵌口径）**
   - 日内区间、波动预测须说明依赖的数据时点与是否可能滞后。
+  - `daily_volatility_range` 为 **全日 horizon**；`volatility`/`intraday_range` 为 **日内/剩余时段**；正文须分述，避免把三者上下沿混用。
   - 若 `overnight_overlay_degraded` 为 true：保留 `overnight_digest` 与全球指数，**禁止**用网页检索数字替代官方期货涨跌幅。
 
-  **钉钉**
-  - `OPENCLAW_DINGTALK_CUSTOM_ROBOT_WEBHOOK_URL` / `SECRET` 来自 `~/.openclaw/.env`；cron `delivery=none` 时须自行工具投递。
-  - 禁止 `tool_send_feishu_message` 扇出同文；禁止以 `test` 冒充已发生产。
+  **与「etf: 每日市场分析报告」任务对齐（cron / 防 idle）**
+  - OpenClaw 网关可能在「工具已返回但模型长时间无下一条输出」时触发 **LLM idle timeout**。盘前链路易在「多轮采集 → 合并 report_data → 再发送」之间被截断。
+  - **优先**：一次 `tool_run_before_open_analysis_and_send`；若未使用复合工具，则在单会话内尽快完成「必选采集 → 合并 → `tool_send_analysis_report`/`tool_send_daily_report`（mode=prod）」，避免主模型在多轮之间反复搬运整份 JSON；`tool_*` 成功结果以**顶层同名键**挂入 `report_data` 即可（发送层会并入展示），与 `daily_market_report.yaml` 约定一致。
+  - **补采上限**：`tool_analyze_before_open` 成功后，额外补采工具建议 **≤6 轮**（含失败重试 1 次内）；若已接近超时，先发送再接受「降级」口径（标题/正文须标明缺失项）。
+  - **可选增强（与日报「最小补采」同源、择要）**：`tool_fetch_global_index_spot`（多市场代码，勿只传 `^HSI`）、`tool_tavily_search`（隔夜外盘文字摘要，供 LLM 摘要节；勿替代 A50/HXC 官方口径）、`tool_fetch_macro_commodities`。
 
-  **最后**：`tool_send_analysis_report(report_data=..., report_type="before_open")`。
+  **钉钉正文版式（由 `send_daily_report` 渲染，勿手抄重复大段）**
+  - 顶栏顺序：**分析时间** →（可选 `a_share_regime_note`）→ **参考链接**（来自 `overnight_digest.evidence_urls` + 政策条目 URL）→ **政策要闻** → **北向** → **趋势判定** → **关键位** → **波动/区间** →（可选 **开盘策略建议**）→ **情景推演 / 盘中时间锚点** → **热点与板块** →（公告/预判）→ **摘要（LLM）**。
+  - **隔夜外盘、A50/金龙叙事**：优先写入 **`llm_summary` / LLM 摘要节**（工具 `enhance_with_llm` 已含 `market_overview`、`overnight_digest` 等），与顶栏结构化小节分工，避免与「参考链接+政策」重复堆叠。
+
+  **钉钉投递（硬约束，与 cron 调度任务「etf: 盘前机构晨报」一致）**
+  - cron `delivery=none`：须用工具推到**钉钉自定义机器人**（Webhook + SEC 加签），不依赖调度器 announce。
+  - 环境变量：`OPENCLAW_DINGTALK_CUSTOM_ROBOT_WEBHOOK_URL`、`OPENCLAW_DINGTALK_CUSTOM_ROBOT_SECRET`（进程须加载环境变量）。
+  - **禁止**：`tool_send_feishu_message` 扇出同文；以 `test` 冒充已发生产。
+  - 群备注：`cid0dqwAYvqu94+QEoODXL1uw==`（以 webhook 实际绑定群为准）。
+  - 失败勿令任务以 **error** 结束；输出**末行**记原因与重试建议（可重试 1 次）。
+  - 【通知要求】`delivery.mode` 保持 **none**（仅指 OpenClaw Cron 侧；正文仍须工具发钉钉）。
+
+  **最后**：合并为一份 `report_data`，`report_type="before_open"` → **`tool_send_analysis_report`** 或 **`tool_send_daily_report`（`mode=prod`）**（二选一；本仓库均走钉钉映射）。

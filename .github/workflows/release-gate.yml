@@ -12,6 +12,15 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Fetch openclaw-data-china-stock (plugins/data_collection symlink)
+        run: |
+          set -euo pipefail
+          SIB="${GITHUB_WORKSPACE}/../openclaw-data-china-stock"
+          git clone --depth 1 https://github.com/shaoxing-xie/openclaw-data-china-stock.git "$SIB"
+
+      - name: Link plugins/data_collection
+        run: ./scripts/link_china_stock_data_collection.sh
+
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
@@ -20,11 +29,11 @@ jobs:
       - name: Install tooling
         run: |
           python -m pip install --upgrade pip
-          pip install ruff
+          pip install ruff pytest
 
       - name: Lint (minimum)
         run: |
-          ruff check scripts/release_safety_gate.py scripts/check_json_syntax.py
+          ruff check scripts/release_safety_gate.py scripts/check_json_syntax.py scripts/ensure_openclaw_plugin_load_paths.py scripts/validate_config_surface.py scripts/check_universe_ssot.py scripts/validate_config_cross.py
 
       - name: JSON syntax check
         run: |
@@ -33,3 +42,16 @@ jobs:
       - name: Release safety gate
         run: |
           python scripts/release_safety_gate.py
+
+      - name: Config surface (required top-level keys)
+        run: python scripts/validate_config_surface.py
+
+      - name: Universe SSOT hard checks
+        run: python scripts/check_universe_ssot.py
+
+      - name: Config cross-validate (hard errors fail)
+        run: python scripts/validate_config_cross.py
+
+      - name: Test ensure_openclaw_plugin_load_paths
+        run: |
+          python -m pytest tests/test_ensure_openclaw_plugin_load_paths.py -q

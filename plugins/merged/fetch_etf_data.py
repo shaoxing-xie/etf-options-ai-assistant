@@ -1,6 +1,7 @@
 """
 合并工具：ETF 数据采集
 data_type: realtime | historical | minute
+定时采集标的清单见合并后配置 `data_cache.etf_codes`（来源：`config/domains/reference.yaml`；另见 scripts/run_data_cache_collection.py）。
 """
 
 from typing import Dict, Any, Optional

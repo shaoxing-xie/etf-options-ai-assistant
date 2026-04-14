@@ -13,6 +13,7 @@ meta:
   trigger_mode: scheduled
   entry_agent: etf_main
   related_scripts:
+    - "scripts/run_verify_predictions_cron.py"
     - "scripts/verify_predictions.py"
     - "src/prediction_recorder.py"
     - "src/prediction_normalizer.py"
@@ -25,11 +26,10 @@ structured_message: |
   - 工作目录为仓库根（OpenClaw workspaceDir）。
 
   ## 执行步骤
-  1) 用 **exec** 在项目根执行（将 YYYYMMDD 换为 **Asia/Shanghai 当天**日期字符串，周一至周五）：
-     ```bash
-     cd <workspace> && python scripts/verify_predictions.py --date YYYYMMDD --report
-     ```
-     - 不要传 `--symbol`，以便验证当日 JSON 内**全部标的**。
+  1) 用 **exec** 执行（OpenClaw 预检要求：**单条** `python3 <绝对路径>.py`，禁止 `cd … &&`、`$(date …)`）：
+     `python3 <workspace>/scripts/run_verify_predictions_cron.py`
+     （脚本内按 Asia/Shanghai 取当日日期，验证 `predictions_YYYYMMDD.json` 内**全部标的**，等价于 `--report` 且不传 `--symbol`。）
+     手工排障时仍可用：`python3 scripts/verify_predictions.py --date YYYYMMDD --report`。
   2) 检查退出码与终端输出；报告路径：`data/verification_reports/verification_YYYYMMDD.md`。
   3) （可选）将报告摘要通过既有钉钉/通知工具发给运维群；**禁止**编造未运行命令的输出。
 

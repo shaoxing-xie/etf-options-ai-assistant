@@ -63,6 +63,105 @@ def is_trading_day(date: Optional[datetime] = None, config: Optional[Dict] = Non
         return True
 
 
+def get_last_trading_day_on_or_before(
+    ref: Optional[datetime] = None,
+    config: Optional[Dict] = None,
+    *,
+    max_lookback_days: int = 32,
+) -> str:
+    """
+    返回 ref 所在日历日及之前最近的 A 股交易日，格式 YYYYMMDD（上海时区）。
+
+    典型用途：周末/节假日执行「每日市场分析」类任务时，将数据口径对齐到最近一次可交易收市日，
+    避免标题与「数据日期」仍显示日历当日而产生误解。
+    """
+    try:
+        tz = pytz.timezone("Asia/Shanghai")
+        if ref is None:
+            d = datetime.now(tz)
+        elif ref.tzinfo is None:
+            d = tz.localize(ref.replace(tzinfo=None))
+        else:
+            d = ref.astimezone(tz)
+        d0 = d.replace(hour=12, minute=0, second=0, microsecond=0)
+        if config is None:
+            try:
+                config = load_system_config()
+            except Exception:
+                config = None
+        for i in range(max_lookback_days + 1):
+            cur = d0 - timedelta(days=i)
+            if is_trading_day(cur, config):
+                return cur.strftime("%Y%m%d")
+        return d0.strftime("%Y%m%d")
+    except Exception as e:
+        log_error_with_context(
+            logger,
+            e,
+            {"function": "get_last_trading_day_on_or_before", "ref": ref},
+            "计算最近交易日失败",
+        )
+        fb = ref or datetime.now(pytz.timezone("Asia/Shanghai"))
+        if fb.tzinfo is None:
+            fb = pytz.timezone("Asia/Shanghai").localize(fb.replace(tzinfo=None))
+        return fb.astimezone(pytz.timezone("Asia/Shanghai")).strftime("%Y%m%d")
+
+
+def get_expected_latest_a_share_daily_bar_date(
+    ref: Optional[datetime] = None,
+    config: Optional[Dict] = None,
+    *,
+    max_lookback_days: int = 32,
+) -> str:
+    """
+    指数日线「最后一根 K 线」应对齐到的交易日（YYYYMMDD，上海时区）。
+
+    规则要点：
+    - 非交易日：取 ref 当日及之前最近一个交易日的收市日（与 get_last_trading_day_on_or_before 一致）。
+    - 交易日且当前时间 **早于**当日连续竞价收盘（默认 15:00）：最后一根完整日线应为 **上一交易日**，
+      避免凌晨/盘前任务误报「数据日期不匹配」（此时不可能已有当日完整日线）。
+    - 交易日且已收盘后：期望最后一根为 **当日**（数据源滞后时仍可能晚一步落库，由上层重试/告警处理）。
+    """
+    try:
+        tz = pytz.timezone("Asia/Shanghai")
+        if ref is None:
+            now = datetime.now(tz)
+        elif ref.tzinfo is None:
+            now = tz.localize(ref.replace(tzinfo=None))
+        else:
+            now = ref.astimezone(tz)
+
+        if config is None:
+            try:
+                config = load_system_config()
+            except Exception:
+                config = None
+
+        if not is_trading_day(now, config):
+            return get_last_trading_day_on_or_before(now, config, max_lookback_days=max_lookback_days)
+
+        trading_hours = get_trading_hours_config(config)
+        afternoon_end = time.fromisoformat(trading_hours.get("afternoon_end", "15:00"))
+        if now.time() >= afternoon_end:
+            return now.strftime("%Y%m%d")
+
+        # 盘中或盘前：最近完整日线为上一交易日
+        probe = now.replace(hour=12, minute=0, second=0, microsecond=0) - timedelta(days=1)
+        for i in range(max_lookback_days + 1):
+            cur = probe - timedelta(days=i)
+            if is_trading_day(cur, config):
+                return cur.strftime("%Y%m%d")
+        return get_last_trading_day_on_or_before(now, config, max_lookback_days=max_lookback_days)
+    except Exception as e:
+        log_error_with_context(
+            logger,
+            e,
+            {"function": "get_expected_latest_a_share_daily_bar_date", "ref": ref},
+            "计算期望日线末 bar 日期失败",
+        )
+        return get_last_trading_day_on_or_before(ref, config, max_lookback_days=max_lookback_days)
+
+
 def get_current_market_status(config: Optional[Dict] = None) -> Dict[str, Any]:
     """
     获取当前市场状态

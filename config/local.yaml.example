@@ -1,0 +1,2 @@
+# Copy to config/local.yaml (gitignored) for machine-specific overrides.
+# Merge order: config/environments/base.yaml → <profile>.yaml → config/local.yaml

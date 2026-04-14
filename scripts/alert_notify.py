@@ -2,6 +2,14 @@
 """
 钉钉通知发送器
 读取 pending_notifications.json，通过 OpenClaw message 工具发送私信
+
+用法示例（在项目根目录执行）：
+  # 将 data/pending_notifications.json 中未发送项输出为可投递记录（stdout）
+  python3 scripts/alert_notify.py
+
+  # 配合轮询：先跑一次 alert_poll 产出队列，再跑 notify 消费队列
+  python3 scripts/alert_poll.py
+  python3 scripts/alert_notify.py
 """
 
 import json

@@ -66,6 +66,20 @@ OpenClaw插件通常位于：
 2. **返回格式**：返回 `Dict[str, Any]` 格式
 3. **错误处理**：包含完整的错误处理逻辑
 
+### 工具与叙事分工（与 `llm_enhancer` 解耦）
+
+- 分析类工具（如 `tool_predict_volatility`、趋势分析工具）**默认只返回结构化事实**（表格/Markdown/JSON 字段）；进程内不再调用 `src.llm_enhancer`（见合并后配置 → `llm_enhancer.enabled: false`，域文件：`config/domains/platform.yaml`）。
+- 自然语言解读由 **Gateway 会话中的主模型**完成；约束见仓库 `skills/ota_openclaw_tool_narration`、`ota_volatility_prediction_narration`、`ota_signal_watch_narration` 等，并与 `config/snippets/openclaw_agents_ota_skills.json` 勾选对齐。
+- **回滚**：将 `llm_enhancer.enabled` 设为 `true`，并从 git 历史恢复各处的 `enhance_with_llm` 调用；`Prompt_config.yaml` 保留为 legacy 模板参考。
+
+### 趋势分析三工具（`tool_analyze_*`）
+
+- **实现**：[`plugins/analysis/trend_analysis.py`](../../plugins/analysis/trend_analysis.py)；核心逻辑 [`src/trend_analyzer.py`](../../src/trend_analyzer.py)；落盘 [`src/data_storage.py`](../../src/data_storage.py)（`after_close` / `before_open` / **`opening_market` 分目录**）。
+- **配置**：合并后配置顶层 **`trend_analysis_plugin`**（overlay、fallback；域文件：`config/domains/analytics.yaml`）；**`system.data_storage.trend_analysis.opening_dir`**（域文件：`config/domains/platform.yaml`）。
+- **结构化字段**：各模式 `data` 内均有 **`report_meta`**；**仅盘后**附加 **`daily_report_overlay`**（北向、全球现货、关键位、板块、可选 ADX）。叙事口径见仓库 Skill **`ota_trend_analysis_brief`**（`skills/ota-trend-analysis-brief/SKILL.md`），同步后执行 `bash scripts/sync_repo_skills_to_openclaw.sh`。
+- **盘前**：隔夜 **A50 / 金龙（HXC）仅 `analyze_market_before_open` 使用**；未传盘后结果时**优先读落盘** `after_close`，见返回 **`after_close_basis`**（`disk` / `computed` / `passed`）。
+- **冒烟**：`python scripts/smoke_trend_analysis.py`（见 [`scripts/README.md`](../../scripts/README.md)）。
+
 ---
 
 ## 📦 第二步：创建OpenClaw插件目录结构
@@ -165,7 +179,14 @@ from plugins.analysis.trend_analysis import (
 )
 from plugins.analysis.volatility_prediction import tool_predict_volatility
 from plugins.analysis.historical_volatility import tool_calculate_historical_volatility
-from plugins.analysis.signal_generation import tool_generate_signals
+from plugins.analysis.underlying_historical_snapshot import (
+    tool_underlying_historical_snapshot,
+    tool_historical_snapshot,
+)
+from plugins.analysis.signal_generation import (
+    tool_generate_option_trading_signals,
+    tool_generate_signals,  # 期权信号兼容别名
+)
 from plugins.analysis.risk_assessment import tool_assess_risk
 from plugins.analysis.intraday_range import tool_predict_intraday_range
 
@@ -227,6 +248,9 @@ __all__ = [
     'tool_analyze_opening_market',
     'tool_predict_volatility',
     'tool_calculate_historical_volatility',
+    'tool_underlying_historical_snapshot',
+    'tool_historical_snapshot',
+    'tool_generate_option_trading_signals',
     'tool_generate_signals',
     'tool_assess_risk',
     'tool_predict_intraday_range',
@@ -282,6 +306,9 @@ __all__ = [
     "tool_analyze_opening_market",
     "tool_predict_volatility",
     "tool_calculate_historical_volatility",
+    "tool_underlying_historical_snapshot",
+    "tool_historical_snapshot",
+    "tool_generate_option_trading_signals",
     "tool_generate_signals",
     "tool_assess_risk",
     "tool_predict_intraday_range",
@@ -453,7 +480,11 @@ curl "<apiBaseUrl>/api/status"
 cd ~/etf-options-ai-assistant   # 或你的克隆路径
 .venv/bin/python tool_runner.py tool_check_trading_status '{}'
 .venv/bin/python tool_runner.py tool_fetch_index_realtime '{"index_code":"000300"}'
+# 技术指标（默认 standard，依赖 pandas-ta；可与 legacy 对比）
+.venv/bin/python tool_runner.py tool_calculate_technical_indicators '{"symbol":"510300","data_type":"etf_daily","lookback_days":120}'
 ```
+
+**`tool_calculate_technical_indicators` 说明（摘要）**：默认使用 **`pandas_ta`** 向量化（`engine=standard`）；`engine=legacy` 与旧版数值一致。指标名 **`indicators`** 须为小写（如 `ma`、`macd`、`rsi`、`bollinger`，及可选 `kdj`、`cci`、`adx`、`atr`）。周期与默认指标列表在 **合并后配置 → `technical_indicators`**（域文件：`config/domains/analytics.yaml`）。详见 `plugins/analysis/README.md` 与 Skill **`ota_technical_indicators_brief`**。
 
 **钉钉自定义机器人（SEC 加签）环境变量**：
 如果要调用 `tool_send_dingtalk_message` / `tool_send_analysis_report`，需要在 `~/.openclaw/.env` 配好：

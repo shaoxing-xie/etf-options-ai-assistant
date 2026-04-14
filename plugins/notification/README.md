@@ -1,372 +1,107 @@
-# 通知插件
+# 通知插件（`plugins/notification`）
 
-本目录包含宽基ETF及其期权交易助手的通知相关插件，融合了 Coze 插件的核心逻辑。
-
-## 插件列表
-
-### 1. send_feishu_message.py - 飞书消息通知
-
-**功能说明**：
-- 发送文本、富文本或卡片消息到飞书
-- 融合 Coze `send_feishu_message.py` 的完整逻辑
-- 支持 Webhook 和 API 两种方式
-- 支持多种消息类型
-
-**使用方法**：
-```python
-from plugins.notification.send_feishu_message import tool_send_feishu_message
-
-# 发送文本消息
-result = tool_send_feishu_message(
-    message_type="text",
-    content="交易信号：买入 510300，信号强度 0.75",
-    webhook_url="https://open.feishu.cn/open-apis/bot/v2/hook/xxx"  # 可选
-)
-
-# 发送富文本消息
-result = tool_send_feishu_message(
-    message_type="rich_text",
-    content="## 交易信号\n\n**标的**: 510300\n**信号**: 买入\n**强度**: 0.75"
-)
-
-# 发送卡片消息
-result = tool_send_feishu_message(
-    message_type="card",
-    content={
-        "header": {"title": {"tag": "plain_text", "content": "交易信号"}},
-        "elements": [
-            {"tag": "div", "text": {"tag": "plain_text", "content": "买入 510300"}}
-        ]
-    }
-)
-```
-
-**输入参数**：
-- `message_type` (str): 消息类型，可选值：
-  - `"text"`: 文本消息
-  - `"rich_text"`: 富文本消息（Markdown格式）
-  - `"card"`: 卡片消息（交互式卡片）
-- `content` (str/dict): 消息内容
-  - 文本消息：字符串
-  - 富文本消息：字符串（Markdown格式）或字典
-  - 卡片消息：字典（卡片结构）
-- `receiver_id` (str, optional): 接收者ID（用户ID或群聊ID，使用API时必填）
-- `receiver_type` (str): 接收者类型，可选 "user" 或 "chat"，默认 "chat"
-- `webhook_url` (str, optional): Webhook URL（优先使用）
-
-**输出格式**：
-```python
-{
-    "success": True,
-    "message": "消息发送成功",
-    "timestamp": "2025-01-15 14:30:00",
-    "message_id": "om_xxx"  # 使用API时返回消息ID
-}
-```
-
-**技术实现要点**：
-- **Webhook 方式**（推荐）：
-  - 使用飞书机器人 Webhook URL
-  - 支持文本、富文本、卡片消息
-  - 无需认证，配置简单
-- **API 方式**：
-  - 使用飞书开放平台 API
-  - 需要 app_id 和 app_secret
-  - 支持发送给指定用户或群聊
-  - 需要 receiver_id
-- **配置优先级**（支持多种配置方式）：
-  1. **参数传入**：工具调用时直接传入配置（最高优先级）
-  2. **环境变量**：从环境变量读取（`FEISHU_WEBHOOK_URL`, `FEISHU_APP_ID`, `FEISHU_APP_SECRET`）
-  3. **原系统config.yaml**：利用直接访问方式，从原系统config.yaml读取（回退方案）
-     - Webhook: `notification.feishu_webhook`
-     - API: `notification.feishu_app.app_id` 和 `app_secret`
-- 包含完整的错误处理
-
-**使用场景**：
-- **交易信号通知**：发送交易信号提醒
-- **风险预警**：发送风险预警消息
-- **市场日报**：发送每日市场分析报告
-- **系统状态**：发送系统运行状态通知
-- **错误告警**：发送系统错误告警
+宽基 ETF / 期权助手相关的 **钉钉** 与 **飞书** 投递实现。OpenClaw / `tool_runner` 暴露的工具 id 以 [`config/tools_manifest.yaml`](../../config/tools_manifest.yaml) 为准；钉钉契约摘要见 [`docs/openclaw/dingtalk_delivery_contract.md`](../../docs/openclaw/dingtalk_delivery_contract.md)。
 
 ---
 
-### 2. send_signal_alert.py - 交易信号提醒
+## 1. OpenClaw 工具一览
 
-**功能说明**：
-- 发送格式化的交易信号提醒到飞书
-- 融合 Coze `send_signal_alert.py` 的完整逻辑
-- 支持买入、卖出、预警、风险等多种信号类型
-- 使用飞书卡片消息，展示更丰富的信息
+### 1.1 本目录直接注册（`tool_runner.py` → `TOOL_MAP`）
 
-**使用方法**：
-```python
-from plugins.notification.send_signal_alert import tool_send_signal_alert
+| 工具 id | 模块 | 作用 |
+|---------|------|------|
+| `tool_send_dingtalk_message` | `send_dingtalk_message` | 钉钉自定义机器人：Markdown/文本、SEC 加签、关键词、`mode=prod\|test`、可按 `##` 拆条。 |
+| `tool_send_signal_risk_inspection` | `send_signal_risk_inspection` | 巡检快报专用发送：接收结构化 `report` 字段，固定模板渲染后再委托钉钉发送。 |
+| `tool_run_signal_risk_inspection_and_send` | `run_signal_risk_inspection` | Cron 推荐：进程内拉 000300/399006/000905 + 510300/510500/159915 实时与组合风险快照，组装 `report` 后调用上一行发送。 |
+| `tool_send_analysis_report` | `send_analysis_report` | 将 `report_data` 经 `send_daily_report._format_daily_report` 排版后，**委托** `tool_send_dingtalk_message` 发出。 |
+| `tool_send_feishu_card_webhook` | `send_feishu_card_webhook` | 飞书 **interactive** 卡片（`msg_type` + `card`），走 webhook。 |
 
-# 发送买入信号
-result = tool_send_signal_alert(
-    signal_type="buy",
-    symbol="510300",
-    symbol_name="沪深300ETF",
-    price=4.85,
-    signal_strength="strong",
-    reason="MACD金叉 + 均线多头排列",
-    suggestion="建议买入，止损位4.70"
-)
+### 1.2 别名入口（实际调用 `merged.send_feishu_notification`）
 
-# 发送风险预警
-result = tool_send_signal_alert(
-    signal_type="risk",
-    symbol="510300",
-    price=4.85,
-    signal_strength="high",
-    reason="价格接近止损位",
-    suggestion="注意风险，考虑减仓"
-)
-```
+[`tool_runner.py`](../../tool_runner.py) 中 `ALIASES` 将下列 id 路由到 **`tool_send_feishu_notification`**（实现位于 [`plugins/merged/send_feishu_notification.py`](../merged/send_feishu_notification.py)），**不在本目录重复实现发送 HTTP**：
 
-**输入参数**：
-- `signal_type` (str): 信号类型，可选值：
-  - `"buy"`: 买入信号
-  - `"sell"`: 卖出信号
-  - `"alert"`: 预警信号
-  - `"risk"`: 风险信号
-- `symbol` (str): 标的代码，如 "510300"
-- `symbol_name` (str, optional): 标的名称，如 "沪深300ETF"
-- `price` (float): 当前价格
-- `signal_strength` (str): 信号强度，可选 "strong", "medium", "weak"
-- `reason` (str): 信号原因
-- `suggestion` (str): 操作建议
-- `webhook_url` (str, optional): 飞书Webhook地址
+| 工具 id | `notification_type` | 说明 |
+|---------|---------------------|------|
+| `tool_send_feishu_message` | `message` | 飞书普通文本类通知。 |
+| `tool_send_signal_alert` | `signal_alert` | 飞书信号提醒（manifest 参数多为 `signals` 列表；具体格式化见 merged 与 `send_signal_alert.py` 辅助逻辑）。 |
+| `tool_send_risk_alert` | `risk_alert` | 飞书风险预警。 |
+| `tool_send_daily_report` | `send_daily_report` | **`tool_runner` 直接调用** `notification.send_daily_report.tool_send_daily_report`（含 prod 门禁）；`tool_send_analysis_report` 内部亦委托同一函数。 |
 
-**输出格式**：
-```python
-{
-    "success": True,
-    "message": "Successfully sent signal alert",
-    "data": {
-        "symbol": "510300",
-        "signal_type": "buy",
-        "timestamp": "2025-01-15 14:30:00"
-    }
-}
-```
+### 1.3 `send_daily_report.py` 中的 `tool_send_daily_report`
 
-**技术实现要点**：
-- 使用飞书卡片消息格式
-- 根据信号类型自动选择卡片颜色和图标
-- 自动格式化价格、信号强度等信息
-- 包含完整的错误处理
-
-**使用场景**：
-- **交易信号通知**：发送买入/卖出信号提醒
-- **风险预警**：发送风险预警通知
-- **策略提醒**：发送策略执行提醒
+模块内 **`tool_send_daily_report(report_data, ...)`**：排版 → `tool_send_dingtalk_message`。命令行 **`python tool_runner.py tool_send_daily_report '<json>'`** 与 `tool_send_analysis_report` 应对齐（后者委托前者）。
 
 ---
 
-### 3. send_risk_alert.py - 风险预警
+## 2. 模块文件说明
 
-**功能说明**：
-- 发送格式化的风险预警到飞书
-- 融合 Coze `send_risk_alert.py` 的完整逻辑
-- 支持波动率、回撤、仓位、市场等多种风险类型
-- 使用飞书卡片消息，展示风险详情和处理建议
-
-**使用方法**：
-```python
-from plugins.notification.send_risk_alert import tool_send_risk_alert
-
-# 发送波动率风险预警
-result = tool_send_risk_alert(
-    risk_type="volatility",
-    risk_level="high",
-    symbol="510300",
-    description="ETF波动率超过阈值",
-    current_value=0.25,
-    threshold=0.20,
-    suggestion="建议降低仓位或设置更严格的止损"
-)
-
-# 发送回撤风险预警
-result = tool_send_risk_alert(
-    risk_type="drawdown",
-    risk_level="critical",
-    symbol="510300",
-    description="账户回撤超过10%",
-    current_value=0.12,
-    threshold=0.10,
-    suggestion="立即检查持仓，考虑止损"
-)
-```
-
-**输入参数**：
-- `risk_type` (str): 风险类型，可选值：
-  - `"volatility"`: 波动率风险
-  - `"drawdown"`: 回撤风险
-  - `"position"`: 仓位风险
-  - `"market"`: 市场风险
-- `risk_level` (str): 风险等级，可选 "low", "medium", "high", "critical"
-- `symbol` (str): 相关标的代码
-- `description` (str): 风险描述
-- `current_value` (float): 当前值
-- `threshold` (float): 阈值
-- `suggestion` (str): 处理建议
-- `webhook_url` (str, optional): 飞书Webhook地址
-
-**输出格式**：
-```python
-{
-    "success": True,
-    "message": "Successfully sent risk alert",
-    "data": {
-        "risk_type": "volatility",
-        "risk_level": "high",
-        "symbol": "510300",
-        "timestamp": "2025-01-15 14:30:00"
-    }
-}
-```
-
-**技术实现要点**：
-- 使用飞书卡片消息格式
-- 根据风险等级自动选择卡片颜色（低风险：绿色，高风险：红色）
-- 自动格式化数值和百分比
-- 包含完整的错误处理
-
-**使用场景**：
-- **波动率预警**：波动率超过阈值时发送预警
-- **回撤预警**：账户回撤超过阈值时发送预警
-- **仓位预警**：仓位比例过高时发送预警
-- **市场风险**：市场异常波动时发送预警
+| 文件 | 说明 |
+|------|------|
+| `send_dingtalk_message.py` | 钉钉发送核心：加签 URL、正文截断/拆条、关键词前缀、`mode=test` 干跑。 |
+| `send_signal_risk_inspection.py` | 巡检快报专用：结构化字段清洗、固定模板渲染、委托 `tool_send_dingtalk_message` 发送。 |
+| `run_signal_risk_inspection.py` | 巡检采集+发送：`build_inspection_report`、`tool_run_signal_risk_inspection_and_send`。 |
+| `send_daily_report.py` | 各类 `report_type` 的 Markdown 排版（`_format_daily_report`）；含 `tool_send_daily_report`。 |
+| `send_analysis_report.py` | 分析/研究类报告：复用排版函数后调钉钉。 |
+| `send_feishu_card_webhook.py` | 飞书 interactive 卡片 webhook。 |
+| `send_signal_alert.py` | 信号相关格式化/门槛等 **辅助**（与 merged 通知配合；Runner 不直接指向本文件为 TOOL_MAP 入口）。 |
+| `send_feishu_message.py` | 飞书消息相关 **历史/直接调用** 入口；对外工具以 merged 为准。 |
+| `notification_cooldown.py` | **非工具**：发送前去重/冷却，由 `merged/send_feishu_notification.py` 引用。 |
+| `dingtalk_quota.py` | **非工具**：钉钉条数/窗口配额（当前仓库内 **无发送路径引用**，预留或后续接入）。 |
 
 ---
 
-### 4. send_daily_report.py - 市场日报
+## 3. 配置与环境变量
 
-**功能说明**：
-- 发送格式化的市场日报到钉钉自定义机器人（SEC 加签）
-- 融合 Coze `send_daily_report.py` 的完整逻辑
-- 汇总当日市场表现、交易信号、风险状况等信息
-- 展示完整的日报内容（钉钉 Markdown/文本呈现）
+### 钉钉（定时长文、巡检等）
 
-> 2026 版本更新：市场日报改为发送到钉钉自定义机器人（`tool_send_daily_report` 复用 SEC 加签逻辑）。
+- `OPENCLAW_DINGTALK_CUSTOM_ROBOT_WEBHOOK_URL`
+- `OPENCLAW_DINGTALK_CUSTOM_ROBOT_SECRET`（SEC 加签）
+- `DINGTALK_KEYWORD` / `MONITOR_DINGTALK_KEYWORD`（机器人启用关键词时）
 
-**使用方法**：
-```python
-from plugins.notification.send_daily_report import tool_send_daily_report
+进程需能读取 `~/.openclaw/.env`（与 Gateway 一致）。
 
-# 发送市场日报（钉钉）
-result = tool_send_daily_report(
-    report_data={
-        "market_overview": {
-            "index_change": 0.5,
-            "etf_change": 0.3,
-            "volume": "放大"
-        },
-        "signals": [
-            {"type": "buy", "symbol": "510300", "strength": "strong"},
-            {"type": "sell", "symbol": "510050", "strength": "medium"}
-        ],
-        "risk_status": {
-            "level": "low",
-            "description": "市场风险可控"
-        }
-    },
-    report_date="2025-01-15"
-)
-```
+### 飞书
 
- **输入参数**：
-- `report_data` (dict): 报告数据，包含：
-  - `market_overview`: 市场概览（指数涨跌幅、ETF涨跌幅、成交量等）
-  - `signals`: 交易信号列表
-  - `risk_status`: 风险状况
-  - 其他自定义字段
-- `report_date` (str, optional): 报告日期（YYYY-MM-DD），默认今天
-- `webhook_url` (str, optional): 可选：钉钉自定义机器人 webhook（包含 access_token；建议主要使用 `~/.openclaw/.env` 的环境变量）
-
-**输出格式**：
-```python
-{
-    "success": True,
-    "message": "Successfully sent daily report",
-    "data": {
-        "report_date": "2025-01-15",
-        "timestamp": "2025-01-15 15:30:00"
-    }
-}
-```
-
-**技术实现要点**：
-- 使用钉钉自定义机器人（SEC 加签）发送 Markdown/文本呈现
-- 自动格式化市场数据、信号列表等信息
-- 支持自定义报告内容
-- 包含完整的错误处理
-
-**使用场景**：
-- **盘后日报**：每天收盘后发送市场日报
-- **周报月报**：定期发送周报、月报
-- **策略总结**：发送策略执行总结报告
+- 合并后配置 `notification.feishu_webhook`（来源：`config/domains/outbound.yaml`；默认 `${FEISHU_WEBHOOK_URL}`）
+- 或环境变量：`FEISHU_WEBHOOK_URL`、`FEISHU_APP_ID`、`FEISHU_APP_SECRET`（API 模式见 merged 实现）
 
 ---
 
-## 数据流
+## 4. 自测与排障
+
+- 盘前/报告类钉钉（JSON 参数文件）：  
+  `python3 tool_runner.py tool_send_analysis_report @scripts/examples/before_open_dingtalk_args.test.json`  
+  真发前核对 `.env` 后改用 `...prod.json`。
+- 脚本：`bash scripts/dingtalk_before_open_smoke.sh test|prod`
+- 巡检快报：`bash scripts/dingtalk_signal_inspection_smoke.sh test|prod`（走 `tool_send_signal_risk_inspection`；正文需含「巡检」等关键词时与后台一致）
+- 钉钉返回 **310000**：多为 SEC 与机器人后台密钥不一致。
+
+---
+
+## 5. 数据流（简图）
 
 ```
-分析插件/信号生成
-    ↓
-调用通知插件
-    ↓
-格式化消息内容
-    ↓
-发送到钉钉（Webhook/API）
-    ↓
-用户收到通知
+分析 / 信号 / 工作流
+        │
+        ├─► report_data ──► _format_daily_report ──► tool_send_dingtalk_message ──► 钉钉
+        │
+        ├─► tool_run_signal_risk_inspection_and_send ──► tool_send_signal_risk_inspection ──► tool_send_dingtalk_message ──► 钉钉
+        ├─►（手工）report ──► tool_send_signal_risk_inspection ──► tool_send_dingtalk_message ──► 钉钉
+        │
+        ├─► tool_send_feishu_notification（经别名：消息 / 信号 / 风险）──► 飞书 webhook
+        │
+        └─► tool_send_feishu_card_webhook ──► 飞书 interactive 卡片
 ```
 
-## 配置方式
+---
 
-### 方式1：环境变量（推荐）
+## 6. 依赖
 
-- `OPENCLAW_DINGTALK_CUSTOM_ROBOT_WEBHOOK_URL`: 钉钉自定义机器人 webhook（包含 `access_token`）
-- `OPENCLAW_DINGTALK_CUSTOM_ROBOT_SECRET`: 钉钉“安全模式”SEC 密钥（用于 SEC 加签）
-- `DINGTALK_KEYWORD`（或 `MONITOR_DINGTALK_KEYWORD`）: 关键词安全校验用（若机器人启用）
+- 钉钉/飞书 HTTP：标准库 `urllib` 与/或 `requests`（以各实现文件 import 为准）。
 
-### 方式2：可选回退（keyword）
+---
 
-如果你的钉钉机器人启用了「关键词安全校验」，但你没有显式传入 `keyword`：
-- 可把 `keyword` 写入 `~/.openclaw/workspaces/shared/alert_webhook.json`（tool 内部会尽量读取）
+## 7. 维护提示
 
-### 盘前晨报钉钉自测（避免 shell 多行 JSON 损坏）
-
-1. **从文件读参数**（`tool_runner` 支持以 `@` 开头传入 JSON 路径）：
-   - `python3 tool_runner.py tool_send_analysis_report @scripts/examples/before_open_dingtalk_args.test.json`
-   - 真发：先确认 `~/.openclaw/.env` 中 Webhook / SEC / 关键词正确，再：
-   - `python3 tool_runner.py tool_send_analysis_report @scripts/examples/before_open_dingtalk_args.prod.json`
-2. **一键脚本**：`bash scripts/dingtalk_before_open_smoke.sh test` 或 `... prod`
-
-3. **信号+风控巡检（与 `tool_send_dingtalk_message` 一致）**：
-   - `bash scripts/dingtalk_signal_inspection_smoke.sh test` — dry-run
-   - `bash scripts/dingtalk_signal_inspection_smoke.sh prod` — 短文本真发，正文含「巡检」关键词占位；确认 `OPENCLAW_DINGTALK_CUSTOM_ROBOT_WEBHOOK_URL` / `SECRET` / `DINGTALK_KEYWORD` 与钉钉后台一致
-
-若出现 **310000**，说明加签密钥与钉钉机器人「SEC」不一致，需核对 `OPENCLAW_DINGTALK_CUSTOM_ROBOT_SECRET`。
-
-## 依赖包
-
-- `requests`: HTTP 请求
-
-## 注意事项
-
-1. **Webhook vs API**：优先使用 Webhook，配置简单；API 方式需要应用凭证
-2. **消息格式**：确保消息内容格式正确，特别是富文本和卡片消息
-3. **频率限制**：注意钉钉 API 的频率限制，避免频繁发送
-4. **错误处理**：包含完整的错误处理，失败时会返回错误信息
-5. **安全性**：API Key 和 Webhook URL 应妥善保管，不要泄露
-
-## 迁移说明
-
-- 通知逻辑融合了 Coze 插件的完整功能
-- 支持 Webhook 和 API 两种方式，灵活配置
-- 支持多种消息类型，满足不同通知需求
-- 插件设计保持独立性，易于扩展其他通知渠道
+- 修改对外工具名或行为后：同步 **`config/tools_manifest.yaml`** 并执行 `python scripts/generate_tools_json.py`。
+- 工作流中「仅钉钉 / 禁飞书扇出」等文案以 **`docs/openclaw/dingtalk_delivery_contract.md`** 为权威，YAML 内多为摘要指针。

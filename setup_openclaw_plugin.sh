@@ -1,6 +1,9 @@
 #!/bin/bash
 # OpenClaw 交易助手插件快速配置脚本
 # 在 Remote-WSL 的 Cursor 终端中执行此脚本
+#
+# 注意（OpenClaw 2026.4+）：新环境请优先执行 ./scripts/setup_openclaw_option_trading_assistant.sh
+# 写入 plugins.load.paths；本脚本偏历史「在 extensions 下建目录/链文件」流程。
 
 set -e
 

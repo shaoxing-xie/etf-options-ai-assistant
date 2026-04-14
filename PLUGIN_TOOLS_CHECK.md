@@ -34,13 +34,16 @@
 - ✅ `tool_check_trading_status` - 判断交易时间状态
 
 ### 6. 分析工具 (8个)
-- ✅ `tool_calculate_technical_indicators` - 计算技术指标
+- ✅ `tool_calculate_technical_indicators` - 计算技术指标（pandas_ta standard / legacy；config `technical_indicators`）
 - ✅ `tool_analyze_after_close` - 盘后趋势分析
 - ✅ `tool_analyze_before_open` - 开盘前趋势分析
 - ✅ `tool_analyze_opening_market` - 开盘行情分析
 - ✅ `tool_predict_volatility` - 波动率预测
-- ✅ `tool_calculate_historical_volatility` - 计算历史波动率
-- ✅ `tool_generate_signals` - 生成交易信号
+- ✅ `tool_calculate_historical_volatility` - 单窗口历史波动率（年化%）
+- ✅ `tool_underlying_historical_snapshot` / `tool_historical_snapshot` - 多窗口 HV 与可选 IV 快照（`config.yaml` historical_snapshot）
+- ✅ `tool_generate_option_trading_signals` - 生成期权交易信号（主名）
+- ✅ `tool_generate_signals` - 同上（兼容别名）
+- ✅ `tool_generate_etf_trading_signals` / `tool_generate_stock_trading_signals` - ETF / A 股信号
 - ✅ `tool_assess_risk` - 风险评估
 - ✅ `tool_predict_intraday_range` - 预测日内波动区间
 
@@ -83,7 +86,7 @@
 测试的关键工具均能正常导入：
 - ✅ `tool_check_trading_status`
 - ✅ `tool_fetch_index_realtime`
-- ✅ `tool_calculate_technical_indicators`
+- ✅ `tool_calculate_technical_indicators`（pandas_ta / legacy）
 - ✅ `tool_send_feishu_message`
 
 ## 🔍 工具调用流程
@@ -117,7 +120,7 @@ TOOL_MAP 查找工具映射
 6. **tool_fetch_option_greeks**: `contract_code`
 7. **tool_fetch_option_minute**: `contract_code`
 8. **tool_calculate_historical_volatility**: `symbol`
-9. **tool_assess_risk**: `symbol`, `entry_price`, `position_size`, `account_value`
+9. **tool_assess_risk**: `symbol`, `entry_price`, `position_size`, `account_value`；可选 `asset_type`, `lookback_trading_days`, `stop_loss`
 10. **tool_send_feishu_message**: `message`
 11. **tool_send_signal_alert**: `signals`
 12. **tool_send_risk_alert**: `risk_data`

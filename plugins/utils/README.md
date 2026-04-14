@@ -62,7 +62,7 @@ from plugins.utils.cache import cache_result
 
 @cache_result(cache_type="result", ttl=300)  # 缓存5分钟
 def calculate_technical_indicators(symbol, data_type):
-    # 耗时计算
+    # 示例：实际实现见 plugins.analysis.technical_indicators（standard=pandas_ta / legacy）
     return result
 ```
 
@@ -293,7 +293,7 @@ print(f"平均内存: {stats['process']['memory_mb']['avg']}MB")
 
 ### 分析工具（结果缓存）
 
-- `tool_calculate_technical_indicators`（缓存5分钟）
+- `tool_calculate_technical_indicators`（缓存 5 分钟；`engine`/`indicators` 参与缓存键；见 `plugins/analysis/README.md`）
 
 ### 数据采集工具（重试机制）
 

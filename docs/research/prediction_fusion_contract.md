@@ -28,7 +28,7 @@
 
 1. 各 `source` 的预测已 **同标的、同刻度**（元/指数点已统一）。
 2. `weight` 与 **verify 命中统计** 同源更新，避免用单次会话口头准确率。
-3. 融合结果若落库，须再走 **`prediction_quality` 门禁**（`config.yaml`）。
+3. 融合结果若落库，须再走 **`prediction_quality` 门禁**（合并后配置，域文件：`config/domains/risk_quality.yaml`）。
 
 ## 参考实现
 

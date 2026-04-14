@@ -14,6 +14,26 @@ from src.config_loader import load_system_config, get_data_storage_config
 logger = get_module_logger(__name__)
 
 
+def _trend_analysis_subdir_for_type(
+    analysis_type: str,
+    trend_config: Dict[str, Any],
+    config: Dict[str, Any],
+) -> str:
+    """Resolve relative or data/-prefixed trend analysis subdirectory."""
+    plugin = config.get("trend_analysis_plugin") or {}
+    if analysis_type == "after_close":
+        return trend_config.get("after_close_dir", "trend_analysis/after_close")
+    if analysis_type == "opening_market":
+        return (
+            trend_config.get("opening_dir")
+            or plugin.get("opening_dir")
+            or "data/trend_analysis/opening"
+        )
+    if analysis_type == "before_open":
+        return trend_config.get("before_open_dir", "trend_analysis/before_open")
+    return trend_config.get("before_open_dir", "trend_analysis/before_open")
+
+
 def save_volatility_ranges(
     volatility_ranges: Dict[str, Any],
     config: Optional[Dict] = None
@@ -235,7 +255,7 @@ def save_trend_analysis(
     
     Args:
         analysis_data: 分析数据
-        analysis_type: 'after_close' 或 'before_open'
+        analysis_type: 'after_close' | 'before_open' | 'opening_market'
         config: 系统配置
     
     Returns:
@@ -252,11 +272,7 @@ def save_trend_analysis(
             logger.debug("趋势分析存储已禁用")
             return False
         
-        # 获取存储目录
-        if analysis_type == 'after_close':
-            trend_dir = trend_config.get('after_close_dir', 'trend_analysis/after_close')
-        else:
-            trend_dir = trend_config.get('before_open_dir', 'trend_analysis/before_open')
+        trend_dir = _trend_analysis_subdir_for_type(analysis_type, trend_config, config)
         
         # 如果 trend_dir 已经包含 data/ 前缀，直接使用；否则拼接 data_dir
         if trend_dir.startswith('data/'):
@@ -296,7 +312,7 @@ def load_trend_analysis(
     
     Args:
         date: 日期 YYYYMMDD，如果为None则使用今天
-        analysis_type: 'after_close' 或 'before_open'
+        analysis_type: 'after_close' | 'before_open' | 'opening_market'
         config: 系统配置
     
     Returns:
@@ -312,10 +328,7 @@ def load_trend_analysis(
         storage_config = get_data_storage_config(config)
         trend_config = storage_config.get('trend_analysis', {})
         
-        if analysis_type == 'after_close':
-            trend_dir = trend_config.get('after_close_dir', 'trend_analysis/after_close')
-        else:
-            trend_dir = trend_config.get('before_open_dir', 'trend_analysis/before_open')
+        trend_dir = _trend_analysis_subdir_for_type(analysis_type, trend_config, config)
         
         # 如果 trend_dir 已经包含 data/ 前缀，直接使用；否则拼接 data_dir
         if trend_dir.startswith('data/'):

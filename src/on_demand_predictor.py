@@ -9,14 +9,21 @@ from datetime import datetime
 import pytz
 
 from src.logger_config import get_module_logger
-from src.config_loader import load_system_config, get_underlyings
+from src.config_loader import load_system_config
 from src.data_collector import (
     fetch_index_minute_data_with_fallback,
     fetch_etf_minute_data_with_fallback,
+    fetch_stock_minute_data_with_fallback,
+    fetch_etf_daily_em,
+    fetch_stock_daily_hist,
     get_etf_current_price,
+    get_stock_current_price,
     get_index_current_price,
-    get_option_current_price,
-    fetch_option_greeks_sina
+    fetch_option_spot_sina,
+    extract_option_price_from_spot_df,
+    infer_sse_option_metadata_from_quotes,
+    fetch_option_greeks_sina,
+    fetch_option_expiry_date,
 )
 from src.volatility_range import (
     calculate_index_volatility_range_multi_period,
@@ -28,6 +35,46 @@ from src.indicator_calculator import calculate_rsi, calculate_macd
 from src.prediction_recorder import record_prediction
 
 logger = get_module_logger(__name__)
+
+
+def _sanitize_price_range(current_price: float, lower: Any, upper: Any) -> Dict[str, Any]:
+    """
+    统一修正区间边界，保证 lower <= current_price <= upper。
+    """
+    adjusted = False
+    try:
+        cp = float(current_price)
+    except (TypeError, ValueError):
+        return {"lower": lower, "upper": upper, "range_pct": None, "adjusted": False}
+
+    try:
+        lo = float(lower)
+        hi = float(upper)
+    except (TypeError, ValueError):
+        half = max(cp * 0.005, 1e-4)
+        lo, hi = cp - half, cp + half
+        adjusted = True
+
+    if lo > hi:
+        lo, hi = hi, lo
+        adjusted = True
+
+    if cp < lo:
+        lo = cp
+        adjusted = True
+    if cp > hi:
+        hi = cp
+        adjusted = True
+
+    if abs(hi - lo) < 1e-12:
+        half = max(cp * 0.001, 1e-4)
+        lo, hi = cp - half, cp + half
+        adjusted = True
+
+    range_pct = None
+    if cp > 0:
+        range_pct = (hi - lo) / cp * 100.0
+    return {"lower": lo, "upper": hi, "range_pct": range_pct, "adjusted": adjusted}
 
 
 def _calculate_position_and_trend(
@@ -229,6 +276,7 @@ def predict_index_volatility_range_on_demand(
         
         # 获取指数分钟数据（30分钟和15分钟）
         index_minute_30m, index_minute_15m = fetch_index_minute_data_with_fallback(
+            symbol=symbol,
             lookback_days=5,
             max_retries=2,
             retry_delay=1.0
@@ -243,9 +291,12 @@ def predict_index_volatility_range_on_demand(
         
         # 获取当前价格：优先使用实时指数现货价格，失败则回退到分钟K线最后收盘价
         spot_price = get_index_current_price(symbol)
-        if spot_price is not None and spot_price > 0:
+        # 指数价格保护：若实时价明显像股票价（例如 11.12），则视为异常并回退分钟收盘价
+        if spot_price is not None and spot_price > 200:
             current_price = float(spot_price)
         else:
+            if spot_price is not None and spot_price > 0:
+                logger.warning("指数实时价疑似异常（过小）: %s -> %.4f，回退分钟收盘价", symbol, float(spot_price))
             current_price = float(index_minute_30m['收盘'].iloc[-1])
         
         # 计算剩余交易时间
@@ -260,12 +311,26 @@ def predict_index_volatility_range_on_demand(
             is_etf_data=False,
             price_ratio=1.0
         )
+
+        sanitized = _sanitize_price_range(
+            current_price=current_price,
+            lower=volatility_range.get('lower', current_price * 0.98),
+            upper=volatility_range.get('upper', current_price * 1.02),
+        )
+        if sanitized["adjusted"]:
+            logger.warning(
+                "指数区间已修正以覆盖当前价: %s cp=%.4f, lower=%.4f, upper=%.4f",
+                symbol,
+                current_price,
+                sanitized["lower"],
+                sanitized["upper"],
+            )
         
         # 计算位置和趋势
         position_trend = _calculate_position_and_trend(
             current_price=current_price,
-            upper=volatility_range.get('upper', current_price * 1.02),
-            lower=volatility_range.get('lower', current_price * 0.98),
+            upper=sanitized["upper"],
+            lower=sanitized["lower"],
             minute_data=index_minute_30m,
         )
         
@@ -285,9 +350,9 @@ def predict_index_volatility_range_on_demand(
             'symbol': symbol,
             'symbol_name': index_names.get(symbol, symbol),
             'current_price': round(current_price, 2),
-            'upper': volatility_range.get('upper', current_price * 1.02),
-            'lower': volatility_range.get('lower', current_price * 0.98),
-            'range_pct': volatility_range.get('range_pct', 2.0),
+            'upper': sanitized["upper"],
+            'lower': sanitized["lower"],
+            'range_pct': sanitized["range_pct"] if sanitized["range_pct"] is not None else volatility_range.get('range_pct', 2.0),
             'confidence': volatility_range.get('confidence', 0.5),
             'method': volatility_range.get('method', '综合方法'),
             'remaining_minutes': remaining_minutes,
@@ -298,35 +363,32 @@ def predict_index_volatility_range_on_demand(
             'rsi_status': position_trend['rsi_status'],
             'timestamp': datetime.now(pytz.timezone('Asia/Shanghai')).strftime('%Y-%m-%d %H:%M:%S')
         }
+
+        # 透传增强/调试字段，便于 OpenClaw 回复与落库可观测
+        for k in [
+            "iv_adjusted",
+            "iv_data_available",
+            "iv_data_reason",
+            "iv_ratio",
+            "option_iv",
+            "hist_vol_used",
+            "iv_adjustment",
+            "ab_profile",
+            "ab_rollback_active",
+            "iv_hv_fusion",
+            "iv_hv_scaling_factor",
+            "iv_hv_sigma_eff",
+            "iv_hv_volume_factor",
+            "volume_factor",
+            "garch_shadow",
+            "data_quality",
+        ]:
+            if k in volatility_range:
+                result[k] = volatility_range.get(k)
         
         # GROK优化：添加突破概率（如果volatility_range中有）
         if 'breakthrough_probability' in volatility_range:
             result['breakthrough_probability'] = volatility_range['breakthrough_probability']
-        
-        # ========== LLM增强：波动预测（指数使用标的物Prompt） ==========
-        try:
-            from src.llm_enhancer import enhance_with_llm
-            llm_config = config.get('llm_enhancer', {}) if config else {}
-            if llm_config.get('enabled', False) and 'volatility_prediction' in llm_config.get('analysis_types', []):
-                # 添加当前日期时间信息，帮助LLM正确理解时间上下文
-                tz_shanghai = pytz.timezone('Asia/Shanghai')
-                now = datetime.now(tz_shanghai)
-                result['current_date'] = now.strftime('%Y-%m-%d')
-                result['current_datetime'] = now.strftime('%Y-%m-%d %H:%M:%S')
-                logger.info("开始调用LLM增强指数波动预测...")
-                llm_summary, llm_meta = enhance_with_llm(result, 'volatility_prediction_underlying', config)
-                if llm_summary:
-                    result['llm_summary'] = llm_summary
-                    if llm_meta:
-                        result['llm_meta'] = llm_meta
-                    logger.info("波动预测LLM增强完成（指数）")
-                else:
-                    logger.warning("波动预测LLM增强返回空结果（指数），可能调用失败")
-            else:
-                logger.debug("LLM增强未启用或volatility_prediction不在analysis_types中，跳过（指数）")
-        except Exception as e:
-            logger.warning(f"波动预测LLM增强失败（指数），已忽略: {e}", exc_info=True)
-        # ========== LLM增强结束 ==========
         
         # 记录预测
         try:
@@ -378,8 +440,23 @@ def predict_etf_volatility_range_on_demand(
         
         logger.info(f"开始即时预测ETF波动区间: {symbol}")
         
-        # 获取ETF当前价格
+        # 获取ETF当前价格（收盘后/行情源异常时，回退到最近日线收盘价）
         etf_price = get_etf_current_price(symbol)
+        if etf_price is None:
+            try:
+                tz_shanghai = pytz.timezone('Asia/Shanghai')
+                now = datetime.now(tz_shanghai)
+                start_date = (now.replace(day=1)).strftime("%Y%m%d")
+                end_date = now.strftime("%Y%m%d")
+                daily_df = fetch_etf_daily_em(symbol=symbol, period="daily", start_date=start_date, end_date=end_date)
+                if daily_df is not None and not daily_df.empty:
+                    close_col = "收盘" if "收盘" in daily_df.columns else ("close" if "close" in daily_df.columns else None)
+                    if close_col is not None:
+                        etf_price = float(daily_df[close_col].iloc[-1])
+                        logger.warning("实时价不可用，回退到日线收盘价: %s -> %.4f", symbol, etf_price)
+            except Exception as e:
+                logger.debug("回退日线收盘价失败: %s", e)
+
         if etf_price is None:
             return {
                 'success': False,
@@ -415,15 +492,30 @@ def predict_etf_volatility_range_on_demand(
             etf_minute_15m=etf_minute_15m if etf_minute_15m is not None and not etf_minute_15m.empty else etf_minute_30m,
             etf_current_price=etf_price,
             remaining_minutes=remaining_minutes,
-            underlying=symbol,  # 传入ETF代码用于IV融合
-            config=config
+            underlying=symbol,
+            config=config,
+            use_option_iv=False,
         )
+
+        sanitized = _sanitize_price_range(
+            current_price=etf_price,
+            lower=volatility_range.get('lower', etf_price * 0.98),
+            upper=volatility_range.get('upper', etf_price * 1.02),
+        )
+        if sanitized["adjusted"]:
+            logger.warning(
+                "ETF区间已修正以覆盖当前价: %s cp=%.4f, lower=%.4f, upper=%.4f",
+                symbol,
+                etf_price,
+                sanitized["lower"],
+                sanitized["upper"],
+            )
         
         # 计算位置和趋势
         position_trend = _calculate_position_and_trend(
             current_price=etf_price,
-            upper=volatility_range.get('upper', etf_price * 1.02),
-            lower=volatility_range.get('lower', etf_price * 0.98),
+            upper=sanitized["upper"],
+            lower=sanitized["lower"],
             minute_data=etf_minute_30m,
         )
         
@@ -441,9 +533,9 @@ def predict_etf_volatility_range_on_demand(
             'symbol': symbol,
             'symbol_name': etf_names.get(symbol, symbol),
             'current_price': round(etf_price, 4),
-            'upper': volatility_range.get('upper', etf_price * 1.02),
-            'lower': volatility_range.get('lower', etf_price * 0.98),
-            'range_pct': volatility_range.get('range_pct', 2.0),
+            'upper': sanitized["upper"],
+            'lower': sanitized["lower"],
+            'range_pct': sanitized["range_pct"] if sanitized["range_pct"] is not None else volatility_range.get('range_pct', 2.0),
             'confidence': volatility_range.get('confidence', 0.5),
             'method': volatility_range.get('method', '综合方法'),
             'remaining_minutes': remaining_minutes,
@@ -454,38 +546,57 @@ def predict_etf_volatility_range_on_demand(
             'rsi_status': position_trend['rsi_status'],
             'timestamp': datetime.now(pytz.timezone('Asia/Shanghai')).strftime('%Y-%m-%d %H:%M:%S')
         }
+
+        for k in [
+            "iv_adjusted",
+            "iv_data_available",
+            "iv_data_reason",
+            "iv_ratio",
+            "option_iv",
+            "hist_vol_used",
+            "iv_adjustment",
+            "ab_profile",
+            "ab_rollback_active",
+            "iv_hv_fusion",
+            "iv_hv_scaling_factor",
+            "iv_hv_sigma_eff",
+            "iv_hv_volume_factor",
+            "volume_factor",
+            "garch_shadow",
+            "data_quality",
+        ]:
+            if k in volatility_range:
+                result[k] = volatility_range.get(k)
         
         # GROK优化：添加突破概率（如果volatility_range中有）
         if 'breakthrough_probability' in volatility_range:
             result['breakthrough_probability'] = volatility_range['breakthrough_probability']
         
-        # ========== LLM增强：波动预测（ETF使用标的物Prompt） ==========
-        try:
-            from src.llm_enhancer import enhance_with_llm
-            llm_config = config.get('llm_enhancer', {}) if config else {}
-            if llm_config.get('enabled', False) and 'volatility_prediction' in llm_config.get('analysis_types', []):
-                # 添加当前日期时间信息，帮助LLM正确理解时间上下文
-                tz_shanghai = pytz.timezone('Asia/Shanghai')
-                now = datetime.now(tz_shanghai)
-                result['current_date'] = now.strftime('%Y-%m-%d')
-                result['current_datetime'] = now.strftime('%Y-%m-%d %H:%M:%S')
-                logger.info("开始调用LLM增强ETF波动预测...")
-                llm_summary, llm_meta = enhance_with_llm(result, 'volatility_prediction_underlying', config)
-                if llm_summary:
-                    result['llm_summary'] = llm_summary
-                    if llm_meta:
-                        result['llm_meta'] = llm_meta
-                    logger.info("波动预测LLM增强完成（ETF）")
-                else:
-                    logger.warning("波动预测LLM增强返回空结果（ETF），可能调用失败")
-            else:
-                logger.debug("LLM增强未启用或volatility_prediction不在analysis_types中，跳过（ETF）")
-        except Exception as e:
-            logger.warning(f"波动预测LLM增强失败（ETF），已忽略: {e}", exc_info=True)
-        # ========== LLM增强结束 ==========
-        
         # 记录预测
         try:
+            debug_fields = {
+                k: result.get(k)
+                for k in [
+                    "iv_adjusted",
+                    "iv_data_available",
+                    "iv_data_reason",
+                    "iv_ratio",
+                    "option_iv",
+                    "hist_vol_used",
+                    "iv_adjustment",
+                    "ab_profile",
+                    "ab_rollback_active",
+                    "iv_hv_fusion",
+                    "iv_hv_scaling_factor",
+                    "iv_hv_sigma_eff",
+                    "iv_hv_volume_factor",
+                    "volume_factor",
+                    "garch_shadow",
+                    "data_quality",
+                    "normalization",
+                ]
+                if result.get(k) is not None
+            }
             record_prediction(
                 prediction_type='etf',
                 symbol=symbol,
@@ -496,7 +607,8 @@ def predict_etf_volatility_range_on_demand(
                     'method': result['method'],
                     'confidence': result['confidence'],
                     'range_pct': result['range_pct'],
-                    'timestamp': result['timestamp']
+                    'timestamp': result['timestamp'],
+                    **debug_fields,
                 },
                 source='on_demand',
                 config=config
@@ -512,6 +624,155 @@ def predict_etf_volatility_range_on_demand(
             'error': str(e),
             'symbol': symbol
         }
+
+
+def predict_stock_volatility_range_on_demand(
+    symbol: str = "600519",
+    config: Optional[Dict] = None,
+) -> Dict[str, Any]:
+    """
+    即时预测指定 A 股个股的日内波动区间（分钟级双周期，逻辑与 ETF 一致，不融合期权 IV）。
+    """
+    try:
+        if config is None:
+            config = load_system_config()
+
+        logger.info(f"开始即时预测 A 股波动区间: {symbol}")
+
+        stock_price = get_stock_current_price(symbol)
+        if stock_price is None:
+            try:
+                tz_shanghai = pytz.timezone("Asia/Shanghai")
+                now = datetime.now(tz_shanghai)
+                start_date = (now.replace(day=1)).strftime("%Y%m%d")
+                end_date = now.strftime("%Y%m%d")
+                daily_df = fetch_stock_daily_hist(symbol, start_date, end_date)
+                if daily_df is not None and not daily_df.empty:
+                    close_col = (
+                        "收盘"
+                        if "收盘" in daily_df.columns
+                        else ("close" if "close" in daily_df.columns else None)
+                    )
+                    if close_col is not None:
+                        stock_price = float(daily_df[close_col].iloc[-1])
+                        logger.warning("实时价不可用，回退到日线收盘价: %s -> %.4f", symbol, stock_price)
+            except Exception as e:
+                logger.debug("回退日线收盘价失败: %s", e)
+
+        if stock_price is None:
+            return {
+                "success": False,
+                "error": f"无法获取股票 {symbol} 的当前价格",
+                "symbol": symbol,
+            }
+
+        stock_minute_30m, stock_minute_15m = fetch_stock_minute_data_with_fallback(
+            symbol=symbol,
+            lookback_days=15,
+            max_retries=2,
+            retry_delay=1.0,
+        )
+
+        if stock_minute_30m is None or stock_minute_30m.empty:
+            return {
+                "success": False,
+                "error": f"股票 {symbol} 分钟数据获取失败",
+                "symbol": symbol,
+            }
+
+        remaining_minutes = get_remaining_trading_time(config)
+
+        volatility_range = calculate_etf_volatility_range_multi_period(
+            etf_minute_30m=stock_minute_30m,
+            etf_minute_15m=(
+                stock_minute_15m
+                if stock_minute_15m is not None and not stock_minute_15m.empty
+                else stock_minute_30m
+            ),
+            etf_current_price=stock_price,
+            remaining_minutes=remaining_minutes,
+            underlying=symbol,
+            config=config,
+            use_option_iv=False,
+        )
+
+        sanitized = _sanitize_price_range(
+            current_price=stock_price,
+            lower=volatility_range.get("lower", stock_price * 0.98),
+            upper=volatility_range.get("upper", stock_price * 1.02),
+        )
+        if sanitized["adjusted"]:
+            logger.warning(
+                "A股区间已修正以覆盖当前价: %s cp=%.4f, lower=%.4f, upper=%.4f",
+                symbol,
+                stock_price,
+                sanitized["lower"],
+                sanitized["upper"],
+            )
+
+        position_trend = _calculate_position_and_trend(
+            current_price=stock_price,
+            upper=sanitized["upper"],
+            lower=sanitized["lower"],
+            minute_data=stock_minute_30m,
+        )
+
+        result = {
+            "success": True,
+            "type": "stock",
+            "symbol": symbol,
+            "symbol_name": symbol,
+            "current_price": round(stock_price, 4),
+            "upper": sanitized["upper"],
+            "lower": sanitized["lower"],
+            "range_pct": sanitized["range_pct"] if sanitized["range_pct"] is not None else volatility_range.get("range_pct", 2.0),
+            "confidence": volatility_range.get("confidence", 0.5),
+            "method": volatility_range.get("method", "综合方法"),
+            "remaining_minutes": remaining_minutes,
+            "position": position_trend["position"],
+            "position_desc": position_trend["position_desc"],
+            "trend_direction": position_trend["trend_direction"],
+            "rsi_value": position_trend["rsi_value"],
+            "rsi_status": position_trend["rsi_status"],
+            "timestamp": datetime.now(pytz.timezone("Asia/Shanghai")).strftime("%Y-%m-%d %H:%M:%S"),
+        }
+
+        for k in [
+            "volume_factor",
+            "garch_shadow",
+            "data_quality",
+            "ab_profile",
+            "ab_rollback_active",
+        ]:
+            if k in volatility_range:
+                result[k] = volatility_range.get(k)
+
+        if "breakthrough_probability" in volatility_range:
+            result["breakthrough_probability"] = volatility_range["breakthrough_probability"]
+
+        try:
+            record_prediction(
+                prediction_type="stock",
+                symbol=symbol,
+                prediction={
+                    "upper": result["upper"],
+                    "lower": result["lower"],
+                    "current_price": result["current_price"],
+                    "method": result["method"],
+                    "confidence": result["confidence"],
+                    "range_pct": result["range_pct"],
+                    "timestamp": result["timestamp"],
+                },
+                source="on_demand",
+                config=config,
+            )
+        except Exception as e:
+            logger.warning(f"记录股票预测失败: {e}")
+
+        return result
+    except Exception as e:
+        logger.error(f"预测股票波动区间失败: {e}", exc_info=True)
+        return {"success": False, "error": str(e), "symbol": symbol}
 
 
 def predict_option_volatility_range_on_demand(
@@ -534,91 +795,45 @@ def predict_option_volatility_range_on_demand(
         
         logger.info(f"开始即时预测期权波动区间: {contract_code}")
         
-        # 获取期权当前价格和Greeks
-        option_price = get_option_current_price(contract_code)
+        spot_df = fetch_option_spot_sina(contract_code)
+        if spot_df is None or spot_df.empty:
+            return {
+                "success": False,
+                "error": f"无法获取期权合约 {contract_code} 的行情（请确认上交所期权代码正确）",
+                "contract_code": contract_code,
+            }
+
+        option_price = extract_option_price_from_spot_df(spot_df)
         if option_price is None:
             return {
-                'success': False,
-                'error': f'无法获取期权合约 {contract_code} 的当前价格',
-                'contract_code': contract_code
+                "success": False,
+                "error": f"无法从行情中读取期权 {contract_code} 的最新价",
+                "contract_code": contract_code,
             }
-        
+
         option_greeks = fetch_option_greeks_sina(contract_code, config=config)
-        
-        # 从配置中查找合约对应的ETF代码
-        option_contracts = config.get('option_contracts', {})
-        underlyings_list = get_underlyings(option_contracts)
-        underlying = None
-        option_type = None
-        strike_price = None
-        
-        # 统一合约代码类型（转换为字符串进行比较，因为配置中可能是整数）
-        contract_code_str = str(contract_code)
-        contract_code_int = None
-        try:
-            contract_code_int = int(contract_code)
-        except (ValueError, TypeError):
-            pass
-        
-        logger.debug(f"查找合约配置: contract_code={contract_code} (str={contract_code_str}, int={contract_code_int})")
-        logger.debug(f"配置中的标的物数量: {len(underlyings_list)}")
-        
-        # 遍历配置查找对应的ETF代码和期权类型
-        for underlying_config in underlyings_list:
-            call_contracts = underlying_config.get('call_contracts', [])
-            put_contracts = underlying_config.get('put_contracts', [])
-            
-            logger.debug(f"标的物: {underlying_config.get('underlying')}, Call合约数: {len(call_contracts)}, Put合约数: {len(put_contracts)}")
-            
-            # 检查Call合约（支持字符串和整数类型匹配）
-            for contract in call_contracts:
-                config_contract_code = contract.get('contract_code')
-                # 支持多种类型匹配：字符串、整数
-                if (config_contract_code == contract_code or 
-                    str(config_contract_code) == contract_code_str or
-                    (contract_code_int is not None and config_contract_code == contract_code_int)):
-                    underlying = underlying_config.get('underlying', '510300')
-                    option_type = 'call'
-                    strike_price = contract.get('strike_price')
-                    logger.info(f"找到Call合约: {contract_code} -> ETF {underlying}, 行权价 {strike_price}")
-                    break
-            
-            # 检查Put合约（支持字符串和整数类型匹配）
-            if not underlying:
-                for contract in put_contracts:
-                    config_contract_code = contract.get('contract_code')
-                    # 支持多种类型匹配：字符串、整数
-                    if (config_contract_code == contract_code or 
-                        str(config_contract_code) == contract_code_str or
-                        (contract_code_int is not None and config_contract_code == contract_code_int)):
-                        underlying = underlying_config.get('underlying', '510300')
-                        option_type = 'put'
-                        strike_price = contract.get('strike_price')
-                        logger.info(f"找到Put合约: {contract_code} -> ETF {underlying}, 行权价 {strike_price}")
-                        break
-            
-            if underlying:
-                break
-        
+        meta = infer_sse_option_metadata_from_quotes(contract_code, spot_df, option_greeks)
+        underlying = meta.get("underlying")
+        option_type = meta.get("option_type") or "call"
+        strike_price = meta.get("strike_price")
+
         if not underlying:
-            # 输出详细的调试信息
-            logger.warning(f"未找到合约 {contract_code} 的配置")
-            logger.warning("配置中的合约列表:")
-            for underlying_config in underlyings_list:
-                logger.warning(f"  标的物: {underlying_config.get('underlying')}")
-                for contract in underlying_config.get('call_contracts', []):
-                    logger.warning(f"    Call: {contract.get('contract_code')} (type: {type(contract.get('contract_code'))})")
-                for contract in underlying_config.get('put_contracts', []):
-                    logger.warning(f"    Put: {contract.get('contract_code')} (type: {type(contract.get('contract_code'))})")
-            
             return {
-                'success': False,
-                'error': f'无法从配置中找到合约 {contract_code} 对应的ETF代码，请先配置该合约',
-                'contract_code': contract_code
+                "success": False,
+                "error": (
+                    f"已获取合约 {contract_code} 的行情，但无法解析标的 ETF 代码（非上交所格式或字段缺失）。"
+                    "请确认期权代码正确。"
+                ),
+                "contract_code": contract_code,
             }
-        
-        if not option_type:
-            option_type = 'call'  # 默认值
+
+        logger.info(
+            "期权元数据（来自行情，无配置依赖）: %s -> 标的=%s 类型=%s 行权价=%s",
+            contract_code,
+            underlying,
+            option_type,
+            strike_price,
+        )
         
         # 获取ETF波动区间（用于计算期权波动区间）
         # 提高数据周期长度：从5天增加到15天，确保有足够数据计算技术指标
@@ -651,8 +866,9 @@ def predict_option_volatility_range_on_demand(
             etf_minute_15m=etf_minute_15m if etf_minute_15m is not None and not etf_minute_15m.empty else etf_minute_30m,
             etf_current_price=etf_price,
             remaining_minutes=remaining_minutes,
-            underlying=underlying,  # 传入ETF代码用于IV融合
-            config=config
+            underlying=underlying,
+            config=config,
+            use_option_iv=False,
         )
         
         # 从Greeks中提取信息
@@ -687,32 +903,17 @@ def predict_option_volatility_range_on_demand(
             minute_data=None,  # 期权分钟数据获取较复杂，暂时不计算RSI
         )
         
-        # 获取到期日信息（如果配置中有）
         expiry_date = None
         days_to_expiry = None
-        if strike_price and option_type:
-            for underlying_config in underlyings_list:
-                contracts_list = underlying_config.get('call_contracts', []) if option_type == 'call' else underlying_config.get('put_contracts', [])
-                for contract in contracts_list:
-                    config_contract_code = contract.get('contract_code')
-                    if (config_contract_code == contract_code or 
-                        str(config_contract_code) == contract_code_str or
-                        (contract_code_int is not None and config_contract_code == contract_code_int)):
-                        expiry_date = contract.get('expiry_date')
-                        if expiry_date:
-                            # 计算剩余天数
-                            try:
-                                from datetime import datetime as dt
-                                tz_shanghai = pytz.timezone('Asia/Shanghai')
-                                now = datetime.now(tz_shanghai)
-                                expiry_dt = dt.strptime(expiry_date, '%Y-%m-%d')
-                                days_to_expiry = (expiry_dt.date() - now.date()).days
-                                days_to_expiry = max(0, days_to_expiry)
-                            except Exception as e:
-                                logger.debug(f"计算剩余天数失败: expiry_date={expiry_date}, 错误: {e}", exc_info=True)
-                        break
-                if expiry_date:
-                    break
+        try:
+            expiry_dt = fetch_option_expiry_date(contract_code)
+            if expiry_dt is not None:
+                expiry_date = expiry_dt.strftime("%Y-%m-%d")
+                tz_shanghai = pytz.timezone("Asia/Shanghai")
+                now = datetime.now(tz_shanghai)
+                days_to_expiry = max(0, (expiry_dt.date() - now.date()).days)
+        except Exception as e:
+            logger.debug("解析到期日失败: %s", e)
         
         result = {
             'success': True,
@@ -749,31 +950,6 @@ def predict_option_volatility_range_on_demand(
             result['iv_percentile_context'] = volatility_range['iv_percentile_context']
         if 'greeks_contribution' in volatility_range:
             result['greeks_contribution'] = volatility_range['greeks_contribution']
-        
-        # ========== LLM增强：波动预测（期权使用期权专用Prompt） ==========
-        try:
-            from src.llm_enhancer import enhance_with_llm
-            llm_config = config.get('llm_enhancer', {}) if config else {}
-            if llm_config.get('enabled', False) and 'volatility_prediction' in llm_config.get('analysis_types', []):
-                # 添加当前日期时间信息，帮助LLM正确理解时间上下文
-                tz_shanghai = pytz.timezone('Asia/Shanghai')
-                now = datetime.now(tz_shanghai)
-                result['current_date'] = now.strftime('%Y-%m-%d')
-                result['current_datetime'] = now.strftime('%Y-%m-%d %H:%M:%S')
-                logger.info("开始调用LLM增强期权波动预测...")
-                llm_summary, llm_meta = enhance_with_llm(result, 'volatility_prediction_option', config)
-                if llm_summary:
-                    result['llm_summary'] = llm_summary
-                    if llm_meta:
-                        result['llm_meta'] = llm_meta
-                    logger.info("波动预测LLM增强完成（期权）")
-                else:
-                    logger.warning("波动预测LLM增强返回空结果（期权），可能调用失败")
-            else:
-                logger.debug("LLM增强未启用或volatility_prediction不在analysis_types中，跳过（期权）")
-        except Exception as e:
-            logger.warning(f"波动预测LLM增强失败（期权），已忽略: {e}", exc_info=True)
-        # ========== LLM增强结束 ==========
         
         # 记录预测
         try:

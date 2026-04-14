@@ -4,6 +4,12 @@ Release safety gate checks:
 1) Absolute path leakage
 2) Plaintext secret-like strings
 3) Local-machine-only hardcoded config hints
+
+Usage examples (run from repo root):
+  # Run the gate locally (non-zero exit on failure)
+  python3 scripts/release_safety_gate.py
+
+  # In CI, run the same command and fail the job if it prints findings
 """
 
 from __future__ import annotations
@@ -63,7 +69,6 @@ ALLOWED_TOP_PREFIXES = (
 ALLOWED_ROOT_FILES = {
     "README.md",
     "README.en.md",
-    "config.yaml",
     "Prompt_config.yaml",
     ".env.example",
     ".gitignore",

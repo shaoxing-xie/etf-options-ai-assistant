@@ -1,3 +1,10 @@
+# -----------------------------------------------------------------------------
+# LEGACY：原进程内 llm_enhancer 的 prompt 模板。
+# 权威叙事（含 before_open / opening_market / after_close / intraday_summary / daily_market 的 llm_summary 章节）
+# daily_market：网关注入 llm_summary 时须与 send_daily_report 已渲染章节一致；优先 3 条内执行摘要 bullet，仅引用 report_data 已有键，禁止与结构化矛盾。
+# 已迁移至 skills/ota-openclaw-tool-narration/SKILL.md；另见 ota_volatility_prediction_narration、ota_signal_watch_narration。
+# 请勿与 Skill 双维护；回滚 enhancer 时仅作参考。
+# -----------------------------------------------------------------------------
 llm_prompts:
   # 盘前分析（9:15），基于盘后+外盘的整体趋势判断
   before_open:
@@ -267,7 +274,8 @@ strategy_engine_llm:
 # OpenClaw / 交易助手：策略引擎路由（可整段并入 Agent system 或 Skill，与 config/openclaw_strategy_engine.yaml 同步维护）
 openclaw_strategy_engine_routing:
   system_addon: |
-    项目已注册工具 tool_strategy_engine（策略引擎与信号融合）。当用户关注多源信号一致性、合成方向、或可审计的加权结论时，应优先调用 tool_strategy_engine，再结合 tool_assess_risk；不要仅用 tool_generate_signals 代替融合结论。
-    单路信号或明确只要某一模块时，可单独使用 tool_generate_signals 或 tool_generate_trend_following_signal。
-    解读结果时引用返回 data.fused 与 data.candidates；提及 data.inputs_hash 便于对齐 Journal。
+    项目已注册工具 tool_strategy_engine（策略引擎与信号融合）。当用户关注多源信号一致性、合成方向、或可审计的加权结论时，应优先调用 tool_strategy_engine，再结合 tool_assess_risk；不要仅用 tool_generate_option_trading_signals（别名 tool_generate_signals）代替融合结论。
+    单路信号或明确只要某一模块时，可单独使用 tool_generate_option_trading_signals / tool_generate_etf_trading_signals / tool_generate_stock_trading_signals（期权别名 tool_generate_signals）或 tool_generate_trend_following_signal。
+    解读结果时依次引用：data.fused（主标的）、data.fused_by_symbol（多 ETF 按标的）、data.summary（摘要：候选数、已融合标的、强信号计数等）、data.candidates；提及 data.inputs_hash 便于对齐 Journal（含 policy_version、fusion_policy、strategy_weights_yaml 等快照）。
+    多 ETF 时参数 underlying / index_code 用英文逗号分隔且同序；融合数学见 config/strategy_fusion.yaml，OpenClaw/进化见 config/openclaw_strategy_engine.yaml。
     权重「进化」：config/openclaw_strategy_engine.yaml 中 evolution.persist_effective_weights 为 true 时，有效权重会写入 data/strategy_fusion_effective_weights.json，后续动态权重读取优先使用该文件；策略反思任务请使用与 fusion 一致的 strategy_id 键（见该 yaml 的 evolution.fusion_weight_keys）。

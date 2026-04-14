@@ -1,0 +1,2 @@
+# Production overlay — merged on top of base.yaml (dict deep-merge; lists replace).
+{}

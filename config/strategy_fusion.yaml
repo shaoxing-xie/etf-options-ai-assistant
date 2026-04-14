@@ -15,8 +15,10 @@ policy:
 strategy_weights:
   src_signal_generation: 0.5
   etf_trend_following: 0.5
+  internal_chart_alert: 0.15
 
 providers:
   src_signal_generation: true
   etf_trend_following: true
+  internal_chart_alert: false
   llm: false

@@ -2,6 +2,7 @@
 合并工具：指数数据采集
 data_type: realtime | historical | minute | opening | global_spot
 旧工具名作为别名时由 tool_runner 注入 data_type，此处统一入口。
+定时采集标的清单见合并后配置 `data_cache.index_codes`（来源：`config/domains/reference.yaml`；另见 scripts/run_data_cache_collection.py）。
 """
 
 from typing import Dict, Any, Optional

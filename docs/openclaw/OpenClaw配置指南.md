@@ -356,16 +356,39 @@ ln -s /home/xie/etf-options-ai-assistant ~/etf-options-ai-assistant
 
 ---
 
+### 推荐流程：`plugins.load.paths` + 仓库根目录（OpenClaw 2026.4.x）
+
+**不要**再依赖「只在 `~/.openclaw/extensions/option-trading-assistant` 建符号链接」作为唯一发现方式：该方式下插件 ID 可能进不了 `knownIds`，`plugins.allow` 会出现 **`plugin not found: option-trading-assistant`**。
+
+**推荐一键配置**（在仓库根执行）：
+
+```bash
+cd ~/etf-options-ai-assistant   # 或你的克隆路径
+./scripts/setup_openclaw_option_trading_assistant.sh
+systemctl --user restart openclaw-gateway.service   # 或使用你的 restart 脚本
+```
+
+脚本会：
+
+1. 在 `~/.openclaw/openclaw.json` 的 `plugins.load.paths` 中写入 **`~/.openclaw/extensions` 与本仓库的绝对路径**（去重）。
+2. 若缺失则追加 `plugins.allow` / `plugins.entries` 中的 **`option-trading-assistant`**（可用环境变量 `OTA_SKIP_ENSURE_ALLOW=1`、`OTA_SKIP_ENSURE_ENTRY=1` 关闭）。
+3. **默认删除** `extensions/option-trading-assistant` 下指向本仓库的符号链接，避免与 `load.paths` **重复扫描同一目录**；调试需保留时可设 `OTA_KEEP_EXTENSION_SYMLINK=1`。
+
+底层实现：`scripts/ensure_openclaw_plugin_load_paths.py`（支持 `--dry-run`）。
+
+历史脚本 `scripts/link_openclaw_extension_option_trading_assistant.sh` **默认已改为调用上述 setup**；仅符号链接旧行为：`OTA_LEGACY_EXTENSION_SYMLINK=1 ./scripts/link_openclaw_extension_option_trading_assistant.sh`。
+
+校验（可选）：`VERIFY_OTA_LOAD_PATHS=1 bash scripts/verify_openclaw_config.sh`
+
 ## ✅ 配置检查清单
 
-- [ ] OpenClaw 目录存在：`~/.openclaw/extensions/`
-- [ ] 插件目录已创建：`~/.openclaw/extensions/option-trading-assistant/`
-- [ ] `index.ts` 文件已创建并配置正确
-- [ ] `tool_runner.py` 文件已创建或符号链接已建立
-- [ ] 符号链接 `~/etf-options-ai-assistant` 正常工作
-- [ ] Python 路径配置正确
-- [ ] OpenClaw Gateway 已重启并加载插件
-- [ ] 插件在 OpenClaw 中可见并可调用
+- [ ] OpenClaw 目录存在：`~/.openclaw/` 与 `~/.openclaw/extensions/`
+- [ ] 已执行 `./scripts/setup_openclaw_option_trading_assistant.sh`（或确认 `plugins.load.paths` 含本仓库绝对路径）
+- [ ] `plugins.allow` / `plugins.entries` 含 `option-trading-assistant`（新环境可由 setup 脚本补全）
+- [ ] 本仓库内已有 `index.ts`、`tool_runner.py`、`package.json`（扩展包形态），无需再在 extensions 下拷贝一份
+- [ ] （可选）符号链接 `~/etf-options-ai-assistant` 便于本地路径习惯
+- [ ] Python 虚拟环境与 `openclaw.json` 中 CLI 路径一致
+- [ ] Gateway 已重启；`openclaw plugins list` 可见 `option-trading-assistant`
 
 ---
 

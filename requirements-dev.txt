@@ -1,0 +1,8 @@
+# 开发/测试依赖（在 .venv 中：pip install -r requirements-dev.txt）
+# 说明：shell/系统级依赖（非 pip）需单独安装，例如：
+# - jq（脚本解析 JSON）
+# - openclaw CLI（cron run / runs 查询）
+-r requirements.txt
+pytest>=7.0
+pytest-timeout>=2.3
+pydantic>=2.0

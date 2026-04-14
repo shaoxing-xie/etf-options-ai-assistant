@@ -2,42 +2,128 @@
 日内区间预测工具（轻量版）。
 
 该模块用于补齐工作流依赖：tool_predict_intraday_range。
-实现采用 src.volatility_range_fallback 的日线降级方案，保证在多数环境可运行。
+本工具在「主链路失败后的补算」路径上**仅使用分钟级数据**计算区间；**不使用日线数据做波动区间降级**。
+若无法取得有效分钟数据或分钟模型无有效上下界，返回 success=False，并在 data 中带 error_code 供上层工作流/Agent 识别。
 """
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Any, Dict, Optional
+
+from src.underlying_resolver import resolve_volatility_underlying
 
 
 def tool_predict_intraday_range(
     symbol: str = "510300",
     underlying: Optional[str] = None,
     lookback_days: int = 60,
+    asset_type: Optional[str] = None,
     **_: Any,
 ) -> Dict[str, Any]:
     """
-    预测标的（ETF）当日剩余时间的价格区间。
+    预测标的当日剩余时间的价格区间（指数 / ETF / A 股）。
 
     Args:
-        symbol: ETF 代码（默认 510300）
+        symbol: 默认 510300（ETF）
         underlying: 兼容参数，优先于 symbol
-        lookback_days: 用于获取日线窗口（默认 60）
+        lookback_days: 保留兼容（补算路径已不拉日线作区间降级，此参数当前未使用）
+        asset_type: 可选，显式指定 index / etf / stock（小写），与输入中的「指数:」「ETF:」「股票:」前缀二选一
     """
-    sym = str(underlying or symbol or "510300")
+    sym_raw = str(underlying or symbol or "510300")
+    hint = str(asset_type).strip().lower() if asset_type else None
+    if hint == "":
+        hint = None
     try:
         from src.config_loader import load_system_config
-        from src.data_collector import fetch_etf_daily_em
-        from src.data_collector import fetch_etf_minute_data_with_fallback
+        from src.on_demand_predictor import (
+            predict_index_volatility_range_on_demand,
+            predict_etf_volatility_range_on_demand,
+            predict_stock_volatility_range_on_demand,
+        )
+        from src.data_collector import (
+            fetch_etf_minute_data_with_fallback,
+            fetch_stock_minute_data_with_fallback,
+            get_stock_current_price,
+        )
         from src.volatility_range import get_remaining_trading_time
         from src.volatility_range import calculate_etf_volatility_range_multi_period
-        from src.volatility_range_fallback import calculate_etf_volatility_range_fallback
         from src.logger_config import get_module_logger
         from src.prediction_recorder import record_prediction
 
         logger = get_module_logger(__name__)
         cfg = load_system_config(use_cache=True)
+
+        resolved = resolve_volatility_underlying(sym_raw, hint)
+        if not resolved.ok:
+            return {
+                "success": False,
+                "message": resolved.error,
+                "data": {"candidates": resolved.candidates} if resolved.candidates else None,
+            }
+
+        sym = resolved.code
+        asset_type = resolved.asset_type
+
+        # 指数与 ETF / 股票分别走对应预测链路，避免名称/类型误判导致价格尺度错乱
+        if asset_type == "index":
+            idx = predict_index_volatility_range_on_demand(symbol=sym, config=cfg)
+            if not idx or idx.get("success") is False:
+                return {"success": False, "message": idx.get("error", "Index prediction failed"), "data": None}
+            payload = {
+                "symbol": idx.get("symbol", sym),
+                "current_price": float(idx.get("current_price", 0.0)),
+                "lower_bound": float(idx.get("lower", 0.0)),
+                "upper_bound": float(idx.get("upper", 0.0)),
+                "predicted_range": f"{float(idx.get('lower', 0.0)):.4f} ~ {float(idx.get('upper', 0.0)):.4f}",
+                "confidence": float(idx.get("confidence", 0.5)),
+                "remaining_minutes": int(idx.get("remaining_minutes", 0)),
+                "method": idx.get("method", "index_multi_period"),
+                "timestamp": idx.get("timestamp", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+            }
+            for k in ["iv_data_available", "iv_data_reason", "volume_factor", "garch_shadow", "data_quality", "ab_profile"]:
+                if k in idx:
+                    payload[k] = idx.get(k)
+            return {"success": True, "message": "Intraday range predicted", "data": payload, "source": "index_multi_period"}
+
+        if asset_type == "stock":
+            stk = predict_stock_volatility_range_on_demand(symbol=sym, config=cfg)
+            if stk and stk.get("success") is not False and "upper" in stk and "lower" in stk:
+                payload = {
+                    "symbol": stk.get("symbol", sym),
+                    "current_price": float(stk.get("current_price", 0.0)),
+                    "lower_bound": float(stk.get("lower", 0.0)),
+                    "upper_bound": float(stk.get("upper", 0.0)),
+                    "predicted_range": f"{float(stk.get('lower', 0.0)):.4f} ~ {float(stk.get('upper', 0.0)):.4f}",
+                    "confidence": float(stk.get("confidence", 0.5)),
+                    "remaining_minutes": int(stk.get("remaining_minutes", 0)),
+                    "method": stk.get("method", "stock_multi_period"),
+                    "timestamp": stk.get("timestamp", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+                    "asset_type": "stock",
+                }
+                for k in ["volume_factor", "garch_shadow", "data_quality", "ab_profile"]:
+                    if k in stk:
+                        payload[k] = stk.get(k)
+                return {"success": True, "message": "Intraday range predicted", "data": payload, "source": "stock_multi_period"}
+
+        if asset_type == "etf":
+            etf_try = predict_etf_volatility_range_on_demand(symbol=sym, config=cfg)
+            if etf_try and etf_try.get("success") is not False and "upper" in etf_try and "lower" in etf_try:
+                payload = {
+                    "symbol": etf_try.get("symbol", sym),
+                    "current_price": float(etf_try.get("current_price", 0.0)),
+                    "lower_bound": float(etf_try.get("lower", 0.0)),
+                    "upper_bound": float(etf_try.get("upper", 0.0)),
+                    "predicted_range": f"{float(etf_try.get('lower', 0.0)):.4f} ~ {float(etf_try.get('upper', 0.0)):.4f}",
+                    "confidence": float(etf_try.get("confidence", 0.5)),
+                    "remaining_minutes": int(etf_try.get("remaining_minutes", 0)),
+                    "method": etf_try.get("method", "etf_multi_period"),
+                    "timestamp": etf_try.get("timestamp", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+                }
+                for k in ["iv_data_available", "iv_data_reason", "volume_factor", "garch_shadow", "data_quality", "ab_profile"]:
+                    if k in etf_try:
+                        payload[k] = etf_try.get(k)
+                return {"success": True, "message": "Intraday range predicted", "data": payload, "source": "etf_multi_period"}
 
         def _to_pct(x: float) -> float:
             # x<=1 视为比例；否则视为百分比
@@ -76,133 +162,144 @@ def tool_predict_intraday_range(
             real_range_pct = (upper - lower) / _current_price * 100.0
             return upper, lower, real_range_pct, clamp_applied
 
-        def _dynamic_confidence_from_move(_conf: float, _current_price: float, _daily_close: float) -> float:
-            # P0：用“日内当前价 vs 日线最后收盘价”的偏离幅度降权，避免极端日置信度偏乐观
-            if not _daily_close or _daily_close <= 0:
-                return float(min(0.6, _conf))
-            price_change_pct = (_current_price - _daily_close) / _daily_close * 100.0
-            move_abs = abs(price_change_pct)
-            move_factor = max(0.0, min(1.0, 1.0 - move_abs / 5.0))
-            target_conf = 0.3 + 0.3 * move_factor
-            # 不让置信度超过原预测太多，同时保证不会超过0.6
-            return float(min(0.6, _conf, target_conf))
-
-        # 1) 获取当前价格（优先用插件实时工具；失败则用日线最后收盘兜底）
+        # 1) 获取当前价格（ETF 用插件实时；股票用统一现价接口；不用日线收盘价兜底）
         current_price: Optional[float] = None
-        try:
-            from plugins.data_collection.etf.fetch_realtime import tool_fetch_etf_realtime
+        if asset_type == "etf":
+            try:
+                from plugins.data_collection.etf.fetch_realtime import tool_fetch_etf_realtime
 
-            rt = tool_fetch_etf_realtime(etf_code=sym, mode="test")
-            if isinstance(rt, dict) and rt.get("success"):
-                d = rt.get("data", {})
-                if isinstance(d, dict) and "current_price" in d:
-                    current_price = float(d.get("current_price"))
-                elif isinstance(d, dict) and "etf_data" in d and d["etf_data"]:
-                    current_price = float(d["etf_data"][0].get("current_price"))
-        except Exception:
-            current_price = None
-
-        # 2) 获取日线数据（内部含缓存逻辑）
-        now = datetime.now()
-        end_ymd = now.strftime("%Y%m%d")
-        start_ymd = (now - timedelta(days=max(int(lookback_days) * 2, 90))).strftime("%Y%m%d")
-        daily_df = fetch_etf_daily_em(symbol=sym, period="daily", start_date=start_ymd, end_date=end_ymd)
-        if daily_df is None or getattr(daily_df, "empty", True):
-            return {"success": False, "message": f"Failed to fetch daily data for {sym}", "data": None}
-
-        # 用于动态置信度：日线最后收盘价（如果 realtime 成功，偏离幅度就反映极端日）
-        close_col = "收盘" if "收盘" in daily_df.columns else ("close" if "close" in daily_df.columns else None)
-        daily_close = float(daily_df[close_col].iloc[-1]) if close_col else float("nan")
+                rt = tool_fetch_etf_realtime(etf_code=sym, mode="test")
+                if isinstance(rt, dict) and rt.get("success"):
+                    d = rt.get("data", {})
+                    if isinstance(d, dict) and "current_price" in d:
+                        current_price = float(d.get("current_price"))
+                    elif isinstance(d, dict) and "etf_data" in d and d["etf_data"]:
+                        current_price = float(d["etf_data"][0].get("current_price"))
+            except Exception:
+                current_price = None
+        else:
+            current_price = get_stock_current_price(sym)
 
         if current_price is None:
-            # 尝试用最后收盘价兜底
-            if close_col:
-                try:
-                    current_price = float(daily_df[close_col].iloc[-1])
-                except Exception:
-                    current_price = None
-
-        if current_price is None:
-            return {"success": False, "message": f"Failed to determine current price for {sym}", "data": None}
+            return {
+                "success": False,
+                "message": (
+                    f"无法确定 {sym} 的当前价（日内区间工具不使用日线收盘价兜底）。"
+                    "请检查实时行情接口或稍后重试。"
+                ),
+                "data": {
+                    "error_code": "INTRADAY_SPOT_PRICE_UNAVAILABLE",
+                    "symbol": sym,
+                    "asset_type": asset_type,
+                },
+            }
 
         remaining_minutes = int(get_remaining_trading_time(cfg))
 
-        # 3) P2：优先分钟级预测；失败则回退日线降级
-        used_source = "fallback_daily"
+        # 2) 仅分钟级预测；无分钟数据或计算无效则报错（不使用日线降级）
+        used_source = "minute_multi_period"
         method = None
         upper = None
         lower = None
         conf = None
         range_pct = None
+        minute_rng: Dict[str, Any] = {}
+        minute_exc: Optional[str] = None
 
         try:
-            etf_minute_30m, etf_minute_15m = fetch_etf_minute_data_with_fallback(
-                underlying=sym,
-                lookback_days=10,
-                max_retries=2,
-                retry_delay=1.0,
-            )
-            if etf_minute_30m is not None and not etf_minute_30m.empty:
-                etf_minute_15m = etf_minute_15m if etf_minute_15m is not None and not etf_minute_15m.empty else etf_minute_30m
-                minute_rng = calculate_etf_volatility_range_multi_period(
-                    etf_minute_30m=etf_minute_30m,
-                    etf_minute_15m=etf_minute_15m,
-                    etf_current_price=float(current_price),
-                    remaining_minutes=remaining_minutes,
+            if asset_type == "etf":
+                etf_minute_30m, etf_minute_15m = fetch_etf_minute_data_with_fallback(
                     underlying=sym,
-                    config=cfg,
+                    lookback_days=10,
+                    max_retries=2,
+                    retry_delay=1.0,
                 )
-                _upper = minute_rng.get("upper")
-                _lower = minute_rng.get("lower")
-                _conf = minute_rng.get("confidence")
-                if _upper is not None and _lower is not None:
-                    upper = float(_upper)
-                    lower = float(_lower)
-                    conf = float(_conf) if _conf is not None else float(0.5)
-                    range_pct = float(minute_rng.get("range_pct", (upper - lower) / current_price * 100.0))
-                    method = minute_rng.get("method", "minute_multi_period")
-                    used_source = "minute_multi_period"
-        except Exception:
-            used_source = "fallback_daily"
+            else:
+                etf_minute_30m, etf_minute_15m = fetch_stock_minute_data_with_fallback(
+                    symbol=sym,
+                    lookback_days=10,
+                    max_retries=2,
+                    retry_delay=1.0,
+                )
+            if etf_minute_30m is None or getattr(etf_minute_30m, "empty", True):
+                return {
+                    "success": False,
+                    "message": (
+                        f"{sym} 日内区间预测需要分钟K线数据，当前无法获取有效分钟序列；"
+                        "已按策略不使用日线降级，请检查数据源或交易时段。"
+                    ),
+                    "data": {
+                        "error_code": "INTRADAY_MINUTE_DATA_UNAVAILABLE",
+                        "symbol": sym,
+                        "asset_type": asset_type,
+                    },
+                }
+
+            etf_minute_15m = etf_minute_15m if etf_minute_15m is not None and not etf_minute_15m.empty else etf_minute_30m
+            minute_rng = calculate_etf_volatility_range_multi_period(
+                etf_minute_30m=etf_minute_30m,
+                etf_minute_15m=etf_minute_15m,
+                etf_current_price=float(current_price),
+                remaining_minutes=remaining_minutes,
+                underlying=sym,
+                config=cfg,
+                use_option_iv=False,
+            )
+            _upper = minute_rng.get("upper")
+            _lower = minute_rng.get("lower")
+            _conf = minute_rng.get("confidence")
+            if _upper is not None and _lower is not None:
+                upper = float(_upper)
+                lower = float(_lower)
+                conf = float(_conf) if _conf is not None else float(0.5)
+                range_pct = float(minute_rng.get("range_pct", (upper - lower) / current_price * 100.0))
+                method = minute_rng.get("method", "minute_multi_period")
+        except Exception as ex:
+            minute_exc = str(ex)
+            logger.warning("分钟级日内区间计算异常: %s", ex, exc_info=True)
 
         if upper is None or lower is None or conf is None or method is None:
-            # 回退：日线降级
-            rng = calculate_etf_volatility_range_fallback(
-                daily_df,
-                float(current_price),
-                remaining_minutes,
-                opening_strategy=None,
-                previous_volatility_ranges=None,
-                config=cfg,
-            )
-            upper = float(rng.get("upper", current_price * 1.02))
-            lower = float(rng.get("lower", current_price * 0.98))
-            conf = float(rng.get("confidence", 0.3))
-            range_pct = float(rng.get("range_pct", (upper - lower) / current_price * 100.0 if current_price > 0 else 2.0))
-            method = rng.get("method", "fallback_daily")
+            return {
+                "success": False,
+                "message": (
+                    f"{sym} 分钟级波动区间计算未产生有效上下界；未使用日线降级。"
+                    f"{' 异常: ' + minute_exc if minute_exc else ''}"
+                ),
+                "data": {
+                    "error_code": "INTRADAY_MINUTE_CALC_INVALID",
+                    "symbol": sym,
+                    "asset_type": asset_type,
+                    "exception": minute_exc,
+                },
+            }
 
         # P2：如果分钟路径包含 IV 校准字段，把影响字段可观测化（日志 + 输出/落库的附加字段）
         iv_debug_fields: Dict[str, Any] = {}
         try:
-            if used_source == "minute_multi_period":
-                # minute_rng 作用域在 try 块内，这里用最小侵入方式从局部变量抓取
-                iv_debug_fields = {
-                    k: locals().get("minute_rng", {}).get(k)
-                    for k in ["iv_adjusted", "iv_ratio", "option_iv", "hist_vol_used", "iv_adjustment"]
-                    if locals().get("minute_rng", {}).get(k) is not None
-                }
-                if iv_debug_fields:
-                    logger.info("IV校准影响字段: %s", iv_debug_fields)
+            iv_debug_fields = {
+                k: minute_rng.get(k)
+                for k in [
+                    "iv_adjusted",
+                    "iv_data_available",
+                    "iv_data_reason",
+                    "iv_ratio",
+                    "option_iv",
+                    "hist_vol_used",
+                    "iv_adjustment",
+                    "iv_hv_fusion",
+                    "iv_hv_scaling_factor",
+                    "iv_hv_sigma_eff",
+                    "iv_hv_volume_factor",
+                    "volume_factor",
+                    "garch_shadow",
+                    "data_quality",
+                ]
+                if minute_rng.get(k) is not None
+            }
+            if iv_debug_fields:
+                logger.info("IV校准影响字段: %s", iv_debug_fields)
         except Exception:
             iv_debug_fields = {}
-
-        # P0/P2：统一动态置信度降权（避免极端日过度自信）
-        # NaN daily_close 时自动退化为 min(0.6, conf)
-        try:
-            if str(daily_close) != "nan":
-                conf = _dynamic_confidence_from_move(conf, float(current_price), float(daily_close))
-        except Exception:
-            conf = float(min(0.6, conf))
 
         # P0/P2：统一 clamp（确保任何链路都不绕过输出收敛）
         upper, lower, range_pct, _clamp_applied = _clamp_range(float(current_price), float(range_pct), cfg)
@@ -212,7 +309,7 @@ def tool_predict_intraday_range(
         # P0：预测落库，用于后续 P1 统计（收盘后回填 actual_range）
         try:
             record_prediction(
-                prediction_type="etf",
+                prediction_type="etf" if asset_type == "etf" else "stock",
                 symbol=sym,
                 prediction={
                     "upper": upper,

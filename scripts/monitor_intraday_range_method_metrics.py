@@ -32,6 +32,23 @@ def _classify_group(record: Dict[str, Any]) -> str:
     return "minute_multi_period"
 
 
+def _meta_bucket(record: Dict[str, Any]) -> str:
+    pred = record.get("prediction", {}) or {}
+    method = str(pred.get("method", "") or "")
+    if "garch" in method.lower():
+        method_bucket = "garch_related"
+    elif "hybrid" in method.lower():
+        method_bucket = "hybrid"
+    else:
+        method_bucket = "fusion_or_other"
+    iv_flag = "iv_on" if bool(pred.get("iv_hv_fusion") or pred.get("iv_adjusted")) else "iv_off"
+    norm = pred.get("normalization", {}) or {}
+    gate = "gate_pass" if norm.get("quality_gate_passed") is True else (
+        "gate_fail" if norm.get("quality_gate_passed") is False else "gate_unknown"
+    )
+    return f"{method_bucket}|{iv_flag}|{gate}"
+
+
 def _safe_float(x: Any, default: float = 0.0) -> float:
     try:
         if x is None:
@@ -91,10 +108,13 @@ def main() -> int:
     total = len(all_records)
     group_counts = {"fallback_daily": 0, "minute_multi_period": 0}
     group_verified = {"fallback_daily": [], "minute_multi_period": []}
+    meta_counts: Dict[str, int] = {}
 
     for r in all_records:
         g = _classify_group(r)
         group_counts[g] += 1
+        mb = _meta_bucket(r)
+        meta_counts[mb] = meta_counts.get(mb, 0) + 1
         if r.get("verified", False):
             group_verified[g].append(r)
 
@@ -122,6 +142,7 @@ def main() -> int:
         "end_date": end_date,
         "total_records": total,
         "group_counts": group_counts,
+        "meta_counts": meta_counts,
         "fallback_ratio": fallback_ratio,
         "verified_metrics": {
             "fallback_daily": _calc_verified_metrics(group_verified["fallback_daily"]),

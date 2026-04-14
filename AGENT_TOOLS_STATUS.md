@@ -1,5 +1,7 @@
 # Agent 工具配置状态检查
 
+> **维护说明**：工具 id 与数量以 **`config/tools_manifest.yaml`** 及插件 `index.ts` / `tool_runner.py` 为准，会随版本增减；本节不再写死「共 N 个」。**模型口径**另取决于各 Agent 的 **`skills` allowlist**（见 **`config/snippets/openclaw_agents_ota_skills.json`**、`docs/openclaw/OpenClaw-Agent-ota-skills.md`）。
+
 ## ✅ 插件注册状态
 
 从 `openclaw status` 输出可以看到：
@@ -7,7 +9,7 @@
 [plugins] option-trading-assistant: Registered all tools
 ```
 
-**结论**: 插件已成功注册，所有 33 个工具已注册到 OpenClaw。
+**结论**: 插件已成功注册；具体工具条数以当前插件构建为准。
 
 ## ✅ 工具实际使用验证
 
@@ -49,11 +51,6 @@ OpenClaw 会自动加载所有已注册的插件工具。当插件通过 `api.re
 
 ## 🎯 下一步
 
-Agent 现在可以使用所有 33 个工具：
-- 数据采集工具（14个）
-- 分析工具（8个）
-- 通知工具（4个）
-- 数据访问工具（6个）
-- 工具函数（2个）
-
-无需额外配置，可以直接使用！
+1. **`openclaw plugins list` / `openclaw doctor`**：确认 `option-trading-assistant` 无报错。  
+2. **Skill**：修改仓库 `skills/ota-*` 后执行 **`bash scripts/sync_repo_skills_to_openclaw.sh`**，将 **`config/snippets/openclaw_agents_ota_skills.json`** 合并进 **`~/.openclaw/openclaw.json`** 并重载 Gateway。  
+3. **工具清单**：需要按类别统计时，从 **`config/tools_manifest.yaml`** 的 `- id: tool_*` 条目导出即可。

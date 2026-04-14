@@ -19,6 +19,129 @@ def _project_root() -> Path:
     return Path(__file__).resolve().parents[2]
 
 
+def _load_live_positions(path: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    """
+    尝试加载“真实持仓/账户快照”。
+
+    约定（优先级）：
+    - 显式 path
+    - env: OPENCLAW_POSITIONS_JSON
+    - 默认：~/.openclaw/workspaces/etf-options-ai-assistant/memory/positions.json
+    """
+    candidates: List[Path] = []
+    if path:
+        candidates.append(Path(path).expanduser())
+    env_p = os.environ.get("OPENCLAW_POSITIONS_JSON", "").strip()
+    if env_p:
+        candidates.append(Path(env_p).expanduser())
+    candidates.append(
+        Path(os.path.expanduser("~/.openclaw/workspaces/etf-options-ai-assistant/memory/positions.json"))
+    )
+    for p in candidates:
+        if not p.is_file():
+            continue
+        try:
+            return json.loads(p.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+    return None
+
+
+def _positions_to_weights(snapshot: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """
+    将持仓快照归一为 cfg 结构：weights/current_position_pct/cash_pct。
+
+    支持常见形态：
+    - {"positions":[{"symbol":"510300","market_value":12345,"asset_type":"etf"},...], "cash": 1000, "total_assets": 20000}
+    - {"data":{"positions":[...]}, ...}
+    - 直接 positions 列表
+    """
+    if not snapshot:
+        return None
+    blob: Any = snapshot
+    if isinstance(blob, dict) and isinstance(blob.get("data"), dict):
+        blob = blob["data"]
+    positions: Any = None
+    cash: Optional[float] = None
+    total_assets: Optional[float] = None
+    if isinstance(blob, dict):
+        positions = blob.get("positions") or blob.get("holdings") or blob.get("items")
+        cash = blob.get("cash") if blob.get("cash") is not None else blob.get("cash_available")
+        total_assets = blob.get("total_assets") or blob.get("equity") or blob.get("net_asset")
+    elif isinstance(blob, list):
+        positions = blob
+
+    if not isinstance(positions, list) or not positions:
+        return None
+
+    mv_by_sym: Dict[str, float] = {}
+    total_mv = 0.0
+    for it in positions:
+        if not isinstance(it, dict):
+            continue
+        sym = (
+            it.get("symbol")
+            or it.get("code")
+            or it.get("asset_code")
+            or it.get("underlying")
+        )
+        if not sym:
+            continue
+        sym_s = str(sym).strip()
+        if not sym_s:
+            continue
+        # 仅取 ETF/指数这类“可用日线缓存”的标的；否则跳过
+        asset_type = (it.get("asset_type") or it.get("type") or "").strip().lower()
+        if asset_type and asset_type not in ("etf", "index"):
+            continue
+
+        mv = it.get("market_value") or it.get("marketValue") or it.get("value")
+        if mv is None:
+            qty = it.get("quantity") or it.get("qty") or it.get("position") or 0
+            px = it.get("price") or it.get("last") or it.get("current_price") or 0
+            try:
+                mv = float(qty) * float(px)
+            except Exception:
+                mv = 0.0
+        try:
+            mv_f = float(mv)
+        except Exception:
+            mv_f = 0.0
+        if mv_f <= 0:
+            continue
+        mv_by_sym[sym_s] = mv_by_sym.get(sym_s, 0.0) + mv_f
+        total_mv += mv_f
+
+    if total_mv <= 0:
+        return None
+
+    weights = {k: v / total_mv for k, v in mv_by_sym.items()}
+
+    cash_f: float = 0.0
+    if cash is not None:
+        try:
+            cash_f = float(cash)
+        except Exception:
+            cash_f = 0.0
+    if total_assets is None:
+        total_assets = total_mv + cash_f
+    try:
+        total_assets_f = float(total_assets)
+    except Exception:
+        total_assets_f = total_mv + cash_f
+
+    pos_pct = (total_mv / total_assets_f * 100.0) if total_assets_f > 0 else 100.0
+    cash_pct = max(0.0, 100.0 - pos_pct)
+
+    return {
+        "schema_version": 1,
+        "weights": weights,
+        "current_position_pct": pos_pct,
+        "cash_pct": cash_pct,
+        "source": "live_positions",
+    }
+
+
 def _load_portfolio_config(path: Optional[str]) -> Dict[str, Any]:
     root = _project_root()
     candidates = []
@@ -67,7 +190,7 @@ def _load_thresholds(path: Optional[str]) -> Dict[str, float]:
 
 
 def _date_key(rec: dict) -> Optional[str]:
-    for k in ("date", "trade_date", "cal_date", "datetime"):
+    for k in ("date", "trade_date", "cal_date", "datetime", "日期", "交易日期"):
         v = rec.get(k)
         if v is None:
             continue
@@ -78,7 +201,7 @@ def _date_key(rec: dict) -> Optional[str]:
 
 
 def _close_px(rec: dict) -> Optional[float]:
-    for k in ("close", "Close", "adj_close", "adjclose"):
+    for k in ("close", "Close", "adj_close", "adjclose", "收盘", "收盘价"):
         v = rec.get(k)
         if v is None:
             continue
@@ -139,6 +262,7 @@ def _aligned_returns(
 def tool_portfolio_risk_snapshot(
     lookback_days: int = 120,
     portfolio_config_path: Optional[str] = None,
+    positions_path: Optional[str] = None,
     risk_thresholds_path: Optional[str] = None,
     confidence: float = 0.95,
 ) -> Dict[str, Any]:
@@ -146,7 +270,14 @@ def tool_portfolio_risk_snapshot(
     读取组合权重与 ETF 日线缓存，估算历史模拟 VaR、最大/当前回撤、仓位标志。
     """
     try:
-        cfg = _load_portfolio_config(portfolio_config_path)
+        cfg = None
+        live = _load_live_positions(positions_path)
+        if isinstance(live, (dict, list)):
+            live_cfg = _positions_to_weights(live if isinstance(live, dict) else {"positions": live})
+            if live_cfg:
+                cfg = live_cfg
+        if cfg is None:
+            cfg = _load_portfolio_config(portfolio_config_path)
         thr = _load_thresholds(risk_thresholds_path)
         weights: Dict[str, float] = {str(k): float(v) for k, v in (cfg.get("weights") or {}).items()}
         if not weights:
@@ -156,37 +287,66 @@ def tool_portfolio_risk_snapshot(
             return {"success": False, "message": "权重和无效", "data": None}
         weights = {k: v / wsum for k, v in weights.items()}
 
-        end = datetime.now()
+        # 日线缓存通常只到上一交易日；盘中用“今天”会造成 cache miss
+        end = datetime.now() - timedelta(days=1)
         start = end - timedelta(days=max(lookback_days, 30) + 45)
         start_date = start.strftime("%Y%m%d")
         end_date = end.strftime("%Y%m%d")
 
-        from merged.read_market_data import tool_read_market_data
-
         series_by_symbol: Dict[str, Dict[str, float]] = {}
+        missing_symbols: List[Dict[str, Any]] = []
         for sym in weights:
             if weights[sym] <= 0:
                 continue
-            raw = tool_read_market_data(
-                data_type="etf_daily",
-                symbol=sym,
-                start_date=start_date,
-                end_date=end_date,
-            )
-            if not raw.get("success"):
-                return {
-                    "success": False,
-                    "message": f"{sym} etf_daily: {raw.get('message', 'cache miss')}",
-                    "data": {"symbol": sym, "raw": raw},
-                }
-            recs = (raw.get("data") or {}).get("records") or []
+            df = None
+            try:
+                # 优先走 data_collector：允许缓存部分覆盖（不要求 start_date~end_date 全覆盖）
+                from src.data_collector import fetch_etf_daily_em  # type: ignore
+
+                df = fetch_etf_daily_em(symbol=sym, start_date=start_date, end_date=end_date)  # type: ignore
+            except Exception:
+                df = None
+
+            recs: List[dict] = []
+            if df is not None:
+                try:
+                    import pandas as pd  # type: ignore
+
+                    if isinstance(df, pd.DataFrame) and not df.empty:
+                        # 标准化列名到 records（保留中文列；_records_to_series 会自适配 close/收盘）
+                        recs = df.to_dict(orient="records")  # type: ignore[assignment]
+                except Exception:
+                    recs = []
+
+            if not recs:
+                # 最后尝试：读缓存工具（可能返回 records 或 partial）
+                from merged.read_market_data import tool_read_market_data
+
+                raw = tool_read_market_data(
+                    data_type="etf_daily",
+                    symbol=sym,
+                    start_date=start_date,
+                    end_date=end_date,
+                )
+                recs = (raw.get("data") or {}).get("records") or []
+                if not recs:
+                    missing_symbols.append(
+                        {"symbol": sym, "reason": raw.get("message", "cache miss"), "raw": raw}
+                    )
+                    continue
+
             series_by_symbol[sym] = _records_to_series(recs)
             if len(series_by_symbol[sym]) < 5:
-                return {
-                    "success": False,
-                    "message": f"{sym} 有效日线不足（缓存条数过少）",
-                    "data": None,
-                }
+                missing_symbols.append({"symbol": sym, "reason": "有效日线不足（缓存条数过少）"})
+                series_by_symbol.pop(sym, None)
+                continue
+
+        if not series_by_symbol:
+            return {
+                "success": False,
+                "message": "无可用日线数据（无法计算组合风险）",
+                "data": {"missing_symbols": missing_symbols},
+            }
 
         rets, syms_used = _aligned_returns(series_by_symbol, weights)
         if rets is None or len(rets) < 3:
@@ -216,6 +376,7 @@ def tool_portfolio_risk_snapshot(
 
         data = {
             "symbols_used": syms_used,
+            "missing_symbols": missing_symbols,
             "lookback_trading_days": len(rets),
             "confidence": confidence,
             "var_historical_pct": round(var_pct, 4),
@@ -226,6 +387,7 @@ def tool_portfolio_risk_snapshot(
             "position_risk_flag": pos_flag,
             "drawdown_risk_flag": dd_flag,
             "thresholds": thr,
+            "portfolio_source": cfg.get("source") or ("config_file" if portfolio_config_path else "default_weights"),
         }
         return {"success": True, "message": "portfolio risk snapshot", "data": data}
     except Exception as e:

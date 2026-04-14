@@ -1,0 +1,110 @@
+# Source of truth for cron execution agents and job routing.
+# Maintainers should edit this file, then run:
+#   python scripts/render_agents_config.py --apply-jobs
+#   python scripts/validate_agent_skill_matrix.py
+
+blockedCronAgents:
+  - etf_main
+  - etf_analysis_agent
+
+managedAgents:
+  - id: etf_cron_analysis_agent
+    name: etf_cron_analysis_agent
+    templateAgentId: etf_analysis_agent
+    agentDir: ${OPENCLAW_AGENTS_ROOT:-~/.openclaw/agents}/etf-options-ai-assistant/cron_analysis_agent/agent
+    requiredSkills:
+      - ota_daily_session_routine
+      - ota_trend_analysis_brief
+      - ota_notification_soul_routing
+      - ota_openclaw_tool_narration
+      - ota_volatility_prediction_narration
+      - ota_historical_volatility_snapshot
+      - ota_risk_assessment_brief
+      - ota_technical_indicators_brief
+      - ota_market_regime_checklist
+      - ota_cache_read_discipline
+      - ota_cn_market_data_discipline
+      - tavily-search
+      - topic-monitor
+      - qmd
+    requiredTools:
+      fs:
+        workspaceOnly: false
+
+
+  - id: etf_cron_inspection_agent
+    name: etf_cron_inspection_agent
+    templateAgentId: etf_main
+    agentDir: ${OPENCLAW_AGENTS_ROOT:-~/.openclaw/agents}/etf-options-ai-assistant/cron_inspection_agent/agent
+    requiredSkills:
+      - ota_daily_session_routine
+      - ota_signal_risk_inspection
+      - ota_notification_soul_routing
+      - ota_market_regime_checklist
+      - ota_volatility_range_brief
+      - ota_openclaw_tool_narration
+      - ota_signal_watch_narration
+      - ota_volatility_prediction_narration
+      - ota_historical_volatility_snapshot
+      - ota_risk_assessment_brief
+      - tavily-search
+      - topic-monitor
+      - qmd
+    requiredTools:
+      fs:
+        workspaceOnly: false
+
+  - id: etf_cron_research_agent
+    name: etf_cron_research_agent
+    templateAgentId: etf_analysis_agent
+    agentDir: ${OPENCLAW_AGENTS_ROOT:-~/.openclaw/agents}/etf-options-ai-assistant/cron_research_agent/agent
+    requiredSkills:
+      - ota_etf_rotation_research
+      - ota_strategy_research_loop
+      - ota_strategy_fusion_playbook
+      - ota_quantitative_screening_brief
+      - ota_openclaw_tool_narration
+      - ota_market_regime_checklist
+      - ota_cache_read_discipline
+      - ota_cn_market_data_discipline
+      - qmd
+      - tavily-search
+      - topic-monitor
+    requiredTools:
+      fs:
+        workspaceOnly: false
+
+  - id: etf_cron_ops_agent
+    name: etf_cron_ops_agent
+    templateAgentId: etf_main
+    agentDir: ${OPENCLAW_AGENTS_ROOT:-~/.openclaw/agents}/etf-options-ai-assistant/cron_ops_agent/agent
+    requiredSkills:
+      - ota_notification_soul_routing
+      - ota_openclaw_token_discipline
+      - ota_llm_model_routing
+      - ota_cmec_collaboration
+      - ota_openclaw_tool_narration
+      - tavily-search
+      - qmd
+    requiredTools:
+      fs:
+        workspaceOnly: false
+
+jobAgentMapping:
+  f0d82a29-45de-4377-9570-5dda65b3f58a: etf_cron_analysis_agent
+  8c548101-85b7-4c95-a458-8b0e15317d46: etf_cron_analysis_agent
+  7b401fcc-1f51-4db9-b3e1-74115890a296: etf_cron_analysis_agent
+  572f20f2-fa1d-4e25-9e0b-fbcccf366790: etf_cron_analysis_agent
+
+  etf-signal-risk-inspection-morning: etf_cron_inspection_agent
+  etf-signal-risk-inspection-midday: etf_cron_inspection_agent
+  etf-signal-risk-inspection-afternoon: etf_cron_inspection_agent
+
+  etf-rotation-research: etf_cron_research_agent
+  factor-evolution-weekly: etf_cron_research_agent
+  strategy-evolution-weekly: etf_cron_research_agent
+
+  3535ccab-f974-44ad-a642-c28964a89942: etf_cron_ops_agent
+  quality-backstop-audit: etf_cron_ops_agent
+  quality-backstop-autofix-trigger-runner: etf_cron_ops_agent
+

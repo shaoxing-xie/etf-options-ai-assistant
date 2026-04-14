@@ -19,7 +19,7 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-# 质量门禁默认（与历史行为一致）；可被 config.yaml → prediction_quality 覆盖
+# 质量门禁默认（与历史行为一致）；可被合并后配置 → prediction_quality 覆盖（域文件：`config/domains/risk_quality.yaml`）
 DEFAULT_QUALITY_GATE: Dict[str, float] = {
     "min_range_pct": 0.5,
     "max_range_pct": 10.0,

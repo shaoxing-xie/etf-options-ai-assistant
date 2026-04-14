@@ -1,6 +1,6 @@
 # 风控插件（`plugins/risk/`）
 
-本目录提供**组合与机构向风控辅助工具**：读本地 JSON/YAML 配置 + ETF 日线缓存，输出可嵌入巡检报告的结构化结论。与单标的风险评估（`plugins/analysis/risk_assessment.py` → `tool_assess_risk`）互补。
+本目录提供**组合与机构向风控辅助工具**：读本地 JSON/YAML 配置 + ETF 日线缓存，输出可嵌入巡检报告的结构化结论。与单标的风险评估（`plugins/analysis/risk_assessment.py` → **`tool_assess_risk`**：ETF/指数/A 股、HV 与合并后配置 → `risk_assessment`（域文件：`config/domains/risk_quality.yaml`））**互补**（组合用本目录工具，单标的用 `tool_assess_risk`）。
 
 ## 模块与工具
 

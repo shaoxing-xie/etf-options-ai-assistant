@@ -1,204 +1,40 @@
 # 信号+风控巡检 — 宽基 ETF 30 分钟快报（OpenClaw cron 契约）
-# 三个定时任务共用本文件，分别选用 structured_message_morning | midday | afternoon
+# 三个定时任务仍对应 morning | midday | afternoon，仅 phase 不同；Cron 推荐单次进程内工具，避免多轮 tool 链与 Gateway idle 超时。
 
 name: signal_risk_inspection
 description: 信号+风控巡检快报（research.md 第十节 + 固定模板 + 钉钉）
 timezone: "Asia/Shanghai"
 
+# 以下三段供 jobs 分别引用；正文契约一致，仅 phase 取值不同。
 structured_message_morning: |
-  执行 30 分钟巡检快报（早盘）。先按 /home/xie/.openclaw/prompts/research.md 第十节「信号+风控巡检」完成必要的数据拉取与风控步骤；**填写模板前须调用一次 `tool_portfolio_risk_snapshot`**（默认 lookback_days=120），将返回的 VaR/回撤/仓位标志填入第四节；若工具失败，第四节表格填「数据不足」。
+  执行宽基 ETF 巡检快报（早盘）。**Cron 硬推荐（单次调用）**：`tool_run_signal_risk_inspection_and_send(phase='morning', mode='prod')`。进程内拉取 000300/399006/000905、510300/510500/159915 实时与 `tool_portfolio_risk_snapshot`，组装 report 后由 `tool_send_signal_risk_inspection` 渲染并发钉钉；不经主模型传递大 JSON。
 
-  【硬约束】
-  - **最终输出必须只包含下方“模板本体”**，禁止任何额外内容（包括但不限于：任务完成/执行总结/已发送/字数统计/工具说明/数据来源/下一步/免责声明/标题#）。
-  - 若你输出中出现任何一行不在模板本体内，必须立刻重写一次，仅保留模板本体。
-  - 仅允许出现指数：000300/399006/000905；ETF：510300/510500/159915。禁止个股、涨停回马枪、长 Market Regime。
-  - 末行 `INSPECTION_RUN_STATUS` 为必填，取值与本次 tool_send_dingtalk_message 结果一致（见下方钉钉小节）。
+  【手工/排障】若需自行填字段：仍须先调 `tool_portfolio_risk_snapshot`，再 `tool_send_signal_risk_inspection(report=..., phase='morning', mode='prod')`。`report` 键清单见仓库 `plugins/notification/send_signal_risk_inspection.py` 中 `_REQUIRED_REPORT_KEYS`。
 
-  【模板本体（必须逐行按此格式输出）】
-  【宽基ETF巡检快报】 {date} 早盘 {time}
+  【硬约束】禁止直接手写最终群消息正文（除非走上述发送工具）。仅允许指数 000300/399006/000905 与 ETF 510300/510500/159915；禁止个股、涨停回马枪专章、长 Market Regime。禁止无关 web_search/docker 等依赖。
 
-  一、当前时段市场快照
+  【钉钉】`docs/openclaw/dingtalk_delivery_contract.md` §巡检快报；`delivery.mode=none`；终稿末行 `INSPECTION_RUN_STATUS:`。
 
-  | 指数 | 涨跌幅 | 强弱判定 |
-  |---|---:|---|
-  | 沪深300 | {hs300_change} | {hs300_strength} |
-  | 创业板指 | {gem_change} | {gem_strength} |
-  | 中证500 | {zz500_change} | {zz500_strength} |
-
-  风格判定：{style_judgment}
-
-  二、重点ETF实时位置（{time_ref}）
-
-  | ETF | 名称 | 现价 | 涨跌幅 | 位置描述 | 阻力 | 支撑 |
-  |---|---|---:|---:|---|---:|---:|
-  | 510300 | 沪深300ETF | {510300_price} | {510300_change} | {510300_position} | {510300_resist} | {510300_support} |
-  | 510500 | 中证500ETF | {510500_price} | {510500_change} | {510500_position} | {510500_resist} | {510500_support} |
-  | 159915 | 创业板ETF | {159915_price} | {159915_change} | {159915_position} | {159915_resist} | {159915_support} |
-
-  三、时段交易提示（{remain_window}）
-
-  当前态势：{market_state}
-
-  主要关注：
-  - {focus1}
-  - {focus2}
-  - {focus3}
-
-  操作指令建议：
-  - 510300：{510300_action}
-  - 510500：{510500_action}
-  - 159915：{159915_action}
-
-  风险等级：{risk_level}　　建议仓位：{position_suggest}
-  下次更新：{next_update}
-
-  四、组合风险快览（`tool_portfolio_risk_snapshot`）
-
-  | 指标 | 数值 |
-  |---|---|
-  | VaR（95% 历史模拟，单日百分比） | {var_snapshot} |
-  | 最大回撤（%） | {max_dd_snapshot} |
-  | 当前回撤（%） | {current_dd_snapshot} |
-  | 参考仓位占比 / 仓位标志 | {position_risk_snapshot} |
-
-  INSPECTION_RUN_STATUS: {run_status}
-
-  【钉钉投递（硬约束）】
-  - cron delivery.mode=none：将填充后的**完整「模板本体」**用 **tool_send_dingtalk_message** 发送（message=模板正文，**mode 必须为 prod**）。依赖 OPENCLAW_DINGTALK_CUSTOM_ROBOT_WEBHOOK_URL / OPENCLAW_DINGTALK_CUSTOM_ROBOT_SECRET（进程加载 ~/.openclaw/.env）。
-  - **关键词**：首行已含「巡检」。若机器人仍报关键词不匹配，将 `DINGTALK_KEYWORD`（或 `MONITOR_DINGTALK_KEYWORD`）设为与钉钉后台**完全一致**；工具会自动前置关键词（见 `plugins/notification/send_dingtalk_message.py`）。
-  - **禁止**：send_feishu_webhook、tool_send_feishu_message 或任何飞书渠道投递本快报。
-  - 正文过长时工具可能截断：可拆成 2 次 tool_send_dingtalk_message（前半/后半）或压缩表格列宽/字数；第二次发送注明「（续）」。
-  - 发送失败可重试 1 次；勿令任务 error。`INSPECTION_RUN_STATUS`：`ok`（tool 返回 success）｜`dingtalk_fail`（正文已生成但投递失败）｜`partial`（已拆条或内容被截断仍发出）。
-  - 冒烟：`bash scripts/dingtalk_signal_inspection_smoke.sh test|prod`（仓库内）。
+  【最终回复】成功时简短说明工具回执即可，勿重复粘贴全文模板。
 
 structured_message_midday: |
-  执行 30 分钟巡检快报（上午）。先按 /home/xie/.openclaw/prompts/research.md 第十节「信号+风控巡检」完成必要的数据拉取与风控步骤；**填写模板前须调用一次 `tool_portfolio_risk_snapshot`**（默认 lookback_days=120），将返回的 VaR/回撤/仓位标志填入第四节；若工具失败，第四节表格填「数据不足」。
+  执行宽基 ETF 巡检快报（上午）。**Cron 硬推荐（单次调用）**：`tool_run_signal_risk_inspection_and_send(phase='midday', mode='prod')`。进程内采集与发送同早盘说明；`phase` 须为 `midday`。
 
-  【硬约束】
-  - **最终输出必须只包含下方“模板本体”**，禁止任何额外内容（包括但不限于：任务完成/执行总结/已发送/字数统计/工具说明/数据来源/下一步/免责声明/标题#）。
-  - 若你输出中出现任何一行不在模板本体内，必须立刻重写一次，仅保留模板本体。
-  - 仅允许出现指数：000300/399006/000905；ETF：510300/510500/159915。禁止个股、涨停回马枪、长 Market Regime。
-  - 末行 `INSPECTION_RUN_STATUS` 为必填，取值与本次 tool_send_dingtalk_message 结果一致（见下方钉钉小节）。
+  【手工/排障】`tool_send_signal_risk_inspection(report=..., phase='midday', mode='prod')`；键清单见 `_REQUIRED_REPORT_KEYS`。
 
-  【模板本体（必须逐行按此格式输出）】
-  【宽基ETF巡检快报】 {date} 上午 {time}
+  【硬约束】同 structured_message_morning。
 
-  一、当前时段市场快照
+  【钉钉】同 structured_message_morning。
 
-  | 指数 | 涨跌幅 | 强弱判定 |
-  |---|---:|---|
-  | 沪深300 | {hs300_change} | {hs300_strength} |
-  | 创业板指 | {gem_change} | {gem_strength} |
-  | 中证500 | {zz500_change} | {zz500_strength} |
-
-  风格判定：{style_judgment}
-
-  二、重点ETF实时位置（{time_ref}）
-
-  | ETF | 名称 | 现价 | 涨跌幅 | 位置描述 | 阻力 | 支撑 |
-  |---|---|---:|---:|---|---:|---:|
-  | 510300 | 沪深300ETF | {510300_price} | {510300_change} | {510300_position} | {510300_resist} | {510300_support} |
-  | 510500 | 中证500ETF | {510500_price} | {510500_change} | {510500_position} | {510500_resist} | {510500_support} |
-  | 159915 | 创业板ETF | {159915_price} | {159915_change} | {159915_position} | {159915_resist} | {159915_support} |
-
-  三、时段交易提示（{remain_window}）
-
-  当前态势：{market_state}
-
-  主要关注：
-  - {focus1}
-  - {focus2}
-  - {focus3}
-
-  操作指令建议：
-  - 510300：{510300_action}
-  - 510500：{510500_action}
-  - 159915：{159915_action}
-
-  风险等级：{risk_level}　　建议仓位：{position_suggest}
-  下次更新：{next_update}
-
-  四、组合风险快览（`tool_portfolio_risk_snapshot`）
-
-  | 指标 | 数值 |
-  |---|---|
-  | VaR（95% 历史模拟，单日百分比） | {var_snapshot} |
-  | 最大回撤（%） | {max_dd_snapshot} |
-  | 当前回撤（%） | {current_dd_snapshot} |
-  | 参考仓位占比 / 仓位标志 | {position_risk_snapshot} |
-
-  INSPECTION_RUN_STATUS: {run_status}
-
-  【钉钉投递（硬约束）】
-  - cron delivery.mode=none：将填充后的**完整「模板本体」**用 **tool_send_dingtalk_message** 发送（message=模板正文，**mode 必须为 prod**）。依赖 OPENCLAW_DINGTALK_CUSTOM_ROBOT_WEBHOOK_URL / OPENCLAW_DINGTALK_CUSTOM_ROBOT_SECRET（进程加载 ~/.openclaw/.env）。
-  - **关键词**：首行已含「巡检」。若机器人仍报关键词不匹配，将 `DINGTALK_KEYWORD`（或 `MONITOR_DINGTALK_KEYWORD`）设为与钉钉后台**完全一致**；工具会自动前置关键词（见 `plugins/notification/send_dingtalk_message.py`）。
-  - **禁止**：send_feishu_webhook、tool_send_feishu_message 或任何飞书渠道投递本快报。
-  - 正文过长时工具可能截断：可拆成 2 次 tool_send_dingtalk_message（前半/后半）或压缩表格列宽/字数；第二次发送注明「（续）」。
-  - 发送失败可重试 1 次；勿令任务 error。`INSPECTION_RUN_STATUS`：`ok`（tool 返回 success）｜`dingtalk_fail`（正文已生成但投递失败）｜`partial`（已拆条或内容被截断仍发出）。
-  - 冒烟：`bash scripts/dingtalk_signal_inspection_smoke.sh test|prod`（仓库内）。
+  【最终回复】同 structured_message_morning。
 
 structured_message_afternoon: |
-  执行 30 分钟巡检快报（下午/尾盘）。先按 /home/xie/.openclaw/prompts/research.md 第十节「信号+风控巡检」完成必要的数据拉取与风控步骤；**填写模板前须调用一次 `tool_portfolio_risk_snapshot`**（默认 lookback_days=120），将返回的 VaR/回撤/仓位标志填入第四节；若工具失败，第四节表格填「数据不足」。
+  执行宽基 ETF 巡检快报（下午/尾盘）。**Cron 硬推荐（单次调用）**：`tool_run_signal_risk_inspection_and_send(phase='afternoon', mode='prod')`。进程内采集与发送同早盘说明；`phase` 须为 `afternoon`。
 
-  【硬约束】
-  - **最终输出必须只包含下方“模板本体”**，禁止任何额外内容（包括但不限于：任务完成/执行总结/已发送/字数统计/工具说明/数据来源/下一步/免责声明/标题#）。
-  - 若你输出中出现任何一行不在模板本体内，必须立刻重写一次，仅保留模板本体。
-  - 仅允许出现指数：000300/399006/000905；ETF：510300/510500/159915。禁止个股、涨停回马枪、长 Market Regime。
-  - 末行 `INSPECTION_RUN_STATUS` 为必填，取值与本次 tool_send_dingtalk_message 结果一致（见下方钉钉小节）。
+  【手工/排障】`tool_send_signal_risk_inspection(report=..., phase='afternoon', mode='prod')`；键清单见 `_REQUIRED_REPORT_KEYS`。
 
-  【模板本体（必须逐行按此格式输出）】
-  【宽基ETF巡检快报】 {date} 下午 {time}
+  【硬约束】同 structured_message_morning。
 
-  一、当前时段市场快照
+  【钉钉】同 structured_message_morning。
 
-  | 指数 | 涨跌幅 | 强弱判定 |
-  |---|---:|---|
-  | 沪深300 | {hs300_change} | {hs300_strength} |
-  | 创业板指 | {gem_change} | {gem_strength} |
-  | 中证500 | {zz500_change} | {zz500_strength} |
-
-  风格判定：{style_judgment}
-
-  二、重点ETF实时位置（{time_ref}）
-
-  | ETF | 名称 | 现价 | 涨跌幅 | 位置描述 | 阻力 | 支撑 |
-  |---|---|---:|---:|---|---:|---:|
-  | 510300 | 沪深300ETF | {510300_price} | {510300_change} | {510300_position} | {510300_resist} | {510300_support} |
-  | 510500 | 中证500ETF | {510500_price} | {510500_change} | {510500_position} | {510500_resist} | {510500_support} |
-  | 159915 | 创业板ETF | {159915_price} | {159915_change} | {159915_position} | {159915_resist} | {159915_support} |
-
-  三、时段交易提示（{remain_window}）
-
-  当前态势：{market_state}
-
-  主要关注：
-  - {focus1}
-  - {focus2}
-  - {focus3}
-
-  操作指令建议：
-  - 510300：{510300_action}
-  - 510500：{510500_action}
-  - 159915：{159915_action}
-
-  风险等级：{risk_level}　　建议仓位：{position_suggest}
-  下次更新：{next_update}
-
-  四、组合风险快览（`tool_portfolio_risk_snapshot`）
-
-  | 指标 | 数值 |
-  |---|---|
-  | VaR（95% 历史模拟，单日百分比） | {var_snapshot} |
-  | 最大回撤（%） | {max_dd_snapshot} |
-  | 当前回撤（%） | {current_dd_snapshot} |
-  | 参考仓位占比 / 仓位标志 | {position_risk_snapshot} |
-
-  INSPECTION_RUN_STATUS: {run_status}
-
-  【钉钉投递（硬约束）】
-  - cron delivery.mode=none：将填充后的**完整「模板本体」**用 **tool_send_dingtalk_message** 发送（message=模板正文，**mode 必须为 prod**）。依赖 OPENCLAW_DINGTALK_CUSTOM_ROBOT_WEBHOOK_URL / OPENCLAW_DINGTALK_CUSTOM_ROBOT_SECRET（进程加载 ~/.openclaw/.env）。
-  - **关键词**：首行已含「巡检」。若机器人仍报关键词不匹配，将 `DINGTALK_KEYWORD`（或 `MONITOR_DINGTALK_KEYWORD`）设为与钉钉后台**完全一致**；工具会自动前置关键词（见 `plugins/notification/send_dingtalk_message.py`）。
-  - **禁止**：send_feishu_webhook、tool_send_feishu_message 或任何飞书渠道投递本快报。
-  - 正文过长时工具可能截断：可拆成 2 次 tool_send_dingtalk_message（前半/后半）或压缩表格列宽/字数；第二次发送注明「（续）」。
-  - 发送失败可重试 1 次；勿令任务 error。`INSPECTION_RUN_STATUS`：`ok`（tool 返回 success）｜`dingtalk_fail`（正文已生成但投递失败）｜`partial`（已拆条或内容被截断仍发出）。
-  - 冒烟：`bash scripts/dingtalk_signal_inspection_smoke.sh test|prod`（仓库内）。
+  【最终回复】同 structured_message_morning。

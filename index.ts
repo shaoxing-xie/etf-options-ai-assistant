@@ -69,6 +69,12 @@ const plugin = {
         type: "string",
         description: "工具清单 JSON 路径（可选），不填则用 config/tools_manifest.json",
       },
+      toolExecTimeoutMs: {
+        type: "number",
+        default: 1_200_000,
+        description:
+          "tool_runner.py 子进程超时（毫秒）。盘后分析 + overlay + 日报发送常超过 60s；与 cron timeoutSeconds≈1200 对齐，默认 20 分钟。",
+      },
     },
   },
   register(api: OpenClawPluginApi) {
@@ -89,6 +95,11 @@ function registerAllTools(api: OpenClawPluginApi) {
   }
 
   const { tools } = loadToolsManifest();
+  const toolExecTimeoutMsRaw = config.toolExecTimeoutMs;
+  const toolExecTimeoutMs =
+    typeof toolExecTimeoutMsRaw === "number" && Number.isFinite(toolExecTimeoutMsRaw) && toolExecTimeoutMsRaw >= 5_000
+      ? Math.floor(toolExecTimeoutMsRaw)
+      : 1_200_000;
 
   for (const t of tools) {
     const id = t.id;
@@ -107,7 +118,7 @@ function registerAllTools(api: OpenClawPluginApi) {
           ...(Array.isArray(parameters.required) && parameters.required.length > 0 ? { required: parameters.required } : {}),
       },
       async execute(_toolCallId, params) {
-          return await callPythonTool(scriptPath, id, params ?? {});
+          return await callPythonTool(scriptPath, id, params ?? {}, toolExecTimeoutMs);
         },
       },
       { name: id }
@@ -115,11 +126,16 @@ function registerAllTools(api: OpenClawPluginApi) {
   }
 }
 
-async function callPythonTool(scriptPath: string, toolName: string, params: Record<string, unknown>) {
+async function callPythonTool(
+  scriptPath: string,
+  toolName: string,
+  params: Record<string, unknown>,
+  timeoutMs: number,
+) {
   try {
     const argsJson = JSON.stringify(params || {});
     const { stdout, stderr } = await execFileAsync(PYTHON_BIN, [scriptPath, toolName, argsJson], {
-        timeout: 60_000,
+        timeout: timeoutMs,
         maxBuffer: 10 * 1024 * 1024,
     });
 

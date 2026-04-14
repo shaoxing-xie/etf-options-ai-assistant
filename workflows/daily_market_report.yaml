@@ -1,6 +1,6 @@
 # 每日市场分析报告 — OpenClaw cron 契约（agentTurn）
-# 执行须结合 /home/xie/.openclaw/prompts/research.md 第一至六节及第十节「每日市场分析报告」
-# 调度与 ~/.openclaw/cron/jobs.json「etf: 每日市场分析报告」对齐：工作日 17:30
+# 执行须结合 research.md 第一至六节及第十节「每日市场分析报告」
+# 调度与 cron/jobs.json「etf: 每日市场分析报告」对齐：工作日 17:30
 
 name: daily_market_report
 description: 每日市场分析报告（research.md + 钉钉投递约束；章节对标见 docs/research/daily_market_report_web_benchmark.md）
@@ -8,17 +8,52 @@ schedule: "30 17 * * 1-5"
 timezone: "Asia/Shanghai"
 
 structured_message: |
-  发送每日市场分析报告。先读取并严格遵循 /home/xie/.openclaw/prompts/research.md 第一至六节及第十节「每日市场分析报告」步骤与口径，按序执行并输出完整 Markdown 报告。
+  发送每日市场分析报告。先读取并严格遵循 research.md 第一至六节及第十节「每日市场分析报告」步骤与口径，按序执行并输出完整 Markdown 报告。
 
   【章节对标（非早盘）】
   - 正文结构应对齐「网上交易日收盘复盘 / 当日市场综述」类公开报告（大盘与量能、板块、资金、要闻、外围、展望等），详见仓库 docs/research/daily_market_report_web_benchmark.md；勿与 9:15 早盘采集或 9:28 开盘晨报产物混为一谈。
 
+  【非交易日执行】若任务落在周末或法定节假日，或**手动在非交易日触发 cron**：
+  - `tool_analyze_after_close` **仍会 success**（数据为指数日线**最近可用交易日**，见返回内 `data_stale_warning`、`report_meta.non_trading_calendar_day`）。
+  - **必须**继续走 `tool_analyze_after_close_and_send_daily_report(mode=prod)` 或 `tool_send_daily_report`，得到与交易日相同版式的收评式日报；`tool_send_daily_report` 会将**数据日期 / 标题**对齐为最近 A 股交易日（并保留「任务运行日（日历）」说明）；显式传入 `report_date` 时不改写。
+  - **禁止**以「无法获取当日数据」为由仅用 `tool_send_dingtalk_message` 发短讯；**禁止**自造 `MISSING_FIELDS=NON_TRADING_DAY` 类审计行顶替正式日报。
+
+  【OpenClaw cron / 防 idle 超时】
+  网关默认会在「工具结果已返回但模型长时间无下一条流式输出」时触发 **LLM idle timeout**。长链「analyze → 多项补采 → 再 send」易在补采后首 token 过慢时中断。
+  - **与 idle 超时同级（硬性推荐）**：cron 用**单次** `tool_analyze_after_close_and_send_daily_report(mode=prod)`，进程内串接 analyze→send，避免主模型在多轮之间夹带巨大 `report_data` / 工具 JSON 被截断或拉长无输出窗口。可选 `extra_report_data` **浅合并**已采的少数 **`tool_*` 完整工具返回 JSON**；禁止只传参数字典以免覆盖发送层自动补采。
+  - 若必须分拆：analyze 成功后**至多再 2 个补采工具**即应调用 `tool_send_daily_report`。
+  - **工具子进程超时**：Gateway 插件 `option-trading-assistant` 对 `tool_runner.py` 原默认 **60s**，会导致盘后分析/串接日报在约 1 分钟时出现 `Command failed`（模型误以为「核心工具失败」而改发钉钉短讯）。已在 `index.ts` 将默认改为 **20 分钟**，并可在 `openclaw.json → plugins.entries.option-trading-assistant.config.toolExecTimeoutMs` 调整；改后需**重启 Gateway**。
+
   【核心步骤（必选）】
   1. 可选：从 config/symbols.json 补采 priority=low 标的（按需 *minute/*historical）。
-  2. tool_analyze_after_close → 将返回的 data（含可能存在的 daily_report_overlay：北向/全球指数/关键位等）并入 report_data。
-  3. tool_send_daily_report（report_type=daily，含 llm_summary；report_data 尽量包含 analysis、market_overview、northbound、news_brief、key_levels 等字段，便于对齐网上复盘结构）。
+  2. **推荐（cron）**：`tool_analyze_after_close_and_send_daily_report`；或 `tool_analyze_after_close` → 将返回的 data（含可能存在的 daily_report_overlay：北向/全球指数/关键位等）并入 report_data。
+  3. 若未用串接工具：`tool_send_daily_report`（report_type=daily 或 daily_market；**report_data.analysis 必须为第 2 步返回的 data 对象本身**，不得改为「盘后分析完成」等占位短句；补采工具**整段 JSON 原样**挂在 `report_data` 顶层同名键即可，例如 `tool_fetch_global_index_spot`、`tool_predict_daily_volatility_range`、`tool_compute_index_key_levels`、`tool_fetch_northbound_flow`、`tool_fetch_policy_news`、`tool_generate_option_trading_signals`、`tool_sector_heat_score`、`tool_tavily_search`。**发送层** `tool_send_daily_report` 会在格式化前自动把这些 `tool_*` 块并入展示字段，无需手抄到 `key_levels` 等子键；但仍须保证 `analysis` 为完整 data 对象。
 
-  【可选增强（逐项失败则记警告并继续，勿令任务 error）】
+  【发送前门禁（强制）】
+  - 禁止“只给 llm_summary 就直接发送正式日报”。发送前必须至少完成一次结构化分析（最低 `tool_analyze_after_close` 成功并有 data）。
+  - 若 `tool_analyze_after_close` 失败：禁止继续“降级拼接正式日报”。必须改发“主分析失败告警”，正文写明错误详情（error/trace 关键信息），并记录 `DAILY_REPORT_STATUS=FAILED; MISSING_FIELDS=CORE_ANALYSIS`。
+  - 若关键字段缺失较多（如 overall_trend/trend_strength、market_overview、northbound、key_levels、signals、volatility_range 等），允许发送，但必须走“降级口径”：标题需带“（降级）”，并在正文显式列出缺失项，不得伪装为完整正式版。
+  - 禁止在同一条消息中混合“完整正式版叙事”和“降级缺失清单”造成互相矛盾；若为降级版，结构化章节优先，llm 文本仅作为补充摘要并置于后段。
+  - 最终正文末尾必须包含一行机器可读审计：`DAILY_REPORT_STATUS=OK|DEGRADED|FAILED; MISSING_FIELDS=<逗号分隔或NONE|CORE_ANALYSIS>`，供质量巡检检索。
+
+  【最小补采集合（默认必跑；逐项失败可继续但需记录失败原因）】
+  在 `tool_analyze_after_close` 成功后、发送前，默认执行以下补采并合并到 report_data（避免出现“主分析成功但章节为空”）：
+  - tool_fetch_global_index_spot（**必传多市场代码**，勿只传 `^HSI`；`index_codes` 与下条「扩展增强」完全一致，推荐：`^N225,^HSI,^KS11,^GDAXI,^STOXX50E,^FTSE,^GSPC,^IXIC,^DJI`。说明：`analyze` 的 overlay 可能因 yfinance 只成功一条而只剩恒生；**发送层会合并 overlay 与顶层 `tool_fetch_global_index_spot` 的 data 行取并集**，但若补采也只拉一条，合并后仍只有一条。）
+  - tool_fetch_macro_commodities（**外围与大宗**节展示大宗/商品；整段挂 `tool_fetch_macro_commodities` 即可，发送层并入 `macro_snapshot`）
+  - tavily_search（补外部行情摘要）：检索“当日日本/韩国等亚洲主要市场收盘表现 + 当日凌晨美股表现”；可写 `global_market_digest`，或整段挂在 `tool_tavily_search` 由发送层摘要
+  - tool_predict_daily_volatility_range（补波动区间）
+  - tool_compute_index_key_levels（index_code=000300，补关键位；与 overlay 去重）
+  - tool_fetch_northbound_flow（lookback_days=5，若与 overlay 重复可跳过）
+  - tool_fetch_policy_news（强烈建议，补「信息面」政策提要）
+  - tool_generate_option_trading_signals 或 tool_generate_signals（至少其一，补信号）
+  - tool_sector_heat_score（建议，补板块热度；失败时仍可有 config/hot_sectors 兜底）
+  - tool_fetch_etf_realtime（建议，`etf_code` 含宽基+热点代表，如 `510300,512480,159819,516160,510880,512880`；整段挂 `tool_fetch_etf_realtime`；发送层在无实时数据时也会按 hot_sectors 尝试自动补拉，但以显式调用为准）
+  - 如需“策略与仓位”章节，补 `analysis.opening_strategy`（来自对应盘前/开盘流程产物）
+
+  【外盘口径（日报默认）】
+  - 日报默认不再依赖 A50 期指与纳斯达克中国金龙两项展示；以“亚洲主要市场 + 当日凌晨美股”为主。
+
+  【扩展增强（可选）】
   在发送前可按需调用（与 research.md 涨停盘后/开盘增强同源工具，仅取与「收盘复盘」相关的子集）：
   - tool_fetch_global_index_spot（index_codes 建议含亚欧与美股代表，如 ^N225,^HSI,^KS11,^GDAXI,^STOXX50E,^FTSE,^GSPC,^IXIC,^DJI）
   - tool_fetch_macro_commodities
@@ -27,16 +62,13 @@ structured_message: |
   - tool_compute_index_key_levels(index_code=000300)
   - tool_sector_heat_score
   将成功结果写入 report_data 对应字段，便于终稿分节；与 tool_analyze_after_close 已含字段去重合并。
+  若最小补采集合中某项失败，必须在 report_data 中保留 `<field>_error` 或 failure_note，供消息正文显示具体失败原因，而非仅展示“未合并”。
 
-  【钉钉投递（硬约束）】
-  - cron delivery=none：禁止依赖调度器；须用工具推到钉钉自定义机器人。
-  - **优先** tool_send_daily_report（report_data 与 /home/xie/.openclaw/prompts/research.md 第十节一致；本工作区映射为钉钉 webhook，非飞书）。若不便拼 report_data，则用 tool_send_dingtalk_message：message=完整 Markdown 正文，title 可选，**mode 必须为 prod**（禁止用 test 当作已发送）。
-  - 环境变量：OPENCLAW_DINGTALK_CUSTOM_ROBOT_WEBHOOK_URL、OPENCLAW_DINGTALK_CUSTOM_ROBOT_SECRET（OpenClaw/Gateway 进程须加载 ~/.openclaw/.env）。
-  - **禁止**：tool_send_feishu_message、飞书 webhook 扇出同一份长文、message 工具做多通道/飞书投递（避免与「仅钉钉」冲突）。
-  - 群备注：cid0dqwAYvqu94+QEoODXL1uw==（实际落群以 webhook 绑定为准）。
-  - 失败勿令任务以 error 结束；在输出末尾记录原因与重试建议（可重试 1 次）。
+  【钉钉投递（硬约束）】完整条款见仓库 docs/openclaw/dingtalk_delivery_contract.md §标准长文。
+  摘要：delivery=none；须钉钉自定义机器人；优先 tool_send_daily_report 或 tool_send_dingtalk_message(mode=prod)；禁飞书扇出同文；需 OPENCLAW_DINGTALK_*；失败不以 error 结束。
 
-  【通知要求】delivery.mode 保持 none。
+  【通知要求】delivery.mode 保持 none（同上文档）。
+  - 验收提示：`runs/*.jsonl` 里 `delivered=false` / `deliveryStatus=not-delivered` 在 **delivery=none** 下常为预期（由钉钉工具实际投递）；请以会话 `tool_send_daily_report` / `tool_send_dingtalk_message` 的 toolResult（如 errcode=0）或群内是否收到为准，勿单独用 `delivered` 判失败。
 
   【Evolver 边界】
   - 分析逻辑与编排演化：plugins/analysis/**、docs/**、workflows/*.yaml；勿将 plugins/notification/send_daily_report.py 的展示层改动作为自动演化默认项（见 docs/openclaw/三Skill驱动ETF研究自动进化实施方案.md denied_paths）。

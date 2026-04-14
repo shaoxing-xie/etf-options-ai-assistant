@@ -11,7 +11,7 @@ steps:
     description: |
       计算ETF轮动评分与排名，并生成符合“研究模式一”结构的 Markdown 报告正文（llm_summary）。
     params:
-      etf_pool: "510300,510500,159915,512100,512880,512690"
+      etf_pool: ""
       lookback_days: 120
       top_k: 3
 

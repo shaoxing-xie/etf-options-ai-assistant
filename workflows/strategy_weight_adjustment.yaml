@@ -6,15 +6,15 @@ schedule:
 steps:
   - name: get_current_weights
     tool: tool_get_strategy_weights
-    parameters: {}
+    params: {}
     output: current_weights
-  
+
   - name: adjust_weights
     tool: tool_adjust_strategy_weights
-    parameters:
+    params:
       current_weights: "{{current_weights.data}}"
       lookback_days: 60
       adjustment_rate: 0.1
     depends_on:
       - get_current_weights
-    continue_on_error: true
+    continue_on_failure: true

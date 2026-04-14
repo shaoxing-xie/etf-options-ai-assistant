@@ -431,16 +431,16 @@ ORCH_STATUS FAILURE_CODES RISK AUTOFIX_ALLOWED PR_CREATED PR_REF EVIDENCE_REF TO
 盘中 / 盘前 / 信号工作流里调用的 **`tool_predict_volatility`**、**`tool_predict_intraday_range`** 与快报缓存 **`data/volatility_ranges/*.json`** 共用一套收敛口径（见 `docs/openclaw/宽基ETF巡检快报-日内波动区间收敛说明.md`）。若要**基于近期实际表现**系统性地改进预测模型与参数，可使用专用按需工作流：
 
 - YAML：`workflows/volatility_range_evolution_on_demand.yaml`
-- `config/evolver_scope.yaml` 已扩展允许改动：`config.yaml`（须限定在波动/监控相关键）、`src/volatility_range.py`、`src/volatility_range_fallback.py`、`src/on_demand_predictor.py` 及原有 `plugins/analysis/**` 等；**仍禁止**改 data_collection、通知、`config/openclaw_*.yaml` 等。
+- `config/evolver_scope.yaml` 已扩展允许改动：分层配置（须限定在波动/监控相关键，主要落点 `config/domains/signals.yaml` / `config/domains/analytics.yaml`）、`src/volatility_range.py`、`src/volatility_range_fallback.py`、`src/on_demand_predictor.py` 及原有 `plugins/analysis/**` 等；**仍禁止**改 data_collection、通知、`config/openclaw_*.yaml` 等。
 
 **推荐流程（人工执行要点）**
 
 1. **取证**：让 Builder 读取最近若干交易日的 `data/prediction_records/predictions_*.json`、`data/volatility_ranges/*.json`，对照真实高低价做简单覆盖 / 突破率统计（不必长回测，但要可复核）。  
 2. **外部知识**：至少一次 **`tavily_search` / `web-search`**（或 Agent 已挂载的等价工具），检索可落地的方法论（如 Parkinson / EWMA / HAR、预测区间校准、realized volatility 与日内区间等），**写清标题与链接**写入 `EVIDENCE_REF`。  
 3. **改哪里**：  
-   - 参数层：`config.yaml -> signal_params -> intraday_monitor_510300 -> volatility`（`min_intraday_pct` / `max_intraday_pct` 等）；  
+   - 参数层：合并后配置 -> `signal_params -> intraday_monitor_510300 -> volatility`（域文件：`config/domains/signals.yaml`；`min_intraday_pct` / `max_intraday_pct` 等）；  
    - 实现层：`plugins/analysis/intraday_range.py`、`plugins/analysis/volatility_prediction.py`、`src/volatility_range.py`、必要时 `src/on_demand_predictor.py`。  
-4. **Reviewer**：窗口是否过短、是否过拟合某一段行情、`config.yaml` 是否出现与波动无关的改动。  
+4. **Reviewer**：窗口是否过短、是否过拟合某一段行情、分层配置是否出现与波动无关的改动。  
 5. **干跑与正式**：首次可 `AUTOFIX_ALLOWED=false` 仅要诊断与 `TOP_ACTIONS`；确认后再允许低风险 PR。
 
 **OpenClaw 工作区与 `data/`（避免「本机有文件、Agent 报空」）**
@@ -563,7 +563,7 @@ pain_summary=近期预测日内区间偏宽/偏窄或与实现波动不匹配（
 以下三条用于避免「单 Agent 写长文、口头授权绕过 Reviewer、无 PR 直提交」等偏离 **GitHub + 三 Skill 编排 + Evolver** 的情况：
 
 1. **三角色与证据**：使用 `sessions_spawn`（或你环境中与 OpenClaw 等价的子 Agent / 分步调用），按 **Builder → Reviewer → Evolver** 执行；**Builder** 必须产出四段证据 **`[COMMAND]` / `[STDOUT]` / `[STDERR]` / `[RAW_OUTPUT]`**，**Reviewer** 仅基于证据给出 `TEAM_RESULT`、`FAILURE_CODES`、`RISK`、`AUTOFIX_ALLOWED`；**Evolver** 须给出可复制的 **`ERROR_CLASS`、`STANDARD_COMMANDS`、`CHECKLIST_UPDATE`（或 `PROMPT_PATCH`）** 等复盘要素（与 `evolver_evolution` 模板一致）。  
-2. **禁止用「用户授权」替代门禁**：当 Reviewer 已判定 **`RISK=MEDIUM|HIGH`** 或 **`AUTOFIX_ALLOWED=false`** 时，**不得**仅因用户在钉钉回复「授权 autofix」就修改仓库或直推分支；若业务上允许中风险人工强开，须在 **`execution_contract.md` / 本方案**中**单独成章**约定范围（例如仅允许改 `config.yaml` 指定键），**不得**默认可绕过当前 **`TEAM_OK + RISK=LOW + AUTOFIX_ALLOWED=true`** 的自动进化门槛。  
+2. **禁止用「用户授权」替代门禁**：当 Reviewer 已判定 **`RISK=MEDIUM|HIGH`** 或 **`AUTOFIX_ALLOWED=false`** 时，**不得**仅因用户在钉钉回复「授权 autofix」就修改仓库或直推分支；若业务上允许中风险人工强开，须在 **`execution_contract.md` / 本方案**中**单独成章**约定范围（例如仅允许改分层配置的指定键），**不得**默认可绕过当前 **`TEAM_OK + RISK=LOW + AUTOFIX_ALLOWED=true`** 的自动进化门槛。
 3. **GitHub PR 与 8 行键值**：任何实跑产生的代码变更，须落在 **`ai-evolve/analysis-*` / `strategy-*` / `report-*`** 等约定前缀分支并**创建 PR**，回复中必须给出 **`PR_REF`**（链接或分支名）；**禁止**只宣称「已 git commit」却无 PR、**禁止**自动 merge **`main`**。最终回复除可选简报外，须**另起一段仅含 8 行** `KEY=value`：`ORCH_STATUS`、`FAILURE_CODES`、`RISK`、`AUTOFIX_ALLOWED`、`PR_CREATED`、`PR_REF`、`EVIDENCE_REF`、`TOP_ACTIONS`（与 `orchestrator_evolution` 一致）。
 
 完整话术可复制 **示例 F**。

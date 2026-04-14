@@ -35,6 +35,9 @@ Keep messages focused on why the change is needed.
 - [ ] Docs updated if behavior changed
 - [ ] Config files remain environment-driven (no hardcoded local paths)
 - [ ] Basic checks pass
+- [ ] **若改动 `plugins/notification/**`**（钉钉长文、日报版式、`tool_send_daily_report` 等）：在 **PR 描述或首条评论** 中显式写一行 `AUTOFIX_ALLOWED=false`（与 `config/evolver_scope.yaml` 的 `denied_paths` 及 `docs/research/daily_market_report_web_benchmark.md` §3 一致，防止自动演化/误合并）。
+
+打开 PR 时仓库会提供 `.github/pull_request_template.md` 中的同款提醒。
 
 ## Local Validation
 

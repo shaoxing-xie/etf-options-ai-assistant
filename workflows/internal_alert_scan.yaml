@@ -1,0 +1,13 @@
+# Internal chart alert scanning workflow
+# Observe-mode first: trigger, dedup/cooldown, audit, and notify (dry-run in observe).
+
+name: internal_alert_scan
+description: 扫描内部图表规则并生成 internal_chart_alert 事件
+schedule: "*/5 9-15 * * 1-5"
+
+steps:
+  - name: scan_internal_alerts
+    tool: tool_internal_alert_scan
+    description: 扫描告警规则并记录事件
+    params:
+      symbols: "510300,510500,510050"

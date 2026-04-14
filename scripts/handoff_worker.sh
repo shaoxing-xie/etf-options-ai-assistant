@@ -2,6 +2,19 @@
 set -euo pipefail
 
 # OpenClaw <-> Cursor 代码维护执行通道（CMEC）：自动监听并应用补丁
+#
+# 用法示例：
+#   # 默认仓库根目录：$HOME/etf-options-ai-assistant（需存在 .handoff/）
+#   bash scripts/handoff_worker.sh
+#
+#   # 指定仓库根目录
+#   bash scripts/handoff_worker.sh /path/to/etf-options-ai-assistant
+#
+# 相关文件（由外部系统写入，本脚本消费）：
+#   - .handoff/task.md         任务描述（可含 risk_level）
+#   - .handoff/changes.diff    统一 diff 补丁
+#   - .handoff/verify.sh       应用后校验脚本（可选）
+#   - .handoff/result.md       本脚本输出结果
 
 WORKER_VERSION="2026-03-25.p2.2"
 

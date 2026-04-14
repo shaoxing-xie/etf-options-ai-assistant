@@ -60,7 +60,7 @@
   **典型入口工作流**（`workflows/`）：按需演化（因子 / 策略参数 / 波动区间 / Checklist 等 `*_evolution_on_demand.yaml`）、CI 失败分流（`ci_autofix_triage_on_demand.yaml`）、定时质量兜底（`quality_backstop_audit.yaml`）、Cron 报错修复（`cron_error_autofix_on_demand.yaml`）。Prompt 模板见 `docs/openclaw/prompt_templates/*_evolution.md`。
 
 - **预测与验证的工程化（与“进化”配套的数据闭环）**  
-  预测落库经 **`src/prediction_recorder.py`** 与 **`src/prediction_normalizer.py`**，质量门禁阈值在 **`config.yaml` → `prediction_quality`** 可配；收盘后验证见 **`scripts/verify_predictions.py`**（工作流 **`workflows/prediction_verification.yaml`**）；滚动命中率与相对基线告警见 **`scripts/prediction_metrics_weekly.py`**（**`config.yaml` → `prediction_monitoring`**）。多模型区间融合仅作离线试验时见 **`docs/research/prediction_fusion_contract.md`** 与 **`scripts/prediction_fusion_experiment.py`**。
+  预测落库经 **`src/prediction_recorder.py`** 与 **`src/prediction_normalizer.py`**，质量门禁阈值在分层配置 **`prediction_quality`**（`config/environments/base.yaml` 等）可配；收盘后验证见 **`scripts/verify_predictions.py`**（工作流 **`workflows/prediction_verification.yaml`**）；滚动命中率与相对基线告警见 **`scripts/prediction_metrics_weekly.py`**（**`prediction_monitoring`**）。配置分层说明见 **`docs/configuration/README.md`**。多模型区间融合仅作离线试验时见 **`docs/research/prediction_fusion_contract.md`** 与 **`scripts/prediction_fusion_experiment.py`**。
 
 - **GitHub 运维稳定 IO**：在当前 OpenClaw 形态下，GitHub 操作以 `exec + gh` 为主，结合 `gh api .../actions/runs/<id>/logs` 的 zip 日志兜底路径，确保可核验证据。
 
@@ -143,7 +143,7 @@ cp .env.example .env
 # 填写 ETF_*（项目层）与 OPENCLAW_*（平台层）变量
 ```
 
-- 根据需要调整 `config.yaml` 与 `Prompt_config.yaml`（数据目录、日志目录、策略参数）。
+- 根据需要调整 **`config/environments/base.yaml`**（及可选 **`config/environments/<profile>.yaml`**、本机 **`config/local.yaml`**）与 `Prompt_config.yaml`；说明见 **`docs/configuration/README.md`**。
 
 ### 2.5 第三方 SKILL（可选但推荐）
 
@@ -211,8 +211,47 @@ bash install_plugin.sh
 - **使用指南（User Guide）**：  
   - 工作流与调度：`docs/openclaw/工作流参考手册.md`  
   - 信号与风控巡检：`docs/openclaw/信号与风控巡检工作流.md`  
+  - 图表研究台维护手册：`docs/openclaw/Internal_Chart_Alert_内生类TradingView维护手册.md`  
+  - 图表研究台值班速查：`docs/openclaw/Internal_Chart_Alert_Runbook_值班速查.md`  
   - **策略引擎与多路信号融合**：`docs/architecture/strategy_engine_and_signal_fusion.md`（工具 `tool_strategy_engine`）；OpenClaw 衔接配置 `config/openclaw_strategy_engine.yaml`；仓库定时 **`strategy_fusion`** 为交易时段 **每 30 分钟**，本机请在 `~/.openclaw/cron/jobs.json` 中按需启用对应任务。  
   - 通知与日报：参考工具手册与相关工作流文档  
+
+---
+
+## 图表研究台（TradingView 风格二期）
+
+已提供本地研究台入口（默认 `http://localhost:8511/`）：
+
+```bash
+cd /home/xie/etf-options-ai-assistant
+./scripts/run_chart_console.sh
+```
+
+二期包含页面：
+
+- `Chart Console`：K线主图 + Volume/MACD/RSI 副图 + BOLL/MA 叠加 + 多周期 + 绘图对象 + 工作区保存
+- `Backtest & Quality`：MA 交叉回测、收益/回撤/胜率/交易次数、信号点可视化
+- `Rules Config`：告警规则可视化编辑与保存
+- `Alert Replay`：告警事件过滤与时间线回放
+
+独立前端（技术路线 B）入口：
+
+```bash
+cd /home/xie/etf-options-ai-assistant
+CHART_CONSOLE_PRO_PORT=8611 python3 apps/chart_console/api/server.py
+```
+
+- 前端：`http://localhost:8611/`
+- API 示例：`http://localhost:8611/api/health`
+
+二期增强（均衡推进）：
+
+- 前端模块化：`app.js/api.js/charts.js`
+- 多图联动与图层管理：主图 + 第二价格图，支持 `Vol/MACD/RSI/MA` 显隐
+- 回测成本模型：支持 `fee_bps/slippage_bps` 参数
+- API 分层：`routes + services + serializers`
+- 冒烟验证脚本：`scripts/chart_console_phase2_smoke.py`
+- 图表台运维 Skill：`skills/ota-chart-console-pro/SKILL.md`
 
 - **OpenClaw 集成（Integration）**：  
   - 发布主线：`docs/publish/README.md`  
@@ -257,7 +296,9 @@ bash install_plugin.sh
 etf-options-ai-assistant/
 ├── README.md
 ├── LICENSE
-├── config.yaml                       # 含 prediction_quality / prediction_monitoring 等
+├── config/environments/base.yaml     # 主配置（含 prediction_quality / signal_generation 等）
+├── config/environments/prod.yaml     # 生产 overlay（可选）
+├── config/local.yaml.example         # 本机覆盖示例（复制为 config/local.yaml，已 gitignore）
 ├── Prompt_config.yaml
 ├── config/strategy_fusion.yaml       # 融合阈值与默认权重
 ├── config/openclaw_strategy_engine.yaml  # OpenClaw 路由、策略融合与预测验证指针

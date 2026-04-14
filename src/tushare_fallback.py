@@ -50,7 +50,7 @@ def get_tushare_pro():
             logger.debug("Tushare 未启用，跳过初始化")
             return None
         
-        # token 可能来自 config.yaml 的 "${TUSHARE_TOKEN}" 占位符解析（config_loader 会替换为 os.getenv 的值或 None）
+        # token 可能来自分层配置的 "${TUSHARE_TOKEN}" 占位符解析（config_loader 会替换为 os.getenv 的值或 None）
         # 兼容：配置为 None/空时，直接从环境变量兜底（与 .env 配合）
         token = tushare_config.get('token')
         if token is not None:

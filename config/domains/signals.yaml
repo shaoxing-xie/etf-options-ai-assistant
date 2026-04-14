@@ -1,0 +1,214 @@
+signal_generation:
+  enabled: true
+  default_mode: production
+  option_contracts:
+    current_month: "202502"
+    underlyings:
+      - underlying: "510300"
+        index_symbol: "000300"
+        enabled: true
+        call_contracts:
+          - contract_code: "10010910"
+            strike_price: 5.0
+            expiry_date: "2026-03-25"
+          - contract_code: "10010909"
+            strike_price: 4.9
+            expiry_date: "2026-03-25"
+        put_contracts:
+          - contract_code: "10010914"
+            strike_price: 4.5
+            expiry_date: "2026-03-25"
+          - contract_code: "10010913"
+            strike_price: 4.6
+            expiry_date: "2026-03-25"
+      - underlying: "510500"
+        index_symbol: "000905"
+        enabled: true
+        call_contracts:
+          - contract_code: 10010943
+            strike_price: 9.5
+            expiry_date: "2026-03-25"
+          - contract_code: 10010839
+            strike_price: 9.25
+            expiry_date: "2026-03-25"
+        put_contracts:
+          - contract_code: 10010841
+            strike_price: 7.5
+            expiry_date: "2026-03-25"
+          - contract_code: 10010842
+            strike_price: 7.75
+            expiry_date: "2026-03-25"
+  option:
+    enabled: true
+    default_underlying: "510300"
+    max_contracts_per_side: 3
+  intraday:
+    by_underlying:
+      "510300":
+        enabled: true
+        poll_interval_minutes: 5
+        symbol: "510300"
+        index_benchmark: "000300"
+        timeframe_minutes: 30
+        ma_periods: [10, 20]
+        rsi_period: 14
+        rsi_extreme:
+          oversold: 30
+          overbought: 70
+          exit_margin: 5
+        volatility:
+          use_intraday_range_prediction: true
+          max_intraday_pct: 0.04
+          min_intraday_pct: 0.005
+        trend_filter_daily:
+          enabled: true
+          ma_short: 20
+          ma_long: 60
+          require_uptrend_for_long: false
+        signal_thresholds:
+          min_strength_for_alert: 0.5
+          min_trend_score: 0.3
+        notification:
+          enabled: true
+          channel: "feishu"
+          push_when:
+            - "entry_opportunity"
+            - "risk_warning"
+            - "context_update"
+  etf:
+    enabled: true
+    default_symbol: "510300"
+    watchlist:
+      - symbol: "510300"
+        index_benchmark: "000300"
+        enabled: true
+        name: "华泰柏瑞沪深300ETF"
+      - symbol: "510500"
+        index_benchmark: "000905"
+        enabled: false
+        name: "南方中证500ETF"
+  stock:
+    enabled: true
+    default_symbol: "600519"
+    watchlist:
+      - symbol: "600519"
+        enabled: true
+        name: "贵州茅台"
+    short_term:
+      rsi_oversold: 35
+      rsi_overbought: 65
+      volume_vs_ma5_mult: 1.35
+      min_strength: 0.45
+
+internal_chart:
+  enabled: true
+  mode: "observe"
+  max_daily_alerts: 50
+  cooldown_seconds: 300
+  alert_engine_scan_interval_seconds: 60
+  emergency_manual_override: true
+
+signal_params:
+  strategy_version: "default"
+  rsi_oversold: 40
+  rsi_overbought: 60
+  price_change_threshold: 1.5
+  iv_multiplier: 1.2
+  signal_deduplication_time: 1800
+  min_trend_strength_strong: 0.7
+  min_signal_strength: 0.6
+  call_rsi_strong: 30
+  call_rsi_mid: 40
+  put_rsi_mid: 60
+  put_rsi_strong: 70
+  boundary_price_mult: 1.2
+  boundary_confidence_min: 0.6
+  boundary_base_strength: 0.45
+  call_trend_boost: 1.05
+  call_trend_penalty: 0.95
+  put_trend_boost: 1.05
+  put_trend_penalty: 0.95
+  use_optimized_v1: true
+  boundary_rebound_weight: 0.4
+  rsi_divergence_weight: 0.15
+  macd_turnover_weight: 0.15
+  greeks_iv_weight: 0.2
+  daily_trend_weight: 0.1
+  etf_turnover_weight: 0.65
+  macro_weight: 0.1
+  rsi_divergence_threshold: 5
+  macd_hist_turnover_pct: 20
+  boundary_position_call: 0.25
+  boundary_position_put: 0.75
+  boundary_rebound_pct: 0.5
+  delta_change_threshold: 0.1
+  gamma_peak_mult: 1.5
+  iv_change_threshold: 5
+  signal_strength_levels:
+    strong: 0.75
+    medium: 0.55
+    weak: 0.45
+  enable_weak_signal_notification: false
+  llm_watch_enabled: false
+  llm_watch_threshold: 0.5
+  llm_watch_cache_minutes: 5
+  llm_watch_sequence_threshold_high: 0.6
+  llm_watch_sequence_threshold_low: 0.5
+  filter_by_etf: true
+  etf_filter_threshold: 0.6
+  etf_filter_strength_adjustment: 0.1
+
+etf_trading:
+  enabled: true
+  strategy_version: "default"
+  enabled_etfs:
+    - "510300"
+    - "510050"
+    - "510500"
+  model_weights:
+    prophet: 0.35
+    arima: 0.3
+    technical: 0.35
+  voting_threshold: 0.6
+  min_agreements: 2
+  backtest:
+    evaluation_windows: [1, 2, 3, 5]
+    buy_threshold: 0.0025
+    sell_threshold: 0.004
+  short_cycle:
+    ma_periods: [10, 30]
+    volume_multiplier: 1.2
+    spread_threshold: 0.3
+  short_term:
+    enabled: true
+    ma_long: 20
+    ma_short: 10
+    volume_multiplier: 1.2
+    min_strength: 0.6
+    minute_timeframe: 30
+    stop_loss_pct: 0.05
+    take_profit_target: volatility_upper
+  position_management:
+    strong_trend: [0.5, 0.8]
+    medium_trend: [0.3, 0.5]
+    weak_trend: [0.0, 0.2]
+    max_single_position: 0.8
+    max_total_position: 1.0
+  risk_management:
+    stop_loss_pct: 0.05
+    take_profit_pct: 0.05
+    trailing_stop_pct: 0.03
+    max_drawdown_limit: 0.15
+  signal_alerts:
+    enable_position_adjustment: true
+    enable_stop_loss_take_profit: true
+    enable_trend_change: true
+  option_linkage:
+    enabled: true
+    liquidity_threshold: fair
+    check_expiry: true
+  gap_strategy:
+    enabled: true
+    gap_threshold: 0.008
+    fillback_threshold: 0.003
+    min_signal_strength: 0.6

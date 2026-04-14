@@ -4,6 +4,13 @@
 - 检查所有活跃预警的条件
 - 触发时通过 DingTalk 私信通知用户
 - 触发后自动取消预警
+
+用法示例（在项目根目录执行）：
+  # 执行一次轮询（若触发，会写入 data/pending_notifications.json）
+  python3 scripts/alert_poll.py
+
+  # 仅看触发结果（建议先在另一个终端 tail 观察队列/日志）
+  python3 scripts/alert_poll.py | head -c 500
 """
 
 import json
@@ -25,13 +32,26 @@ DATA_DIR = BASE_DIR / "data"
 def run_poll():
     """执行一次轮询检查"""
     alerts = load_alerts()
-    active = [a for a in alerts if a.get("active", True)]
+    active = [a for a in alerts if a.get("active", True) or a.get("status") == "active"]
 
     if not active:
         print(f"[{now_str()}] No active alerts. Skip.")
         return {"checked": 0, "triggered": 0}
 
     # 按标的分组去重
+    # 兼容两种格式：code/symbol, alert_type/condition
+    for a in active:
+        if 'code' not in a and 'symbol' in a:
+            a['code'] = a['symbol']
+        if 'alert_type' not in a and 'condition' in a:
+            a['alert_type'] = a['condition']
+        if 'type_label' not in a:
+            a['type_label'] = a.get('alert_type', a.get('condition', 'unknown'))
+        if 'user_name' not in a:
+            a['user_name'] = '用户'
+        if 'active' not in a:
+            a['active'] = a.get('status', 'active') == 'active'
+
     codes = list(set(a["code"] for a in active))
     print(f"[{now_str()}] Checking {len(codes)} codes for {len(active)} alerts...")
 

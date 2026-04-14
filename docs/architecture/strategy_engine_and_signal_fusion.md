@@ -1,17 +1,26 @@
 # 策略引擎与信号融合实施方案 v1.0
 
-本文档描述 **SignalCandidate** 统一契约、**Fusion** 规则、与现有工具（`tool_generate_signals`、`tool_generate_trend_following_signal`、`tool_strategy_weights`）的边界。实现代码位于 [`plugins/strategy_engine/`](../../plugins/strategy_engine/)，对外入口为 **`tool_strategy_engine`**。OpenClaw 侧衔接（定时任务、路由提示、权重落盘进化）见 [`config/openclaw_strategy_engine.yaml`](../../config/openclaw_strategy_engine.yaml)。
+本文档描述 **SignalCandidate** 统一契约、**Fusion** 规则、与现有工具（**`tool_generate_option_trading_signals`**（别名 `tool_generate_signals`）、`tool_generate_trend_following_signal`、`tool_strategy_weights`）的边界。实现代码位于 [`plugins/strategy_engine/`](../../plugins/strategy_engine/)，对外入口为 **`tool_strategy_engine`**。OpenClaw 侧衔接（定时任务、路由提示、权重落盘进化）见 [`config/openclaw_strategy_engine.yaml`](../../config/openclaw_strategy_engine.yaml)。
+
+## 配置文件职责划分
+
+| 文件 | 职责 |
+|------|------|
+| [`config/strategy_fusion.yaml`](../../config/strategy_fusion.yaml) | **融合与数据源**：`version`、`policy`（v1 / v1.1 / v1.2 阈值）、`strategy_weights`、`providers`（含 `llm` 开关）。 |
+| [`config/openclaw_strategy_engine.yaml`](../../config/openclaw_strategy_engine.yaml) | **OpenClaw / 进化**：默认工具参数、路由提示、`evolution.persist_effective_weights` 与落盘路径等；**不定义**融合公式。 |
+
+`tool_strategy_engine` 从 `strategy_fusion.yaml` 读取融合参数；仅在需要时读取 `openclaw_strategy_engine.yaml` 做权重持久化等。
 
 ## 目标（收敛）
 
 1. **统一信号结构**：多路策略输出同一 schema，便于审计与后续回测对齐。  
 2. **显式融合**：加权分数 + 一致性门槛 + 强冲突降级，参数在 `config/strategy_fusion.yaml`。  
-3. **不破坏默认路径**：`tool_generate_signals` 语义不变；风控仍通过现有 `tool_assess_risk` / `risk_engine.evaluate_order_request`（**不**在 `risk_engine` 内嵌融合）。
+3. **不破坏默认路径**：`tool_generate_option_trading_signals` 与别名 `tool_generate_signals` 语义不变；风控仍通过现有 `tool_assess_risk` / `risk_engine.evaluate_order_request`（**不**在 `risk_engine` 内嵌融合）。
 
 ## 与 `strategy_config.py` 的关系
 
 - [`strategy_config.py`](../../strategy_config.py) 提供 **策略配置 Schema** 与 `list_all_strategies()`，**不是**可执行求值引擎。  
-- v1 可执行 Rule 源为：**`src.signal_generation.tool_generate_signals`**、**`etf_trend_tracking.tool_generate_trend_following_signal`**。  
+- v1 可执行 Rule 源为：**`src.signal_generation.tool_generate_option_trading_signals`**（与 `tool_generate_signals` 等价）、**`etf_trend_tracking.tool_generate_trend_following_signal`**。  
 - 架构上可将 `get_strategy_config(id)` 的 `triggers.entry` 等挂到 `rationale_refs` 作解释性元数据（可选）。
 
 ## SignalCandidate 字段
@@ -25,12 +34,12 @@
 | `confidence` | float | 0～1 |
 | `rationale` | str | 短摘要（通知/卡片） |
 | `rationale_refs` | list[str] | 依据条目（指标、配置文案等） |
-| `inputs_hash` | str | SHA256，规范序列化输入快照（**禁止** `hash(str)`） |
+| `inputs_hash` | str | 与当次 `tool_strategy_engine` 运行一致；SHA256(规范 JSON)，含 `engine_inputs_hash_schema`、`policy_version`、`fusion_policy`、`strategy_weights_yaml`、标的/指数列表、`providers`、`date` 等（**禁止** `hash(str)`） |
 | `features` | dict | 可选，供未来 ML/回测 |
 | `metadata` | dict | 来源、`source`=rule/llm/ml/ensemble、timeframe 等 |
 | `timestamp` | str | ISO8601 |
 
-### 与 `tool_generate_signals` 返回的映射（摘要）
+### 与期权信号工具返回的映射（`tool_generate_option_trading_signals` / `tool_generate_signals`）（摘要）
 
 - `data.signal_type`：`buy`/偏多 → `long`；`sell`/偏空 → `short`；空或未知 → `neutral`。  
 - `data.signal_strength` / `signal_confidence`：归一化到 `score` / `confidence`（见 `rule_adapters._normalize_strength`）。  
@@ -63,8 +72,14 @@
 
 ## LLM / ML
 
-- **LLMStrategy**：占位模块；结构化 JSON → `SignalCandidate`；**默认 `providers.llm: false`**。  
-- **ML**：预留接口，不进主链路。
+- **LLM 路径**：仅当 [`config/strategy_fusion.yaml`](../../config/strategy_fusion.yaml) 中 **`providers.llm: true`** 时，`tool_strategy_engine` 才调用 [`plugins/strategy_engine/llm_strategy.py`](../../plugins/strategy_engine/llm_strategy.py) 的 `generate_llm_candidates`，并传入 **`providers_llm=True`**。不要在业务层再叠加独立的 `llm_enabled` 与 yaml 双重开关。未实现前该函数仍返回空列表。  
+- **ML**：预留接口（`MLStrategy`），不进主链路。
+
+## 合约级多候选（当前未实现）
+
+若同一 `symbol`、同一 `strategy_id` 下产生**多条** `SignalCandidate`（例如按期权合约拆分），则 **v1.1 同向比例**（按候选条数计数）会与「每策略一路」的语义不一致，可能失真。
+
+**后续若要做合约级扩展，须先约定其一**：在适配器内**聚合为每 `strategy_id` 一条**（如对 `score` 取极值或加权平均）；或**修改融合层**（子策略 id、按合约分组再融合）。当前主链路保持**每标的每 `strategy_id` 一条**主候选。
 
 ## Prometheus（可选）
 

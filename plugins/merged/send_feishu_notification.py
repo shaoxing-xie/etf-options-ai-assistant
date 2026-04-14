@@ -12,6 +12,8 @@ import json
 from typing import Dict, Any, Optional
 from datetime import datetime
 
+from plugins.utils.index_pct_sanity import reconcile_index_change_pct
+
 
 def _format_report_data(data: Dict[str, Any]) -> str:
     """将 report_data 转为可读摘要，优先使用已有文本字段；支持 analysis/data 嵌套。"""
@@ -48,9 +50,17 @@ def _format_report_data(data: Dict[str, Any]) -> str:
             for code, info in list(indices.items())[:8]:
                 if isinstance(info, dict):
                     name = info.get("name", code)
-                    chg = info.get("change_pct")
+                    raw = info.get("change_pct")
+                    op = info.get("open_price") or info.get("opening_price")
+                    pc = info.get("close_yesterday") or info.get("pre_close")
+                    rp = reconcile_index_change_pct(raw, op, pc)
+                    try:
+                        val = float(rp if rp is not None else raw)
+                        chg_s = f"{val:.2f}%"
+                    except (TypeError, ValueError):
+                        chg_s = "N/A"
                     strength = info.get("strength", "")
-                    lines.append(f"  {name}: {chg}% {strength}".strip())
+                    lines.append(f"  {name}: {chg_s} {strength}".strip())
             return "\n".join(lines)
     # 简短结构化摘要（顶层）
     parts = []
@@ -102,7 +112,7 @@ def _build_text(notification_type: str, **kwargs) -> str:
             _empty = (isinstance(signals, list) and len(signals) == 0)
             body = "暂无新信号（当前无满足条件的交易信号）" if _empty else f"信号提醒: {signals}"
         else:
-            body = message or "信号提醒（上游未传入 signal_data，请检查 tool_generate_signals 或 tool_generate_trend_following_signal 的返回是否作为 signal_data 传入）"
+            body = message or "信号提醒（上游未传入 signal_data，请检查 tool_generate_option_trading_signals（别名 tool_generate_signals）或 tool_generate_trend_following_signal 的返回是否作为 signal_data 传入）"
     elif notification_type == "risk_alert":
         if structured_message:
             body = structured_message

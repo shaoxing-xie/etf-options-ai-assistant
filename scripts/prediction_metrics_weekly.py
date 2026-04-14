@@ -8,7 +8,7 @@
   - 紧邻的前 baseline_rolling_days 日历日窗口
 若近期样本量足够且命中率较基线下降 ≥ hit_rate_drop_alert_pp（百分点），输出 WARN。
 
-配置：config.yaml → prediction_monitoring
+配置：合并后配置 → prediction_monitoring（域文件：`config/domains/risk_quality.yaml`）
 
 用法（须在仓库根目录执行，勿在 ~ 下直接跑 scripts/）：
   cd /path/to/etf-options-ai-assistant
@@ -77,7 +77,12 @@ def load_verified_hits(
                 continue
             sym = str(r.get("symbol", ""))
             pred = r.get("prediction") or {}
+            # 质量策略：mark_invalid 的记录不纳入命中统计
+            if pred.get("usable") is False:
+                continue
             method = str(pred.get("method", "unknown"))
+            if bool(pred.get("iv_hv_fusion")):
+                method = f"{method}|iv_hv_fusion"
             hit = bool(ar.get("hit"))
             rows.append((ds, sym, method, hit))
     return rows

@@ -2,6 +2,13 @@
 """
 510300 实盘监控 - 执行逻辑 + webhook 推送
 支持钉钉/飞书，通过 MONITOR_WEBHOOK_URL 或 alert_webhook.json 配置
+
+用法示例（在项目根目录执行）：
+  # 单次运行（打印本次检查与可能的推送结果）
+  python3 scripts/monitor_510300_run.py
+
+  # 指定 tool_runner 所在项目目录（当脚本被复制到别处或由 cron 调用）
+  ETF_OPTIONS_PROJECT="/abs/path/to/etf-options-ai-assistant" python3 scripts/monitor_510300_run.py
 """
 from __future__ import annotations
 

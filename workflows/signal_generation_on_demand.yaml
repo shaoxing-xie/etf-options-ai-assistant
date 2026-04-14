@@ -22,15 +22,21 @@ steps:
   - name: calculate_technical_indicators
     agent: analysis_agent
     tool: tool_calculate_technical_indicators
-    description: 计算技术指标
+    description: 计算技术指标（含 ATR；与定时 signal_generation 口径对齐）
     params:
       symbol: "510300"
       data_type: "etf_daily"
+      indicators:
+        - ma
+        - macd
+        - rsi
+        - bollinger
+        - atr
     depends_on: [fetch_etf_realtime]
 
   - name: generate_signals
     agent: analysis_agent
-    tool: tool_generate_signals
+    tool: tool_generate_option_trading_signals
     description: 生成交易信号
     params:
       underlying: "510300"
@@ -74,10 +80,14 @@ structured_message: |
   
   步骤2：使用 tool_calculate_technical_indicators 工具计算技术指标，参数：symbol="510300", data_type="etf_daily"。
   
-  步骤3：使用 tool_generate_signals 工具生成交易信号，参数：underlying="510300"。请保存返回的信号信息用于后续步骤。
+  步骤3：使用 tool_generate_option_trading_signals 工具生成期权交易信号（别名 tool_generate_signals），参数：underlying="510300"。请保存返回的信号信息用于后续步骤。
   
-  步骤4：使用 tool_assess_risk 工具评估风险，参数：symbol="510300"。
+  步骤4：使用 tool_assess_risk 工具评估风险，参数示例：symbol="510300", entry_price=<现价>, position_size=<数量>, account_value=<账户>, asset_type="etf"（或 auto；个股用 stock）。详见合并后配置 `risk_assessment`（来源：`config/domains/risk_quality.yaml`）。
   
   步骤5：使用 tool_calculate_position_size 工具计算仓位大小。请使用步骤1获取的当前价格、步骤3获取的trend_strength和signal_confidence作为参数。参数：account_value=100000, apply_hard_limit=true, hard_limit_pct=0.02。
   
   步骤6：如果步骤3生成的信号强度>=medium，使用 notification_agent 的 tool_send_signal_alert 工具发送信号提醒到飞书。请使用步骤3、4、5的结果构建signal_data，参数：min_signal_strength="medium"。
+
+  【可选：聚合与事件（实验/冒烟，不替代上述六步验收）】
+  - tool_trading_copilot：统一快扫与条件信号入口（mode、throttle_minutes 等见 config）；可与本流程对照做低上下文 smoke。
+  - tool_event_sentinel：重大政策/公告日前可 query=当日主题做检索摘要；依赖外网时需 Gateway 联网能力。

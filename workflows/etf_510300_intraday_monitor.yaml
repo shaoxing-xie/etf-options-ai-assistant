@@ -1,4 +1,8 @@
 # 510300 日内监控与信号建议工作流
+#
+# Cron 说明：原 OpenClaw 定时「etf: 510300 日内盯盘监控」已停用；510300 的日内区间/30m 指标/可选 intraday_monitor
+# 信号与风控要点已并入 workflows/signal_risk_inspection.yaml（宽基 ETF 巡检快报）。本文件仍可作为手工调用或实现参考。
+#
 # 目标：
 # - 在交易日内每5分钟监控 510300 及其基准指数 000300
 # - 使用30分钟K线的MA10/MA20 + RSI14 作为日内趋势与动量判断
@@ -25,8 +29,8 @@ steps:
     params:
       symbol: "510300"
       period: "5"
-      # 读取最近若干条数据即可，实际聚合为30分钟K
-      lookback_bars: 96   # 约2个交易日的5分钟K（可按实现调整）
+      # 30m MA20 需至少 20 根 30m K ≈ 120 根 5m；多留余量应对非整对齐
+      lookback_bars: 200
 
   - name: read_index_minute_000300
     tool: tool_read_index_minute
@@ -36,28 +40,33 @@ steps:
     params:
       symbol: "000300"
       period: "5"
-      lookback_bars: 96
+      lookback_bars: 200
 
   - name: technical_30m_510300
     tool: tool_calculate_technical_indicators
-    description: 基于30分钟K线计算510300的MA10/MA20与RSI14
+    description: 基于30分钟K线计算510300的MA10/MA20与RSI14（pandas_ta standard）
     depends_on:
       - read_etf_minute_510300
     params:
       symbol: "510300"
-      data_type: "etf_minute"   # 从分钟级缓存数据聚合
-      timeframe_minutes: 30     # 按30分钟K聚合计算MA/RSI
+      data_type: "etf_minute"
+      period: "5"
+      lookback_days: 7
+      timeframe_minutes: 30
       indicators:
-        - "MA10"
-        - "MA20"
-        - "RSI14"
+        - ma
+        - rsi
+      ma_periods:
+        - 10
+        - 20
+      rsi_length: 14
 
   - name: predict_intraday_range_510300
     tool: tool_predict_intraday_range
     description: >
       预测510300日内合理波动区间（用于过滤极端高/低波动环境）；
-      该工具输出已按 `config.yaml -> signal_params -> intraday_monitor_510300 -> volatility`
-      进行 `range_pct` 夹紧与 `confidence` 收敛。
+      该工具输出会按合并后配置中「日内波动约束」做 `range_pct` 夹紧与 `confidence` 收敛：
+      `signal_generation.intraday.by_underlying.510300.volatility`（来源：`config/domains/signals.yaml`）。
     params:
       symbol: "510300"
 
@@ -71,10 +80,10 @@ steps:
       timeframe: "daily"
 
   - name: generate_intraday_signals_510300
-    tool: tool_generate_signals
+    tool: tool_generate_option_trading_signals
     description: >
       结合技术指标与波动信息生成510300日内信号，
-      下游会再按 config.yaml 中 intraday_monitor_510300 的阈值进行过滤。
+      下游会再按合并后配置中的阈值进行过滤（来源：`config/domains/signals.yaml`）。
     depends_on:
       - technical_30m_510300
       - predict_intraday_range_510300

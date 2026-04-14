@@ -169,6 +169,20 @@ def main():
     else:
         print("  FAIL tool_predict_volatility:", r); fail_count += 1
 
+    r = run("tool_underlying_historical_snapshot", {"symbols": "510300", "max_symbols": 1}, timeout=120)
+    if ok(r, "success", "results", "hv_by_window") or (isinstance(r.get("data"), dict) and r["data"].get("results")):
+        print("  OK  tool_underlying_historical_snapshot")
+        ok_count += 1
+    else:
+        print("  FAIL tool_underlying_historical_snapshot:", r); fail_count += 1
+
+    r = run("tool_historical_snapshot", {"symbols": "510300"}, timeout=120)
+    if ok(r, "results", "hv_by_window") or (isinstance(r.get("data"), dict) and r["data"].get("results")):
+        print("  OK  alias tool_historical_snapshot")
+        ok_count += 1
+    else:
+        print("  FAIL tool_historical_snapshot:", r); fail_count += 1
+
     # ---- 8. 分析：未合并 ----
     r = run("tool_calculate_technical_indicators", {"symbol": "510300", "data_type": "etf_daily", "lookback_days": 30})
     if ok(r, "success", "indicators", "RSI", "MACD"):
@@ -177,12 +191,33 @@ def main():
     else:
         print("  FAIL tool_calculate_technical_indicators:", r); fail_count += 1
 
-    r = run("tool_generate_signals", {"underlying": "510300"}, timeout=120)
+    r = run("tool_generate_option_trading_signals", {"underlying": "510300"}, timeout=120)
     if ok(r, "success", "signals", "data"):
-        print("  OK  tool_generate_signals")
+        print("  OK  tool_generate_option_trading_signals")
         ok_count += 1
     else:
-        print("  FAIL tool_generate_signals:", r); fail_count += 1
+        print("  FAIL tool_generate_option_trading_signals:", r); fail_count += 1
+
+    r = run("tool_generate_option_trading_signals", {"underlying": "510300"}, timeout=120)
+    if ok(r, "success", "signals", "data"):
+        print("  OK  tool_generate_option_trading_signals")
+        ok_count += 1
+    else:
+        print("  FAIL tool_generate_option_trading_signals:", r); fail_count += 1
+
+    r = run("tool_generate_etf_trading_signals", {"etf_symbol": "510300"}, timeout=120)
+    if ok(r, "success", "data"):
+        print("  OK  tool_generate_etf_trading_signals")
+        ok_count += 1
+    else:
+        print("  FAIL tool_generate_etf_trading_signals:", r); fail_count += 1
+
+    r = run("tool_generate_stock_trading_signals", {"symbol": "600519"}, timeout=120)
+    if ok(r, "success", "data"):
+        print("  OK  tool_generate_stock_trading_signals")
+        ok_count += 1
+    else:
+        print("  FAIL tool_generate_stock_trading_signals:", r); fail_count += 1
 
     r = run("tool_assess_risk", {"symbol": "510300", "entry_price": 4.6, "position_size": 500, "account_value": 100000})
     if ok(r, "success", "risk", "kelly"):
@@ -191,12 +226,40 @@ def main():
     else:
         print("  FAIL tool_assess_risk:", r); fail_count += 1
 
+    # 个股风险评估依赖 akshare/东财网络；默认跳过，设 RISK_ASSESS_STOCK_SMOKE=1 时执行
+    if os.environ.get("RISK_ASSESS_STOCK_SMOKE") == "1":
+        r2 = run(
+            "tool_assess_risk",
+            {
+                "symbol": "600519",
+                "asset_type": "stock",
+                "entry_price": 1500.0,
+                "position_size": 100,
+                "account_value": 1000000,
+            },
+            timeout=120,
+        )
+        d2 = r2.get("data") if isinstance(r2, dict) else None
+        if r2.get("success") is True and isinstance(d2, dict) and "volatility" in d2:
+            print("  OK  tool_assess_risk(stock, RISK_ASSESS_STOCK_SMOKE=1)")
+            ok_count += 1
+        else:
+            print("  FAIL tool_assess_risk stock:", r2)
+            fail_count += 1
+
     r = run("tool_predict_intraday_range", {"underlying": "510300"}, timeout=120)
     if ok(r, "success", "range", "predicted"):
         print("  OK  tool_predict_intraday_range")
         ok_count += 1
     else:
         print("  FAIL tool_predict_intraday_range:", r); fail_count += 1
+
+    r = run("tool_predict_daily_volatility_range", {"underlying": "510300"}, timeout=120)
+    if ok(r, "success", "daily", "range", "upper", "lower", "formatted_output"):
+        print("  OK  tool_predict_daily_volatility_range")
+        ok_count += 1
+    else:
+        print("  FAIL tool_predict_daily_volatility_range:", r); fail_count += 1
 
     # ---- 9. ETF 趋势（未合并） ----
     r = run("tool_check_etf_index_consistency", {"etf_symbol": "510300", "index_code": "000300", "lookback_days": 20}, timeout=120)

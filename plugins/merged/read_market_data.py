@@ -90,10 +90,8 @@ def tool_read_market_data(
                     start_date=start_date,
                     end_date=end_date
                 )
-        if out.get("success"):
-            results[dt] = out
-        else:
-            results[dt] = out
+        results[dt] = out
+        if not out.get("success"):
             errors.append(f"{dt}: {out.get('message', '')}")
 
     if len(types_to_fetch) == 1:

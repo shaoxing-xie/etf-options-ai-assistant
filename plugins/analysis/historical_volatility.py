@@ -31,7 +31,7 @@ def tool_calculate_historical_volatility(
     try:
         from src.logger_config import get_module_logger
         from src.data_collector import fetch_index_daily_em  # 会自动识别 ETF 并走 fetch_etf_daily_em
-        from src.indicator_calculator import calculate_historical_volatility
+        from src.realized_vol_panel import realized_vol_windows
 
         logger = get_module_logger(__name__)
 
@@ -68,7 +68,8 @@ def tool_calculate_historical_volatility(
             }
 
         period = int(lookback_days) if int(lookback_days) > 1 else 20
-        hv = calculate_historical_volatility(df, period=period, close_col=close_col, data_period="day")
+        hv_map = realized_vol_windows(df, [period], close_col=close_col, data_period="day")
+        hv = hv_map.get(str(period))
         if hv is None:
             return {
                 "success": False,

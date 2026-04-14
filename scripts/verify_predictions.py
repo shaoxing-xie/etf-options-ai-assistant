@@ -36,7 +36,7 @@ _prediction_quality_cache: Optional[Dict[str, Any]] = None
 
 
 def _get_prediction_quality_config() -> Dict[str, Any]:
-    """与落库一致的质量门禁参数（来自 config.yaml prediction_quality）。"""
+    """与落库一致的质量门禁参数（来自合并后配置 prediction_quality；来源：config/domains/risk_quality.yaml）。"""
     global _prediction_quality_cache
     if _prediction_quality_cache is None:
         try:
@@ -130,7 +130,7 @@ def get_actual_prices_from_parquet(symbol: str, date: str) -> Optional[Dict[str,
         except Exception as e:
             logger.error(f"读取分钟数据失败 {minute_path}: {e}")
     
-    logger.warning(f"未找到 {symbol} 在 {date} 的行情数据")
+    logger.debug("未找到 %s 在 %s 的日线/分钟 parquet", symbol, date)
     return None
 
 def verify_prediction_record(
@@ -207,7 +207,8 @@ def verify_predictions_for_date(date: str, symbol: Optional[str] = None) -> Dict
     verified_count = 0
     hit_count = 0
     miss_count = 0
-    
+    skipped_no_price: Dict[str, int] = {}
+
     for record in records:
         # 跳过已验证的记录
         if record.get('verified', False):
@@ -222,7 +223,7 @@ def verify_predictions_for_date(date: str, symbol: Optional[str] = None) -> Dict
         actual_prices = get_actual_prices_from_parquet(record_symbol, date)
         
         if not actual_prices:
-            logger.warning(f"无法获取 {record_symbol} 在 {date} 的行情数据")
+            skipped_no_price[record_symbol] = skipped_no_price.get(record_symbol, 0) + 1
             continue
         
         # 验证预测
@@ -234,6 +235,16 @@ def verify_predictions_for_date(date: str, symbol: Optional[str] = None) -> Dict
             hit_count += 1
         else:
             miss_count += 1
+
+    if skipped_no_price:
+        parts = [f"{s}×{n}" for s, n in sorted(skipped_no_price.items())]
+        logger.warning(
+            "无当日 parquet 行情，跳过 %s 条预测验证（date=%s，按标的 %s）。"
+            "非交易日或盘后缓存未写入时属正常。",
+            sum(skipped_no_price.values()),
+            date,
+            ", ".join(parts),
+        )
     
     # 保存更新后的记录
     if verified_count > 0:

@@ -117,11 +117,38 @@ def record_prediction(
         PREDICTION_RECORDS_DIR.mkdir(parents=True, exist_ok=True)
 
         qgate: Optional[Dict[str, Any]] = None
+        quality_policy = "log_only"
         if config and isinstance(config.get("prediction_quality"), dict):
             qgate = config["prediction_quality"]
+            quality_policy = str(config["prediction_quality"].get("on_quality_fail", "log_only"))
+
         pred_payload = _apply_prediction_normalization(
             symbol, dict(prediction), quality_gate=qgate
         )
+
+        # 根据质量门禁结果与策略决定是否落库 / 如何标记
+        normalization = pred_payload.get("normalization") or {}
+        gate_passed = normalization.get("quality_gate_passed")
+        if gate_passed is False:
+            msg = normalization.get("message", "")
+            if quality_policy == "skip_store":
+                logger.warning(
+                    "预测质量门禁未通过，按 on_quality_fail=skip_store 丢弃记录: %s/%s (%s)",
+                    prediction_type,
+                    symbol,
+                    msg,
+                )
+                return False
+            if quality_policy == "mark_invalid":
+                # 标记为不可用于命中率统计，但仍可用于诊断
+                pred_payload.setdefault("usable", False)
+                pred_payload.setdefault("normalization", {})["on_quality_fail_policy"] = "mark_invalid"
+                logger.warning(
+                    "预测质量门禁未通过，按 on_quality_fail=mark_invalid 落库: %s/%s (%s)",
+                    prediction_type,
+                    symbol,
+                    msg,
+                )
         pred_payload.setdefault("method", prediction.get("method", "未知"))
         if pred_payload.get("confidence") is None:
             pred_payload["confidence"] = prediction.get("confidence", 0.5)

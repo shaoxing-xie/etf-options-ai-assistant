@@ -1,11 +1,14 @@
 """
-LLM增强模块
+LLM 增强模块（遗留 / 非默认路径）
 
-负责：
-- 读取 Prompt_config.yaml
+默认叙事由 **OpenClaw Gateway 主模型** + ``skills/ota-*_narration`` 完成；本模块仅在
+合并后配置 → ``llm_enhancer.enabled: true`` 且业务代码恢复 ``enhance_with_llm`` 调用时使用（域文件：`config/domains/platform.yaml`）。
+
+职责（遗留）：
+- 读取 Prompt_config.yaml（legacy，与 Skill 对照见该文件头部说明）
 - 根据 analysis_type 构建提示词
-- 调用兼容 OpenAI 的 LLM 接口（如 DeepSeek / OpenAI / Grok 等）
-- 返回 llm_summary（Markdown 文本）和 llm_meta（元信息）
+- 调用兼容 OpenAI 的 LLM 接口
+- 返回 llm_summary（Markdown）与 llm_meta（元信息）
 """
 
 from __future__ import annotations
