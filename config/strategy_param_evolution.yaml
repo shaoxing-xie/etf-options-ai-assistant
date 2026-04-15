@@ -1,0 +1,30 @@
+#策略参数演化配置 - 2026周报调优
+# 仅调整参数,不修改核心逻辑
+
+strategies:
+  trend_following_510300:
+    threshold:
+      consistency_score: 0.7        # 原0.7 → 维持
+      trend_strength: 0.6          # 原0.6 → 考虑降至0.55
+    risk:
+      atr_multiplier: 1.5         # 原1.5 → 建议降至1.3(减小回撤)
+      max_hold_days: 10           # 原10 → 建议降至8
+  
+  mean_reversion_510300:
+    volatility_filter:
+      vcone_percentile_min: 20    # 原20 → 建议升至25
+      vcone_percentile_max: 80    # 原80 → 建议降至75
+    triggers:
+      deviation_threshold: 1.5    # 原1.5 → 建议升至1.8(减少信号)
+  
+  breakout_510300:
+    filters:
+      price_range_window: 20      # 原20 → 建议升至25
+      volume_spike_ratio: 2       # 原2 → 建议升至2.5
+    risk:
+      max_loss_pct: 0.75          # 原0.75 → 考虑减至0.5
+
+# 演化依据: 30天表现回顾
+# - trend_following: 仅2信号但品质可, 最大回撤7.95%, 建议降低止损阈值
+# - mean_reversion: 0信号, 需调整过滤条件避免过度信号
+# - breakout: 0信号, 考虑降低触发门槛但加强验证
