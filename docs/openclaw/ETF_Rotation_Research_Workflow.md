@@ -43,7 +43,6 @@
 3. **工具**  
    - `tool_etf_rotation_research`：`plugins/analysis/etf_rotation_research.py`。  
    - 输出：`report_data.llm_summary`、排名、`correlation_matrix`、`config_snapshot`、`errors`；可选 **JSONL 历史**（默认 `data/etf_rotation_runs.jsonl`）。  
-   - **回测**：`tool_backtest_etf_rotation`（`plugins/backtest/etf_rotation_backtest.py`），月度调仓、等权 Top-K，与生产评分逻辑一致（研究级）。
 
 4. **发送报告**  
    - 管道版：`tool_send_analysis_report` 投递钉钉（与仓库内通知工具映射一致）。  

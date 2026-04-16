@@ -6,6 +6,9 @@ The format is inspired by Keep a Changelog and follows semantic versioning.
 
 ## [Unreleased]
 
+### Changed
+- Removed deprecated, unregistered ETF rotation backtest implementation `plugins/backtest/etf_rotation_backtest.py` and cleaned stale documentation references to `tool_backtest_etf_rotation`, aligning docs with the active backtesting path (`backtesting-trading-strategies` + `backtesting_research_on_demand`).
+
 ## [0.2.0] - 2026-04-14
 
 ### Changed

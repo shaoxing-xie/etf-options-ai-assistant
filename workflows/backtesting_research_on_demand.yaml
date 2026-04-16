@@ -1,0 +1,43 @@
+name: backtesting_research_on_demand
+description: 按需回测研究入口（A股/ETF），优先使用 openclaw-data-china-stock 数据与指标能力，再执行 backtesting-trading-strategies。
+schedule: null
+
+meta:
+  trigger_mode: manual
+  entry_agent: etf_cron_research_agent
+  fallback_agent: etf_analysis_agent
+  tags:
+    - backtesting
+    - research
+    - on_demand
+
+structured_message: |
+  执行“按需回测研究（A股/ETF）”。
+
+  【目标】
+  - 对指定标的与策略做历史验证与参数优化，输出研究级结论（非实盘指令）。
+
+  【执行顺序（硬约束）】
+  1) 先使用 openclaw-data-china-stock 体系的数据工具确认数据可用性：
+     - 采集：tool_fetch_index_historical / tool_fetch_etf_historical / tool_fetch_stock_historical（按标的类型择一或组合）
+     - 读取：tool_read_market_data（或 tool_read_* 别名）优先读取缓存
+  2) 若策略需要技术特征，调用 tool_calculate_technical_indicators（58指标体系）。
+  3) 再进入 backtesting-trading-strategies 的 backtest / optimize 流程（回测与参数搜索）。
+  4) 最终整理并输出研究结论（收益、回撤、Sharpe、胜率、关键参数、样本区间、局限性）。
+
+  【默认输入模板】
+  - symbol: 510300
+  - asset_type: etf
+  - period: daily
+  - lookback_days: 240
+  - strategy: sma_crossover
+  - optimize: false
+  - report_channel: dingtalk
+
+  【输出要求】
+  - 必须包含：样本期、参数、核心绩效指标、风险指标、过拟合风险提示。
+  - 必须明确：该结果用于研究，不直接替代盘中风控与执行链路。
+
+  【禁止】
+  - A股/ETF 场景跳过本地数据插件，直接以 yfinance 默认结果作为唯一依据。
+  - 将单次回测结果表述为确定性交易建议。

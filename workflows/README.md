@@ -13,7 +13,8 @@
 |------|----------------|------|
 | `before_open_analysis.yaml` | 工作日 9:20 | **盘前机构晨报**（唯一盘前 YAML）；**`structured_message` 自包含**（不读 research.md）；Cron 推荐单次 `tool_run_before_open_analysis_and_send` |
 | `opening_analysis.yaml` | 工作日 **9:28**（Cron 常见） | **开盘独立完整版**：含轻量开盘链路 + 机构晨报级采集 + 波动/预测回顾；`report_type=opening`；Cron 推荐单次 `tool_run_opening_analysis_and_send` |
-| `tail_session_513880.yaml` | 工作日 **14:40** | **日经225ETF尾盘监控**：`report_type=tail_session`，输出分层建议与用户可选路径（不输出唯一结论）；Cron 推荐单次 `tool_run_tail_session_analysis_and_send` |
+| `tail_session_513880.yaml` | 工作日 **14:40** | **日经225ETF尾盘监控**：`report_type=tail_session`，输出分层建议与用户可选路径（不输出唯一结论）；Cron 推荐单次 `tool_run_tail_session_analysis_and_send(market_profile='nikkei_513880')` |
+| `tail_session_513300.yaml` | 工作日 **14:40** | **纳斯达克ETF华夏尾盘监控**：`report_type=tail_session`，基于三大美股期指主连与门禁约束输出分层建议；Cron 推荐单次 `tool_run_tail_session_analysis_and_send(market_profile='nasdaq_513300')` |
 | `intraday_analysis.yaml` | 工作日 9–15 点每 15 分钟 | 日内：分钟/期权/Greeks、指标、波动、区间、信号、风控、告警 |
 | `after_close_analysis_enhanced.yaml` | 工作日 15:30 | **唯一**盘后工作流：实时行情、盘后分析、历史波动率、信号、效果记录、日报（已替代原精简版 `after_close_analysis.yaml`） |
 | `daily_market_report.yaml` | **工作日 16:30** | **每日市场分析报告**（钉钉）；与 `cron/jobs.json`「etf: 每日市场分析报告」对齐；章节对标见 [`docs/research/daily_market_report_web_benchmark.md`](../docs/research/daily_market_report_web_benchmark.md) |
@@ -23,6 +24,7 @@
 | `prediction_verification.yaml` | 工作日 15:35 | 收盘后对照 parquet 校验 `prediction_records`，写 `verified` / `actual_range`，可选 `--report`；与 `src/prediction_recorder` 标准化配套 |
 | （脚本）`scripts/prediction_metrics_weekly.py` | 按需 / 例：周五 18:05 | 滚动命中率按 `(symbol, method)` 对比近两窗，`prediction_monitoring` 配置相对基线下滑告警 |
 | （脚本）`scripts/prediction_fusion_experiment.py` | 仅手动 | 多模型区间融合离线试验；契约见 `docs/research/prediction_fusion_contract.md` |
+| `midday_recap.yaml` | 工作日 **12:00** | **午间行情盘点与下午操作指引**：`report_type=midday_recap`；单次 `tool_run_midday_recap_and_send`；与盘中「宽基午间巡检」区分；数据工具验证见 `docs/openclaw/midday_recap_data_tools_checklist.md` |
 | `signal_risk_inspection.yaml` | 见 `cron/jobs.json`（如 9:15/9:45 等） | **宽基 ETF 巡检快报**：推荐单次 `tool_run_signal_risk_inspection_and_send`（内含组合快照与模板发送）；排查见 `docs/ops/cron_signal_inspection_triage.md` |
 | `signal_generation.yaml` | 工作日 9–15 点每 30 分钟 | 读 **ETF 日线缓存** + 指标/波动/区间/信号/风控/告警 |
 | `signal_generation_on_demand.yaml` | `schedule: null`（仅手动） | 按需信号：实时 ETF、指标、信号、风控、仓位、告警 |
@@ -39,6 +41,7 @@
 | `strategy_param_evolution_on_demand.yaml` | `schedule: null`（按需） | 策略参数 / 过滤器演化工作流：仅调整参数/阈值/过滤器/风控规则，不改核心信号逻辑与标的池，满足 TEAM_OK+RISK=LOW 才允许 PR。 |
 | `research_checklist_evolution_on_demand.yaml` | `schedule: null`（按需） | 研究文档 / Checklist 演化工作流：只修改 docs/research/** 与研究相关 docs/openclaw/**，不改任何代码 |
 | `volatility_range_evolution_on_demand.yaml` | `schedule: null`（按需） | 宽基 ETF **预测波动区间** 优化：`tool_predict_volatility`、`tool_predict_intraday_range`、**`tool_predict_daily_volatility_range`（全日）** 与缓存同源逻辑；可结合 `prediction_records`、`volatility_ranges` 与 **网络检索** 做证据化调参与模型改进（见 `config/evolver_scope` 允许路径） |
+| `backtesting_research_on_demand.yaml` | `schedule: null`（按需） | **按需回测研究入口**：A股/ETF 场景优先走 `openclaw-data-china-stock` 采集+缓存读取+58指标，再调用 `backtesting-trading-strategies` 做回测/参数优化，输出研究级结论 |
 
 **双轨证据（上述四个 `*_evolution_on_demand`）**：须满足 `config/evolution_invariants.yaml` → **`dual_evidence`** — Builder `[RAW_OUTPUT]` 含 **`[LOCAL_EVIDENCE]`** 与 **`[EXTERNAL_REFS]`**（至少一条 `https://`），Orchestrator **`EVIDENCE_REF`** 同时锚定本地与外链；缺一脚 → **`DUAL_EVIDENCE_INCOMPLETE`**。人读摘要见 `docs/openclaw/execution_contract.md` §9。
 
