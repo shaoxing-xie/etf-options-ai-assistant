@@ -133,7 +133,6 @@ def build_before_open_report_data(fetch_mode: str = "production") -> Tuple[Dict[
         tool_fetch_overnight_futures_digest,
         tool_fetch_policy_news,
     )
-    from plugins.data_collection.northbound import tool_fetch_northbound_flow
     from plugins.data_collection.utils.check_trading_status import tool_check_trading_status
     from plugins.merged.fetch_index_data import tool_fetch_index_data
     from plugins.merged.volatility import tool_volatility
@@ -188,15 +187,6 @@ def build_before_open_report_data(fetch_mode: str = "production") -> Tuple[Dict[
 
     _maybe_attach_global_market_tavily_digest(rd, gspot)
     _maybe_fill_before_open_from_hist(rd, errors)
-
-    nb = _safe_step(
-        "fetch_northbound_flow",
-        tool_fetch_northbound_flow,
-        errors,
-        lookback_days=5,
-    )
-    if nb is not None:
-        rd["tool_fetch_northbound_flow"] = nb
 
     pn = _safe_step(
         "fetch_policy_news",

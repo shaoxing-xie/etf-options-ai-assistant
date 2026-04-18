@@ -8,5 +8,6 @@
 | [`factor_research_checklist.md`](factor_research_checklist.md) | 因子研究 Checklist（与演化工作流、研究文档迭代配合）。 |
 | [`daily_market_report_web_benchmark.md`](daily_market_report_web_benchmark.md) | 每日市场分析报告章节对标与质量基准（与 `workflows/daily_market_report.yaml`、钉钉日报对齐）。 |
 | [`opening_morning_brief_roadmap.md`](opening_morning_brief_roadmap.md) | 开盘晨报/盘前链路能力路线图与落地项。 |
+| [`etf_rotation_cache_benchmark_and_proposal.md`](etf_rotation_cache_benchmark_and_proposal.md) | ETF 轮动：分段计时试验、瓶颈结论与「特征缓存」最小方案（待确认后再改核心代码）。 |
 
 相关运行配置：根目录 `research.md`（若使用 OpenClaw 全局 prompts，路径以本机 `~/.openclaw/prompts/research.md` 为准）、`workflows/before_open_analysis.yaml`、`workflows/opening_analysis.yaml`。

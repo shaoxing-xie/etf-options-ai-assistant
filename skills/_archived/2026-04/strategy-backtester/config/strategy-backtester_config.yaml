@@ -1,0 +1,20 @@
+version: 1
+
+defaults:
+  initial_capital: 100000
+  benchmark: 510300
+  min_history_days: 240
+
+strategy_grids:
+  sma_crossover:
+    fast_period: [5, 10, 20]
+    slow_period: [30, 50, 100]
+  rsi_reversion:
+    period: [10, 14, 20]
+    oversold: [20, 30]
+    overbought: [70, 80]
+
+output_policy:
+  mvp_mode: true
+  allow_execution_instruction: false
+

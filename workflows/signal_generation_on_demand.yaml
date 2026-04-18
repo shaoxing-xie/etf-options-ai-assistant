@@ -21,7 +21,7 @@ steps:
 
   - name: calculate_technical_indicators
     agent: analysis_agent
-    tool: tool_calculate_technical_indicators
+    tool: tool_calculate_technical_indicators_unified
     description: 计算技术指标（含 ATR；与定时 signal_generation 口径对齐）
     params:
       symbol: "510300"
@@ -32,6 +32,7 @@ steps:
         - rsi
         - bollinger
         - atr
+      task_key: "signal_generation_on_demand"
     depends_on: [fetch_etf_realtime]
 
   - name: generate_signals
@@ -78,7 +79,7 @@ structured_message: |
   
   步骤1：使用 data_collector_agent 的 tool_fetch_etf_realtime 工具获取ETF实时数据，参数：etf_code="510300"。如果失败，继续执行下一步。
   
-  步骤2：使用 tool_calculate_technical_indicators 工具计算技术指标，参数：symbol="510300", data_type="etf_daily"。
+  步骤2：使用 tool_calculate_technical_indicators_unified 工具计算技术指标，参数：symbol="510300", data_type="etf_daily", task_key="signal_generation_on_demand"。
   
   步骤3：使用 tool_generate_option_trading_signals 工具生成期权交易信号（别名 tool_generate_signals），参数：underlying="510300"。请保存返回的信号信息用于后续步骤。
   

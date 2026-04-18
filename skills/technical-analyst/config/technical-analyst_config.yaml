@@ -1,0 +1,25 @@
+version: 1
+
+thresholds:
+  rsi:
+    oversold: 30
+    overbought: 70
+  kdj:
+    oversold: 20
+    overbought: 80
+  cci:
+    oversold: -100
+    overbought: 100
+  adx:
+    weak_trend: 20
+    strong_trend: 25
+
+scoring:
+  trend_weight: 0.4
+  momentum_weight: 0.3
+  volatility_weight: 0.3
+
+output_policy:
+  require_counterevidence: true
+  allow_execution_instruction: false
+

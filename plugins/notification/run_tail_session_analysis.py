@@ -8,7 +8,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 import logging
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -28,6 +28,39 @@ def _now_sh() -> datetime:
     if pytz is None:
         return datetime.now()
     return datetime.now(pytz.timezone("Asia/Shanghai"))
+
+
+def _yyyymmdd_dash(s: str) -> Optional[str]:
+    s = str(s or "").strip()
+    if len(s) == 8 and s.isdigit():
+        return f"{s[:4]}-{s[4:6]}-{s[6:8]}"
+    return None
+
+
+def _hist_start_yyyymmdd(end_yyyymmdd: str, calendar_lookback: int = 220) -> str:
+    """
+    historical 工具以自然日窗口拉取数据（内部会自动跳过非交易日），这里按自然日回退一段，
+    确保覆盖 120 交易日前后（含周末/节假日缓冲）。
+    """
+    try:
+        end = datetime.strptime(end_yyyymmdd, "%Y%m%d")
+    except Exception:
+        end = _now_sh()
+        return (end - timedelta(days=calendar_lookback)).strftime("%Y%m%d")
+    return (end - timedelta(days=calendar_lookback)).strftime("%Y%m%d")
+
+
+def _etf_hist_last_kline(etf_hist: Any) -> Optional[Dict[str, Any]]:
+    if not isinstance(etf_hist, dict) or not etf_hist.get("success"):
+        return None
+    d = etf_hist.get("data")
+    if not isinstance(d, dict):
+        return None
+    kl = d.get("klines")
+    if not isinstance(kl, list) or not kl:
+        return None
+    last = kl[-1]
+    return last if isinstance(last, dict) else None
 
 
 def _safe_float(v: Any) -> Optional[float]:
@@ -154,15 +187,24 @@ def _calc_rsi14(closes: List[float]) -> Optional[float]:
 def _calc_streak_and_return(closes: List[float]) -> Tuple[int, float, Optional[float]]:
     if len(closes) < 2:
         return 0, 0.0, None
-    streak = 0
-    for i in range(len(closes) - 1, 0, -1):
-        d = closes[i] - closes[i - 1]
+    deltas = [closes[i] - closes[i - 1] for i in range(1, len(closes))]
+    last_sign = 0
+    for d in reversed(deltas):
         if d > 0:
-            streak = streak + 1 if streak >= 0 else 1
-        elif d < 0:
-            streak = streak - 1 if streak <= 0 else -1
-        else:
+            last_sign = 1
             break
+        if d < 0:
+            last_sign = -1
+            break
+    if last_sign == 0:
+        return 0, 0.0, None
+    streak_abs = 0
+    for d in reversed(deltas):
+        sign = 1 if d > 0 else (-1 if d < 0 else 0)
+        if sign != last_sign:
+            break
+        streak_abs += 1
+    streak = last_sign * streak_abs
     base = closes[-2] if len(closes) >= 2 else 0.0
     day_ret = ((closes[-1] - base) / base * 100.0) if base else 0.0
     streak_ret: Optional[float] = None
@@ -171,6 +213,71 @@ def _calc_streak_and_return(closes: List[float]) -> Tuple[int, float, Optional[f
         if 0 <= start_idx < len(closes) and closes[start_idx] != 0:
             streak_ret = (closes[-1] - closes[start_idx]) / closes[start_idx] * 100.0
     return streak, day_ret, streak_ret
+
+
+def _fetch_yf_index_closes(symbol: str, lookback_days: int = 120) -> List[float]:
+    """
+    yfinance 后备：用于 global_hist_sina 不支持某些海外指数代码时的日线序列补齐。
+    仅返回 close 序列；失败时返回空列表。
+    """
+    try:
+        import yfinance as yf  # type: ignore
+    except Exception:
+        return []
+
+    # yfinance 不可用时，尝试 AkShare 美股指数日线（.IXIC/.DJI/.INX）
+    ak_symbol_map = {
+        "^IXIC": ".IXIC",
+        "^DJI": ".DJI",
+        "^GSPC": ".INX",
+    }
+    ak_symbol = ak_symbol_map.get(str(symbol).strip().upper())
+    if not ak_symbol:
+        return []
+    try:
+        import akshare as ak  # type: ignore
+    except Exception:
+        return []
+    try:
+        df = ak.index_us_stock_sina(symbol=ak_symbol)  # type: ignore[union-attr]
+        if df is None or getattr(df, "empty", True):
+            return []
+        close_col = None
+        for c in ("close", "收盘", "收盘价", "最新价"):
+            if c in df.columns:
+                close_col = c
+                break
+        if close_col is None:
+            return []
+        closes: List[float] = []
+        for v in list(df[close_col]):
+            x = _safe_float(v)
+            if x is not None:
+                closes.append(x)
+        if len(closes) > lookback_days:
+            closes = closes[-lookback_days:]
+        return closes
+    except Exception:
+        return []
+    try:
+        t = yf.Ticker(symbol)
+        # 6mo 基本覆盖 120 个交易日窗口
+        hist = t.history(period="6mo")
+        if hist is None or getattr(hist, "empty", True):
+            return []
+        closes: List[float] = []
+        col = hist.get("Close")
+        if col is None:
+            return []
+        for v in list(col):
+            x = _safe_float(v)
+            if x is not None:
+                closes.append(x)
+        if len(closes) > lookback_days:
+            closes = closes[-lookback_days:]
+        return closes
+    except Exception:
+        return []
 
 
 def _layer_cycle(ma25_dev: Optional[float], rsi14: Optional[float], close: Optional[float], ma25: Optional[float]) -> Dict[str, Any]:
@@ -301,13 +408,20 @@ def _build_risk_notices(payload: Dict[str, Any], cfg: Dict[str, Any]) -> List[st
     return dedup
 
 
-def build_tail_session_report_data(fetch_mode: str = "production") -> Tuple[Dict[str, Any], List[Dict[str, str]]]:
+def build_tail_session_report_data(
+    fetch_mode: str = "production",
+    market_profile: str = "nikkei_513880",
+) -> Tuple[Dict[str, Any], List[Dict[str, str]]]:
     errors: List[Dict[str, str]] = []
     cfg = _load_tail_cfg()
     market_cfg = _load_market_data_cfg()
     mode = fetch_mode if fetch_mode in ("production", "test") else "production"
-    etf_code = str(cfg.get("etf_code") or "513880")
-    index_symbol = str(cfg.get("index_symbol") or "^N225")
+    if market_profile == "nasdaq_513300":
+        etf_code = "513300"
+        index_symbol = "^IXIC"
+    else:
+        etf_code = str(cfg.get("etf_code") or "513880")
+        index_symbol = str(cfg.get("index_symbol") or "^N225")
 
     from plugins.data_collection.utils.check_trading_status import tool_check_trading_status
     from plugins.merged.fetch_etf_data import tool_fetch_etf_data
@@ -327,28 +441,69 @@ def build_tail_session_report_data(fetch_mode: str = "production") -> Tuple[Dict
     rd["trade_date"] = rd["date"]
     rd["generated_at"] = now.strftime("%Y-%m-%d %H:%M:%S")
 
+    # 非交易日：对齐到最近 A 股交易日，避免 realtime/IOPV 门禁导致整段 N/A
+    # 说明：fetch_mode=test 用于单测/烟测，不应受真实日历影响（否则周末跑测试会误降级）。
+    effective_trade_yyyymmdd: Optional[str] = None
+    effective_trade_dash: Optional[str] = None
+    non_trading_calendar_day = False
+    try:
+        from src.system_status import get_last_trading_day_on_or_before, is_trading_day
+
+        if mode != "test" and not is_trading_day(now, None):
+            non_trading_calendar_day = True
+            effective_trade_yyyymmdd = get_last_trading_day_on_or_before(now, None)
+            effective_trade_dash = _yyyymmdd_dash(effective_trade_yyyymmdd or "")
+    except Exception:
+        non_trading_calendar_day = False
+
+    if non_trading_calendar_day and effective_trade_dash:
+        rd["date"] = effective_trade_dash
+        rd["trade_date"] = effective_trade_dash
+        rd["non_trading_calendar_day"] = True
+        rd["data_basis"] = "last_trading_day"
+        rd["data_reference_yyyymmdd"] = effective_trade_yyyymmdd
+
     ts = safe("check_trading_status", tool_check_trading_status, errors)
     if ts is not None:
         rd["trading_status"] = ts
 
-    iopv = safe("fetch_etf_iopv_snapshot", tool_fetch_etf_iopv_snapshot, errors, etf_code=etf_code)
-    if iopv is not None:
-        rd["tool_fetch_etf_iopv_snapshot"] = iopv
+    iopv = None
+    etf_rt = None
+    if not non_trading_calendar_day:
+        iopv = safe("fetch_etf_iopv_snapshot", tool_fetch_etf_iopv_snapshot, errors, etf_code=etf_code)
+        if iopv is not None:
+            rd["tool_fetch_etf_iopv_snapshot"] = iopv
 
-    etf_rt = safe(
-        "fetch_etf_realtime",
+        etf_rt = safe(
+            "fetch_etf_realtime",
+            tool_fetch_etf_data,
+            errors,
+            data_type="realtime",
+            etf_code=etf_code,
+            mode=mode,
+        )
+        if etf_rt is not None:
+            rd["tool_fetch_etf_realtime"] = etf_rt
+
+    etf_hist = safe(
+        "fetch_etf_historical",
         tool_fetch_etf_data,
         errors,
-        data_type="realtime",
+        data_type="historical",
         etf_code=etf_code,
-        mode=mode,
+        start_date=_hist_start_yyyymmdd(effective_trade_yyyymmdd, 220) if (non_trading_calendar_day and effective_trade_yyyymmdd) else None,
+        end_date=effective_trade_yyyymmdd if (non_trading_calendar_day and effective_trade_yyyymmdd) else None,
     )
-    if etf_rt is not None:
-        rd["tool_fetch_etf_realtime"] = etf_rt
+    if etf_hist is not None:
+        rd["tool_fetch_etf_historical"] = etf_hist
 
-    n225_hist = safe("fetch_n225_hist", tool_fetch_global_index_hist_sina, errors, symbol=index_symbol, limit=90)
-    if n225_hist is not None:
-        rd["tool_fetch_n225_hist"] = n225_hist
+    index_hist_symbol = index_symbol
+    if market_profile == "nasdaq_513300":
+        # 对齐 513880 方案：使用 name_table 稳定可识别的指数名称，避免 ^IXIC 在部分环境下不可解析
+        index_hist_symbol = "纳斯达克"
+    index_hist = safe("fetch_index_hist", tool_fetch_global_index_hist_sina, errors, symbol=index_hist_symbol, limit=90)
+    if index_hist is not None:
+        rd["tool_fetch_index_hist"] = index_hist
 
     overnight = safe(
         "fetch_global_spot_for_overnight",
@@ -368,16 +523,25 @@ def build_tail_session_report_data(fetch_mode: str = "production") -> Tuple[Dict
     if isinstance(rt_row, list):
         rt_row = rt_row[0] if rt_row else {}
 
-    latest_price = _safe_float((rt_row or {}).get("current_price")) or _safe_float((iopv_row or {}).get("latest_price"))
+    # 非交易日：实时价不可得时取最近交易日收盘价作为 latest_price 口径
+    last_bar = _etf_hist_last_kline(etf_hist) if isinstance(etf_hist, dict) else None
+    hist_close = _safe_float((last_bar or {}).get("close")) if isinstance(last_bar, dict) else None
+    hist_amount = _safe_float((last_bar or {}).get("amount")) if isinstance(last_bar, dict) else None
+
+    latest_price = (
+        _safe_float((rt_row or {}).get("current_price"))
+        or _safe_float((iopv_row or {}).get("latest_price"))
+        or hist_close
+    )
     premium_pct = _safe_float((iopv_row or {}).get("discount_pct"))
     if premium_pct is not None:
         premium_pct = -premium_pct
     iopv_val = _safe_float((iopv_row or {}).get("iopv"))
-    amount = _safe_float((rt_row or {}).get("amount"))
+    amount = _safe_float((rt_row or {}).get("amount")) or hist_amount
 
     hist_rows = []
-    if isinstance(n225_hist, dict):
-        data = n225_hist.get("data")
+    if isinstance(index_hist, dict):
+        data = index_hist.get("data")
         if isinstance(data, list):
             hist_rows = [x for x in data if isinstance(x, dict)]
     closes: List[float] = []
@@ -385,15 +549,67 @@ def build_tail_session_report_data(fetch_mode: str = "production") -> Tuple[Dict
         c = _safe_float(r.get("close"))
         if c is not None:
             closes.append(c)
-    ma25 = sum(closes[-25:]) / 25.0 if len(closes) >= 25 else None
+    if not closes and market_profile == "nasdaq_513300":
+        yf_closes = _fetch_yf_index_closes("^IXIC", lookback_days=120)
+        if yf_closes:
+            closes = yf_closes
+            rd["tool_fetch_index_hist_yf_fallback"] = {
+                "success": True,
+                "source": "yfinance",
+                "symbol": "^IXIC",
+                "count": len(yf_closes),
+            }
+    # 技术指标/连涨连跌口径：
+    # - 默认与 513880 一致，统一基于对应指数历史序列（index_hist）
+    # - 仅在非 nasdaq_513300 场景下，才允许回退到 ETF 历史序列，避免 513300 与 ^IXIC 口径混用
+    if not closes and market_profile != "nasdaq_513300" and isinstance(etf_hist, dict):
+        etf_hist_data = etf_hist.get("data")
+        etf_hist_rows = None
+        if isinstance(etf_hist_data, dict):
+            etf_hist_rows = etf_hist_data.get("klines")
+        elif isinstance(etf_hist_data, list):
+            etf_hist_rows = etf_hist_data
+        if isinstance(etf_hist_rows, list):
+            for r in etf_hist_rows:
+                if not isinstance(r, dict):
+                    continue
+                c = _safe_float(r.get("close"))
+                if c is None:
+                    c = _safe_float(r.get("current_price"))
+                if c is not None:
+                    closes.append(c)
+    ma_window = 25 if len(closes) >= 25 else (len(closes) if len(closes) >= 5 else 0)
+    ma25 = (sum(closes[-ma_window:]) / float(ma_window)) if ma_window > 0 else None
     close = closes[-1] if closes else None
     ma25_dev = ((close - ma25) / ma25 * 100.0) if (close is not None and ma25 not in (None, 0.0)) else None
     rsi14 = _calc_rsi14(closes)
     streak, day_ret, streak_ret = _calc_streak_and_return(closes)
+    index_close = close
+    index_day_ret_pct = day_ret
+    if market_profile == "nasdaq_513300" and isinstance(overnight, dict):
+        spot_rows = overnight.get("data")
+        if isinstance(spot_rows, list):
+            ixic_row = next(
+                (
+                    x
+                    for x in spot_rows
+                    if isinstance(x, dict) and str(x.get("code") or "").strip().upper() == "^IXIC"
+                ),
+                None,
+            )
+            if isinstance(ixic_row, dict):
+                ixic_price = _safe_float(ixic_row.get("price"))
+                if ixic_price is None:
+                    ixic_price = _safe_float(ixic_row.get("latest_price"))
+                ixic_ret = _safe_float(ixic_row.get("change_pct"))
+                if not hist_rows and ixic_price is not None:
+                    index_close = ixic_price
+                if not hist_rows and ixic_ret is not None:
+                    index_day_ret_pct = ixic_ret
 
     iopv_source = "realtime" if (iopv_val is not None and premium_pct is not None) else "unavailable"
     manual_iopv = _resolve_manual_iopv(market_cfg, etf_code=etf_code, trade_date=rd["trade_date"])
-    iopv_est_pack = _estimate_iopv(market_cfg, etf_code=etf_code, index_day_ret_pct=day_ret, latest_price=latest_price)
+    iopv_est_pack = _estimate_iopv(market_cfg, etf_code=etf_code, index_day_ret_pct=index_day_ret_pct, latest_price=latest_price)
     if iopv_source != "realtime" and manual_iopv is not None:
         iopv_val = _safe_float(manual_iopv.get("iopv"))
         premium_pct = ((latest_price - iopv_val) / iopv_val * 100.0) if (latest_price and iopv_val) else None
@@ -461,8 +677,8 @@ def build_tail_session_report_data(fetch_mode: str = "production") -> Tuple[Dict
     }
     rd["analysis"] = {
         "index_symbol": index_symbol,
-        "index_close": close,
-        "index_day_ret_pct": day_ret,
+        "index_close": index_close,
+        "index_day_ret_pct": index_day_ret_pct,
         "ma25": ma25,
         "ma25_dev_pct": ma25_dev,
         "rsi14": rsi14,
@@ -492,6 +708,7 @@ def build_tail_session_report_data(fetch_mode: str = "production") -> Tuple[Dict
 def tool_run_tail_session_analysis_and_send(
     mode: str = "prod",
     fetch_mode: str = "production",
+    market_profile: str = "nikkei_513880",
     webhook_url: Optional[str] = None,
     secret: Optional[str] = None,
     keyword: Optional[str] = None,
@@ -500,7 +717,7 @@ def tool_run_tail_session_analysis_and_send(
 ) -> Dict[str, Any]:
     from plugins.notification.send_analysis_report import tool_send_analysis_report
 
-    report_data, _ = build_tail_session_report_data(fetch_mode=fetch_mode)
+    report_data, _ = build_tail_session_report_data(fetch_mode=fetch_mode, market_profile=market_profile)
     out = tool_send_analysis_report(
         report_data=report_data,
         mode=mode,

@@ -1,8 +1,9 @@
 """
 Tavily 搜索与通用组合工具（overlay / 定时任务 / 其它 Agent 均可直接 import）。
-依赖环境变量 TAVILY_API_KEY 等；与 plugins/sentinel/event_sentinel._tavily_search 低层行为可并存。
+依赖环境变量 ``TAVILY_API_KEY`` / ``TAVILY_API_KEYS``（多枚逗号分隔，429/432 等自动换 Key）等。
 
-- tavily_search：单次 HTTP 检索
+- tavily_post_search：底层 POST，多 Key 回退
+- tavily_search：单次 HTTP 检索（内部走 tavily_post_search）
 - parse_include_domains / tavily_search_with_include_domain_fallback：域名白名单与失败降级
 - tavily_pack_search_result_for_llm / tavily_gather_batch_searches：多路 query 拼成一份 LLM 素材
 
@@ -66,8 +67,34 @@ def _tavily_api_key_from_openclaw_json() -> str:
         return ""
 
 
-def _collect_api_key() -> str:
+def _tavily_status_try_next_key(status: int) -> bool:
+    """额度/限流/临时不可用或单 Key 无效时，尝试列表中的下一枚 Key。"""
+    return status in (401, 429, 432, 503)
+
+
+def collect_tavily_api_keys() -> List[str]:
+    """
+    返回按优先级排序的 Tavily API Key 列表（去重）。
+
+    配置方式（任选其一，勿把密钥提交到 git）：
+
+    1. **推荐** ``TAVILY_API_KEYS``：逗号或空白分隔多枚，按书写顺序依次尝试（前一枚 429/432 等自动换下一枚）。
+    2. 单枚：``TAVILY_API_KEY``，可选 ``TAVILY_API_KEY_2`` … ``TAVILY_API_KEY_9`` 作为备用。
+    3. 兼容：``ETF_TAVILY_API_KEY``、``OPENCLAW_TAVILY_API_KEY``、``TAVILY_KEY``。
+    4. 最后兜底：``~/.openclaw/openclaw.json`` 插件 tavily-search 的 apiKey。
+
+    若同时设置 ``TAVILY_API_KEYS`` 与单枚变量，**仅当未配置 TAVILY_API_KEYS 时**才合并单枚变量（避免与显式列表重复）。
+    """
     _ensure_config_env_loaded()
+    keys: List[str] = []
+    raw_multi = (os.getenv("TAVILY_API_KEYS") or "").strip()
+    if raw_multi:
+        for part in re.split(r"[\s,;]+", raw_multi):
+            p = part.strip()
+            if p and p not in keys:
+                keys.append(p)
+        return keys
+
     for k in (
         "TAVILY_API_KEY",
         "ETF_TAVILY_API_KEY",
@@ -75,9 +102,86 @@ def _collect_api_key() -> str:
         "TAVILY_KEY",
     ):
         v = (os.getenv(k) or "").strip()
-        if v:
-            return v
-    return _tavily_api_key_from_openclaw_json()
+        if v and v not in keys:
+            keys.append(v)
+    for i in range(2, 10):
+        v = (os.getenv(f"TAVILY_API_KEY_{i}") or "").strip()
+        if v and v not in keys:
+            keys.append(v)
+    jk = _tavily_api_key_from_openclaw_json()
+    if jk and jk not in keys:
+        keys.append(jk)
+    return keys
+
+
+def _collect_api_key() -> str:
+    """兼容旧代码：仅返回第一枚可用 Key。"""
+    ks = collect_tavily_api_keys()
+    return ks[0] if ks else ""
+
+
+def tavily_post_search(
+    body_without_api_key: Dict[str, Any],
+    *,
+    timeout: float = 25,
+) -> Dict[str, Any]:
+    """
+    调用 Tavily ``/search``，对 ``body_without_api_key`` 注入 ``api_key``。
+    多 Key 时在 401/429/432/503 等可恢复错误上自动换下一枚。
+
+    返回 ``{success, data?, message?, http_status?}``；``data`` 为响应 JSON。
+    """
+    keys = collect_tavily_api_keys()
+    if not keys:
+        return {
+            "success": False,
+            "message": "Missing TAVILY_API_KEY（可设置 TAVILY_API_KEYS 多枚或 TAVILY_API_KEY）",
+            "data": None,
+            "http_status": None,
+        }
+    try:
+        import requests
+    except ImportError:
+        return {"success": False, "message": "requests_not_installed", "data": None, "http_status": None}
+
+    last_status: Optional[int] = None
+    last_msg = ""
+    for key in keys:
+        body = dict(body_without_api_key)
+        body["api_key"] = key
+        try:
+            resp = requests.post("https://api.tavily.com/search", json=body, timeout=timeout)
+        except Exception as e:
+            last_msg = str(e)
+            last_status = None
+            continue
+        last_status = resp.status_code
+        if resp.ok:
+            try:
+                return {
+                    "success": True,
+                    "data": resp.json(),
+                    "message": "ok",
+                    "http_status": last_status,
+                }
+            except Exception as e:
+                last_msg = str(e)
+                continue
+        last_msg = f"Tavily HTTP {resp.status_code}"
+        try:
+            j = resp.json()
+            if isinstance(j, dict) and j.get("detail"):
+                last_msg = f"{last_msg} {j.get('detail')}"
+        except Exception:
+            pass
+        if not _tavily_status_try_next_key(resp.status_code):
+            break
+    return {
+        "success": False,
+        "message": last_msg or "all_tavily_keys_failed",
+        "data": None,
+        "http_status": last_status,
+    }
 
 
 def build_answer_from_tavily_payload(data: Dict[str, Any], *, max_chars: int = 2800) -> str:
@@ -133,63 +237,49 @@ def tavily_search(
     if not q:
         return {"success": False, "message": "empty_query", "answer": None, "raw": None}
 
-    api_key = _collect_api_key()
-    if not api_key:
+    body: Dict[str, Any] = {
+        "query": q,
+        "search_depth": "advanced" if deep else "basic",
+        "topic": topic,
+        "max_results": max(1, min(int(max_results), 20)),
+        "include_answer": True,
+        "include_raw_content": False,
+    }
+    if include_domains:
+        body["include_domains"] = [str(d).strip().lstrip("@") for d in include_domains if str(d).strip()][:12]
+    if exclude_domains:
+        body["exclude_domains"] = [str(d).strip().lstrip("@") for d in exclude_domains if str(d).strip()][
+            :12
+        ]
+    if topic == "news" and days is not None:
+        body["days"] = int(days)
+
+    post = tavily_post_search(body, timeout=25)
+    if not post.get("success"):
         return {
             "success": False,
-            "message": "Missing TAVILY_API_KEY (或 ETF_TAVILY_API_KEY / OPENCLAW_TAVILY_API_KEY / TAVILY_KEY)；已尝试加载项目 .env 与 ~/.openclaw/.env",
+            "message": post.get("message")
+            or "Missing TAVILY_API_KEY (或 TAVILY_API_KEYS / ETF_TAVILY_API_KEY / OPENCLAW_TAVILY_API_KEY / TAVILY_KEY)；已尝试加载项目 .env 与 ~/.openclaw/.env",
             "answer": None,
             "raw": None,
         }
-
-    try:
-        import requests
-
-        body: Dict[str, Any] = {
-            "api_key": api_key,
-            "query": q,
-            "search_depth": "advanced" if deep else "basic",
-            "topic": topic,
-            "max_results": max(1, min(int(max_results), 20)),
-            "include_answer": True,
-            "include_raw_content": False,
-        }
-        if include_domains:
-            body["include_domains"] = [str(d).strip().lstrip("@") for d in include_domains if str(d).strip()][
-                :12
-            ]
-        if exclude_domains:
-            body["exclude_domains"] = [str(d).strip().lstrip("@") for d in exclude_domains if str(d).strip()][
-                :12
-            ]
-        if topic == "news" and days is not None:
-            body["days"] = int(days)
-
-        resp = requests.post("https://api.tavily.com/search", json=body, timeout=25)
-        if not resp.ok:
-            return {
-                "success": False,
-                "message": f"http_{resp.status_code}",
-                "answer": None,
-                "raw": None,
-            }
-        data = resp.json()
-        answer = build_answer_from_tavily_payload(data, max_chars=2400)
-        if not answer.strip():
-            return {
-                "success": False,
-                "message": "tavily_empty_answer_and_results",
-                "answer": None,
-                "raw": data,
-            }
+    data = post.get("data")
+    if not isinstance(data, dict):
+        return {"success": False, "message": "tavily_invalid_json", "answer": None, "raw": None}
+    answer = build_answer_from_tavily_payload(data, max_chars=2400)
+    if not answer.strip():
         return {
-            "success": True,
-            "message": "ok",
-            "answer": answer.strip()[:2000],
+            "success": False,
+            "message": "tavily_empty_answer_and_results",
+            "answer": None,
             "raw": data,
         }
-    except Exception as e:
-        return {"success": False, "message": str(e), "answer": None, "raw": None}
+    return {
+        "success": True,
+        "message": "ok",
+        "answer": answer.strip()[:2000],
+        "raw": data,
+    }
 
 
 # ---------------------------------------------------------------------------

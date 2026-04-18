@@ -50,6 +50,23 @@ print(f"[verify_openclaw_config] plugins.load.paths 已包含仓库: {need}")
 PY
 fi
 
+# 可选：校验单工具 cron 任务是否声明了严格 toolsAllow（默认开启）
+# 关闭方式：VERIFY_CRON_TOOLS_ALLOW=0 bash scripts/verify_openclaw_config.sh
+if [[ "${VERIFY_CRON_TOOLS_ALLOW:-1}" == "1" && -f "$ROOT_BASE/.openclaw/cron/jobs.json" ]]; then
+  if ! python3 "$SCRIPT_DIR/check_cron_tools_allow.py" --jobs "$ROOT_BASE/.openclaw/cron/jobs.json"; then
+    echo "[verify_openclaw_config] cron toolsAllow 校验失败，请修复后再执行。" >&2
+    exit 1
+  fi
+fi
+
+# 可选：toolsAllow 中的工具名必须在 config/tools_manifest.json 中注册（OpenClaw 插件从 manifest 注册工具）
+if [[ "${VERIFY_MANIFEST_VS_CRON_TOOLS:-1}" == "1" && -f "$REPO_ROOT/config/tools_manifest.json" && -f "$ROOT_BASE/.openclaw/cron/jobs.json" ]]; then
+  if ! python3 "$SCRIPT_DIR/verify_tools_manifest_vs_cron.py" --jobs "$ROOT_BASE/.openclaw/cron/jobs.json" --manifest "$REPO_ROOT/config/tools_manifest.json"; then
+    echo "[verify_openclaw_config] tools_manifest 与 cron toolsAllow 不一致，请修复后再执行。" >&2
+    exit 1
+  fi
+fi
+
 if [[ "$checked" -eq 0 ]]; then
   echo "[verify_openclaw_config] no openclaw json files present; skip"
 fi

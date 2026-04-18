@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import logging
+import math
 from datetime import datetime, timedelta
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
@@ -23,8 +24,18 @@ logger = logging.getLogger(__name__)
 # 与日报外盘推荐集合对齐：美股三大 + 日韩现货开盘参考 + 港股 + 欧股收市口径（开盘前展示更稳定）
 _OPENING_GLOBAL_INDEX_CODES = "^DJI,^GSPC,^IXIC,^N225,^KS11,^HSI,^GDAXI,^STOXX50E,^FTSE"
 
-# 历史日线口径补齐（上一完整交易日收盘）：仅用于欧股代表
-_OPENING_GLOBAL_HIST_CODES = ("^GDAXI", "^STOXX50E", "^FTSE")
+# 历史日线口径补齐（上一完整交易日收盘）：当 yfinance/新浪 spot 缺行或缺 change_pct 时补全。
+# 需覆盖隔夜指示三组：美股三大、日/韩、欧股；否则会出现「仅有欧股行、美股空白」等半屏问题。
+_OPENING_GLOBAL_HIST_CODES = (
+    "^DJI",
+    "^GSPC",
+    "^IXIC",
+    "^N225",
+    "^KS11",
+    "^GDAXI",
+    "^STOXX50E",
+    "^FTSE",
+)
 
 
 def _now_sh() -> datetime:
@@ -142,6 +153,21 @@ def _extract_change_pct(row: Dict[str, Any]) -> Optional[float]:
         return None
 
 
+def _change_pct_is_usable(row: Optional[Dict[str, Any]]) -> bool:
+    """与报告层一致：None/NaN/inf 视为缺数，需 hist 补全。"""
+    if not isinstance(row, dict):
+        return False
+    p = _extract_change_pct(row)
+    if p is None:
+        return False
+    try:
+        if isinstance(p, float) and (math.isnan(p) or math.isinf(p)):
+            return False
+    except Exception:
+        return False
+    return True
+
+
 def _hist_resp_to_index_row(code: str, resp: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     """
     将 tool_fetch_global_index_hist_sina 的返回（data 为日线 rows）转为 global_spot 风格的一行。
@@ -175,13 +201,22 @@ def _hist_resp_to_index_row(code: str, resp: Dict[str, Any]) -> Optional[Dict[st
     }
 
 
-def _maybe_fill_opening_eu_from_hist(rd: Dict[str, Any], errors: List[Dict[str, str]]) -> None:
+def _maybe_fill_opening_global_from_hist(rd: Dict[str, Any], errors: List[Dict[str, str]]) -> None:
     """
-    开盘 9:28：欧股已收市，spot 可能缺 change_pct 或缺行；用 hist_sina 补齐上一完整交易日收盘涨跌幅。
+    开盘：spot 缺行或缺 change_pct 时，用 akshare 新浪全球指数日线补齐上一完整交易日收盘涨跌幅。
+    覆盖美股/日韩/欧股，避免仅欧股被 hist 补全而美股组缺失（global_spot 主源偶发不全时）。
     结果写入 market_overview.indices，供 send_daily_report 统一渲染。
+
+    注意：新浪现货行可能用 ``int_dji`` 等 code，不能用 ``by_code.get('^DJI')`` 判断；
+    缺数须与 ``send_daily_report._opening_pick_row`` 同一套归一化匹配。
     """
     try:
         from plugins.data_collection.index.fetch_global_hist_sina import tool_fetch_global_index_hist_sina
+        from plugins.notification.send_daily_report import (
+            _opening_global_index_rows,
+            _opening_index_code_match,
+            _opening_pick_row,
+        )
     except Exception as e:
         logger.warning("opening_runner: import global_hist_sina failed: %s", e)
         return
@@ -193,10 +228,16 @@ def _maybe_fill_opening_eu_from_hist(rd: Dict[str, Any], errors: List[Dict[str, 
     idx_list: List[Dict[str, Any]] = [x for x in indices if isinstance(x, dict)] if isinstance(indices, list) else []
     by_code = {str(x.get("code") or x.get("name") or ""): x for x in idx_list if (x.get("code") or x.get("name"))}
 
+    def _merged_preview_rows() -> List[Dict[str, Any]]:
+        """与发送层一致：gspot + 当前正在编辑的 indices。"""
+        tmp = {**rd, "market_overview": {"indices": list(by_code.values())}}
+        return _opening_global_index_rows(tmp)
+
     filled_rows: List[Dict[str, Any]] = []
     for code in _OPENING_GLOBAL_HIST_CODES:
-        cur = by_code.get(code)
-        if isinstance(cur, dict) and _extract_change_pct(cur) is not None:
+        rows_preview = _merged_preview_rows()
+        existing = _opening_pick_row(rows_preview, code)
+        if _change_pct_is_usable(existing):
             continue
         resp = _safe_step(f"fetch_global_index_hist_sina:{code}", tool_fetch_global_index_hist_sina, errors, symbol=code, limit=2)
         if not isinstance(resp, dict) or not resp.get("success"):
@@ -205,10 +246,15 @@ def _maybe_fill_opening_eu_from_hist(rd: Dict[str, Any], errors: List[Dict[str, 
         if not row:
             continue
         # 用更友好的中文名（如果 spot 已有 name 则保留）
-        if isinstance(cur, dict) and cur.get("name"):
-            row["name"] = cur.get("name")
+        if isinstance(existing, dict) and existing.get("name"):
+            row["name"] = existing.get("name")
+        # 去掉同指数的旧别名行（如 int_dji），避免隔夜节重复或匹配歧义
+        for k in list(by_code.keys()):
+            o = by_code[k]
+            if isinstance(o, dict) and _opening_index_code_match(o.get("code"), code):
+                del by_code[k]
+        by_code[str(row.get("code") or code)] = row
         filled_rows.append(row)
-        by_code[code] = row
 
     if filled_rows:
         rd["tool_fetch_global_index_hist_sina"] = {
@@ -282,7 +328,7 @@ def build_opening_report_data(fetch_mode: str = "production") -> Tuple[Dict[str,
     from plugins.data_collection.limit_up.sector_heat import tool_sector_heat_score
     from plugins.analysis.key_levels import tool_compute_index_key_levels
     from plugins.merged.fetch_etf_data import tool_fetch_etf_data
-    from plugins.analysis.technical_indicators import tool_calculate_technical_indicators
+    from src.services.indicator_runtime import calculate_indicators_via_tool, resolve_indicator_runtime
     from plugins.merged.analyze_market import tool_analyze_market
     from plugins.merged.volatility import tool_volatility
     from plugins.analysis.intraday_range import tool_predict_intraday_range
@@ -341,8 +387,8 @@ def build_opening_report_data(fetch_mode: str = "production") -> Tuple[Dict[str,
     # 与盘后 daily_report_overlay 同源：yfinance+新浪均无有效行时，用 Tavily 拼一段外盘定性摘要（非逐点涨跌幅）
     _maybe_attach_global_market_tavily_digest(rd, gspot)
 
-    # 欧股收市口径：用历史日线补齐上一交易日涨跌幅（不替代 spot，仅用于缺口）
-    _maybe_fill_opening_eu_from_hist(rd, errors)
+    # 全球主要指数：用历史日线补齐 spot 缺口（美/日/韩/欧），避免隔夜指示只出半屏
+    _maybe_fill_opening_global_from_hist(rd, errors)
 
     pn = _safe_step(
         "fetch_policy_news",
@@ -424,9 +470,10 @@ def build_opening_report_data(fetch_mode: str = "production") -> Tuple[Dict[str,
     if rt_etf is not None:
         rd["tool_fetch_etf_realtime"] = rt_etf
 
+    _ind_rt = resolve_indicator_runtime("opening_analysis")
     tech = _safe_step(
         "technical_indicators",
-        tool_calculate_technical_indicators,
+        calculate_indicators_via_tool,
         errors,
         symbol="510300",
         data_type="etf_daily",
@@ -434,6 +481,11 @@ def build_opening_report_data(fetch_mode: str = "production") -> Tuple[Dict[str,
     )
     if tech is not None:
         rd["tool_calculate_technical_indicators"] = tech
+        rd["indicator_runtime"] = {
+            "task": "opening_analysis",
+            "route": _ind_rt.route,
+            "notes": _ind_rt.notes,
+        }
 
     opening_analysis = _safe_step(
         "analyze_opening_market",
@@ -579,6 +631,14 @@ def build_opening_report_data(fetch_mode: str = "production") -> Tuple[Dict[str,
 
     if errors:
         rd["runner_errors"] = errors
+
+    # 隔夜指示四类：主源仍缺时按类 Tavily（需在 analysis/A50 与 hist 合并之后）
+    try:
+        from plugins.notification.send_daily_report import attach_opening_overnight_category_tavily
+
+        attach_opening_overnight_category_tavily(rd)
+    except Exception as e:
+        logger.warning("opening_runner attach_opening_overnight_category_tavily: %s", e)
 
     return rd, errors
 

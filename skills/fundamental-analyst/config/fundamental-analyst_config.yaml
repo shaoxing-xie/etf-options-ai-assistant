@@ -1,0 +1,27 @@
+version: 1
+
+thresholds:
+  roe:
+    excellent: 20
+    good: 15
+    warning: 10
+  debt_ratio:
+    low: 40
+    medium: 60
+    warning: 70
+  revenue_growth:
+    excellent: 20
+    good: 10
+    warning: 5
+
+weights:
+  profitability: 0.25
+  growth: 0.25
+  solvency: 0.20
+  valuation: 0.30
+
+output_policy:
+  require_peer_delta: true
+  require_counterevidence: true
+  allow_execution_instruction: false
+

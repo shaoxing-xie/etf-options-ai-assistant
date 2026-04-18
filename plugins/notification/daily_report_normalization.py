@@ -9,11 +9,212 @@ from __future__ import annotations
 import copy
 import os
 import re
+from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
 _DAILY_GLOBAL_INDEX_CODES = (
     "^N225,^HSI,^KS11,^GDAXI,^STOXX50E,^FTSE,^GSPC,^IXIC,^DJI"
 )
+_MARKET_FLOW_QUERY_KINDS = frozenset({"market_history", "market_proxy_ths", "market_flow_preferred"})
+
+
+def _outer_extract_change_pct(row: Optional[Dict[str, Any]]) -> Optional[float]:
+    if not isinstance(row, dict):
+        return None
+    v = row.get("change_pct")
+    if v is None:
+        v = row.get("change_percent")
+    try:
+        return None if v is None else float(v)
+    except Exception:
+        return None
+
+
+def _outer_hist_resp_to_index_row(code: str, resp: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """与盘前/开盘任务一致：index_global_hist_sina 日线最后两根推算涨跌幅。"""
+    data = resp.get("data")
+    if not isinstance(data, list) or len(data) < 2:
+        return None
+    r2 = data[-2] if isinstance(data[-2], dict) else None
+    r1 = data[-1] if isinstance(data[-1], dict) else None
+    if not isinstance(r1, dict) or not isinstance(r2, dict):
+        return None
+    try:
+        close1 = float(r1.get("close"))
+        close2 = float(r2.get("close"))
+    except Exception:
+        return None
+    if close2 == 0:
+        return None
+    change = close1 - close2
+    change_pct = change / close2 * 100.0
+    ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    bar_date = str(r1.get("date") or "").strip()
+    return {
+        "code": code,
+        "name": code,
+        "price": close1,
+        "change": change,
+        "change_pct": round(change_pct, 4),
+        "timestamp": ts,
+        "source_detail": f"global_hist_sina;bar_date={bar_date}",
+    }
+
+
+def _merge_daily_market_global_outer_fallback(rd: Dict[str, Any]) -> None:
+    """
+    现货主源之后：对缺行或缺涨跌的外盘代码用「最近完整交易日」日线补齐（对齐盘前/开盘 hist 口径）。
+
+    - 美股三大：fetch_global._fetch_akshare_us_index_sina_rows（AkShare 新浪美股指数日 K）
+    - 欧/日/韩等：tool_fetch_global_index_hist_sina / index_global_hist_sina
+    - 恒生：在 ^HSI 仍缺时尝试 symbol=恒生指数（name_table 名称）
+    """
+    if os.environ.get("DAILY_REPORT_DISABLE_GLOBAL_OUTER_FALLBACK"):
+        return
+    if (rd.get("report_type") or "").strip() != "daily_market":
+        return
+
+    spot = rd.get("tool_fetch_global_index_spot") or rd.get("global_index_spot")
+    rows: List[Dict[str, Any]] = []
+    if isinstance(spot, dict) and isinstance(spot.get("data"), list):
+        rows = [dict(r) for r in spot["data"] if isinstance(r, dict)]
+
+    by_code: Dict[str, Dict[str, Any]] = {}
+    for r in rows:
+        c = r.get("code")
+        if isinstance(c, str) and c:
+            by_code[c] = r
+
+    filled: List[str] = []
+
+    # 1) 美股：日报默认用 AkShare 新浪美股指数日 K（最近两交易日收盘推算）覆盖 yfinance，
+    #    避免 yfinance 5d 最后一根与「最近完整美股交易日」不一致；可用环境变量关闭覆盖仅补缺。
+    try:
+        from plugins.data_collection.index.fetch_global import (  # noqa: WPS433
+            SYMBOL_NAME_MAP,
+            _fetch_akshare_us_index_sina_rows,
+        )
+    except Exception:
+        SYMBOL_NAME_MAP = {}
+        _fetch_akshare_us_index_sina_rows = None  # type: ignore
+
+    us_syms = ("^DJI", "^GSPC", "^IXIC")
+    if _fetch_akshare_us_index_sina_rows:
+        if os.environ.get("DAILY_REPORT_DISABLE_US_AK_DAILY_OVERWRITE"):
+            us_need = [s for s in us_syms if s not in by_code or _outer_extract_change_pct(by_code.get(s)) is None]
+            to_fetch = us_need
+        else:
+            to_fetch = list(us_syms)
+        for ar in _fetch_akshare_us_index_sina_rows(to_fetch):
+            if not isinstance(ar, dict):
+                continue
+            c = ar.get("code")
+            if not isinstance(c, str):
+                continue
+            nr = dict(ar)
+            prev = by_code.get(c)
+            if isinstance(prev, dict) and prev.get("name"):
+                nr["name"] = prev.get("name")
+            elif not nr.get("name"):
+                nr["name"] = SYMBOL_NAME_MAP.get(c, c)
+            by_code[c] = nr
+            filled.append(f"us_daily:{c}")
+
+    # 2) 环球 hist（欧股代表 + 日韩）
+    try:
+        from plugins.data_collection.index.fetch_global_hist_sina import tool_fetch_global_index_hist_sina
+    except Exception:
+        tool_fetch_global_index_hist_sina = None  # type: ignore
+
+    hist_syms = ("^GDAXI", "^STOXX50E", "^FTSE", "^N225", "^KS11")
+    for code in hist_syms:
+        if code in by_code and _outer_extract_change_pct(by_code.get(code)) is not None:
+            continue
+        if not tool_fetch_global_index_hist_sina:
+            break
+        try:
+            resp = tool_fetch_global_index_hist_sina(symbol=code, limit=2)
+        except Exception:
+            continue
+        if not isinstance(resp, dict) or not resp.get("success"):
+            continue
+        row = _outer_hist_resp_to_index_row(code, resp)
+        if not row:
+            continue
+        cur = by_code.get(code)
+        if isinstance(cur, dict) and cur.get("name"):
+            row["name"] = cur.get("name")
+        else:
+            row["name"] = SYMBOL_NAME_MAP.get(code, row.get("name"))
+        by_code[code] = row
+        filled.append(f"hist_sina:{code}")
+
+    # 3) 恒生：现货缺或无数值时尝试环球历史（名称入口）
+    if (("^HSI" not in by_code) or _outer_extract_change_pct(by_code.get("^HSI")) is None) and tool_fetch_global_index_hist_sina:
+        for sym_try in ("^HSI", "恒生指数"):
+            try:
+                resp = tool_fetch_global_index_hist_sina(symbol=sym_try, limit=2)
+            except Exception:
+                resp = None
+            if not isinstance(resp, dict) or not resp.get("success"):
+                continue
+            row = _outer_hist_resp_to_index_row("^HSI", resp)
+            if not row:
+                continue
+            row["code"] = "^HSI"
+            row["name"] = "恒生指数"
+            prev = by_code.get("^HSI")
+            if isinstance(prev, dict) and prev.get("name"):
+                row["name"] = prev.get("name")
+            by_code["^HSI"] = row
+            filled.append("hist_sina:^HSI")
+            break
+
+    if not filled:
+        return
+
+    merged_list = list(by_code.values())
+    prev_src = str((spot or {}).get("source") or "").strip()
+    out: Dict[str, Any] = {
+        "success": bool(merged_list),
+        "count": len(merged_list),
+        "data": merged_list,
+        "source": (prev_src + "+daily_outer_fallback") if prev_src else "daily_outer_fallback",
+        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+    }
+    if isinstance(spot, dict) and spot.get("message"):
+        out["message"] = spot.get("message")
+    rd["global_index_spot"] = out
+    rd["tool_fetch_global_index_spot"] = out
+    rd["daily_market_global_outer_fallback"] = {"filled": filled}
+
+
+def _normalize_global_index_display_names(rd: Dict[str, Any]) -> None:
+    """将 global_index_spot 与 market_overview.indices 的 code 映射为中文名（含欧股 ^GDAXI 等）。"""
+    if (rd.get("report_type") or "").strip() != "daily_market":
+        return
+    try:
+        from plugins.data_collection.index.fetch_global import SYMBOL_NAME_MAP
+    except Exception:
+        return
+    for key in ("tool_fetch_global_index_spot", "global_index_spot"):
+        spot = rd.get(key)
+        if not isinstance(spot, dict) or not isinstance(spot.get("data"), list):
+            continue
+        for r in spot["data"]:
+            if not isinstance(r, dict):
+                continue
+            c = r.get("code")
+            if isinstance(c, str) and c in SYMBOL_NAME_MAP:
+                r["name"] = SYMBOL_NAME_MAP[c]
+    mo = rd.get("market_overview")
+    if isinstance(mo, dict) and isinstance(mo.get("indices"), list):
+        for it in mo["indices"]:
+            if not isinstance(it, dict):
+                continue
+            c = it.get("code")
+            if isinstance(c, str) and c in SYMBOL_NAME_MAP:
+                it["name"] = SYMBOL_NAME_MAP[c]
 
 
 def _flatten_md_headers_in_embedded_report_text(s: str) -> str:
@@ -77,7 +278,7 @@ def _merge_extra_report_data_skipping_tool_arg_stubs(
 
 
 def _maybe_autofill_cron_daily_market_p0(rd: Dict[str, Any]) -> None:
-    """Cron 日报 P0：在允许时补拉全球指数现货，写回 global_index_spot / tool_fetch_global_index_spot。"""
+    """Cron 日报 P0：补拉全球指数现货，并对缺行/缺涨跌用历史日线（注册工具）兜底。"""
     if os.environ.get("DAILY_REPORT_DISABLE_CRON_P0_AUTOFILL"):
         return
     if (rd.get("report_type") or "").strip() != "daily_market":
@@ -86,14 +287,18 @@ def _maybe_autofill_cron_daily_market_p0(rd: Dict[str, Any]) -> None:
         from plugins.data_collection.index.fetch_global import fetch_global_index_spot
     except Exception:
         return
+    rich: Optional[Dict[str, Any]] = None
     try:
         rich = fetch_global_index_spot(_DAILY_GLOBAL_INDEX_CODES)
     except Exception:
-        return
-    if isinstance(rich, dict) and rich.get("success"):
+        rich = None
+    if isinstance(rich, dict):
         rd["global_index_spot"] = rich
         rd["tool_fetch_global_index_spot"] = rich
-        rd["cron_p0_autofill_global_index"] = True
+        if rich.get("success") and isinstance(rich.get("data"), list) and rich.get("data"):
+            rd["cron_p0_autofill_global_index"] = True
+    _merge_daily_market_global_outer_fallback(rd)
+    _normalize_global_index_display_names(rd)
 
 
 def _capital_flow_blocks_from(rd: Dict[str, Any]) -> Dict[str, Any]:
@@ -122,11 +327,49 @@ def _capital_flow_blocks_from(rd: Dict[str, Any]) -> Dict[str, Any]:
 
 def _capital_flow_topic_substantive(rd: Dict[str, Any]) -> bool:
     blocks = _capital_flow_blocks_from(rd)
-    for blk in blocks.values():
+    # 优先同花顺行业/概念板块资金流：这两块任一有有效 records 即视为专题可用。
+    for key in ("a_share_capital_flow_sector_industry", "a_share_capital_flow_sector_concept"):
+        blk = blocks.get(key)
         if not isinstance(blk, dict) or blk.get("success") is False:
             continue
         rec = blk.get("records")
         if isinstance(rec, list) and rec:
+            return True
+    # 兜底：若板块资金均不可用，再接受全市场历史口径。
+    blk = blocks.get("a_share_capital_flow_market_history")
+    if (
+        isinstance(blk, dict)
+        and blk.get("success") is not False
+        and str(blk.get("query_kind") or "market_history") in _MARKET_FLOW_QUERY_KINDS
+    ):
+        rec = blk.get("records")
+        if isinstance(rec, list) and rec:
+            return True
+    # 开盘实盘风格兜底：若有板块热度或ETF强弱快照，也视为资金状态专题可用。
+    sh = rd.get("tool_sector_heat_score")
+    if isinstance(sh, dict) and sh.get("success") and isinstance(sh.get("sectors"), list) and sh.get("sectors"):
+        return True
+    etf_rt = rd.get("tool_fetch_etf_realtime")
+    if isinstance(etf_rt, dict) and etf_rt.get("success") and isinstance(etf_rt.get("data"), list):
+        rows = [x for x in (etf_rt.get("data") or []) if isinstance(x, dict)]
+        if rows:
+            return True
+    # 日报：正文「资金流向专题」若已渲染行业/概念/大盘补充/或替代口径占位，审计应与正文一致，不标缺失。
+    if (rd.get("report_type") or "").strip() == "daily_market":
+        try:
+            topic_lines = _build_daily_capital_flow_topic_lines(rd)
+        except Exception:
+            topic_lines = []
+        if topic_lines and any(
+            marker in ln
+            for ln in topic_lines
+            for marker in (
+                "### 一、行业板块",
+                "### 二、概念板块",
+                "### 全市场大盘（补充）",
+                "资金与成交状态（替代口径）",
+            )
+        ):
             return True
     return False
 
@@ -180,7 +423,7 @@ def _build_a_share_market_flow_lines(report_data: Dict[str, Any]) -> List[str]:
         blk = report_data.get("tool_fetch_a_share_fund_flow")
     if not isinstance(blk, dict) or blk.get("success") is False:
         return []
-    if blk.get("query_kind") != "market_history":
+    if str(blk.get("query_kind") or "market_history") not in _MARKET_FLOW_QUERY_KINDS:
         return []
     recs = blk.get("records")
     if not isinstance(recs, list) or not recs:
@@ -194,6 +437,31 @@ def _build_a_share_market_flow_lines(report_data: Dict[str, Any]) -> List[str]:
     if net is None:
         return []
     return [f"{dt} 主力净流入 {_fmt_flow_yi(net)}（来源 {src}）"]
+
+
+def _daily_capital_flow_topic_has_registered_flow_tools(rd: Dict[str, Any]) -> bool:
+    """
+    是否具备 openclaw-data-china-stock 等注册工具返回的 A 股资金流（行业/概念/大盘历史），
+    而非仅靠 ETF 涨跌 + 板块热度替代。
+    """
+    blocks = _capital_flow_blocks_from(rd)
+    for key in ("a_share_capital_flow_sector_industry", "a_share_capital_flow_sector_concept"):
+        blk = blocks.get(key)
+        if not isinstance(blk, dict) or blk.get("success") is False:
+            continue
+        if isinstance(blk.get("records"), list) and blk.get("records"):
+            return True
+    mh = blocks.get("a_share_capital_flow_market_history")
+    if isinstance(mh, dict) and mh.get("success") is not False:
+        if str(mh.get("query_kind") or "market_history") in _MARKET_FLOW_QUERY_KINDS:
+            if isinstance(mh.get("records"), list) and mh.get("records"):
+                return True
+    tff = rd.get("tool_fetch_a_share_fund_flow")
+    if isinstance(tff, dict) and tff.get("success") is not False:
+        if str(tff.get("query_kind") or "market_history") in _MARKET_FLOW_QUERY_KINDS:
+            if isinstance(tff.get("records"), list) and tff.get("records"):
+                return True
+    return False
 
 
 def _build_daily_capital_flow_topic_lines(report_data: Dict[str, Any]) -> List[str]:
@@ -249,30 +517,6 @@ def _build_daily_capital_flow_topic_lines(report_data: Dict[str, Any]) -> List[s
                 return v.strip()
         return ""
 
-    mh = blocks.get("a_share_capital_flow_market_history")
-    tool_blk = report_data.get("tool_fetch_a_share_fund_flow")
-    if isinstance(mh, dict) and mh.get("success") and mh.get("query_kind") == "market_history":
-        recs = mh.get("records")
-        if isinstance(recs, list) and recs:
-            last = recs[-1]
-            if isinstance(last, dict):
-                net = _extract_net_value(last)
-                if net is not None:
-                    lines.append(f"### 全市场大盘\n- 主力净流入：{_fmt_flow_yi(net)}")
-    elif isinstance(tool_blk, dict) and tool_blk.get("success"):
-        if tool_blk.get("query_kind") == "market_history":
-            recs = tool_blk.get("records")
-            if isinstance(recs, list) and recs:
-                last = recs[-1]
-                if isinstance(last, dict):
-                    net = _extract_net_value(last)
-                    if net is not None:
-                        lines.append(f"### 全市场大盘\n- 主力净流入：{_fmt_flow_yi(net)}")
-        else:
-            lines.append(
-                "### 资金流向专题\n- 暂未拉取两市全市场在交易层面的净流入历史（见 openclaw-data-china-stock / 工具 query_kind）"
-            )
-
     ind = blocks.get("a_share_capital_flow_sector_industry")
     if isinstance(ind, dict) and ind.get("success") and ind.get("query_kind") == "sector_rank":
         recs = ind.get("records") or []
@@ -319,28 +563,107 @@ def _build_daily_capital_flow_topic_lines(report_data: Dict[str, Any]) -> List[s
         else:
             lines.append("- 概念板块净流入明细暂缺（源返回字段不完整）。")
 
+    # 全市场口径作为补充，不再作为专题主入口。
+    mh = blocks.get("a_share_capital_flow_market_history")
+    tool_blk = report_data.get("tool_fetch_a_share_fund_flow")
+    if (
+        isinstance(mh, dict)
+        and mh.get("success")
+        and str(mh.get("query_kind") or "market_history") in _MARKET_FLOW_QUERY_KINDS
+    ):
+        recs = mh.get("records")
+        if isinstance(recs, list) and recs:
+            last = recs[-1]
+            if isinstance(last, dict):
+                net = _extract_net_value(last)
+                if net is not None:
+                    lines.append(f"### 全市场大盘（补充）\n- 主力净流入：{_fmt_flow_yi(net)}")
+    elif (
+        isinstance(tool_blk, dict)
+        and tool_blk.get("success")
+        and str(tool_blk.get("query_kind") or "market_history") in _MARKET_FLOW_QUERY_KINDS
+    ):
+        recs = tool_blk.get("records")
+        if isinstance(recs, list) and recs:
+            last = recs[-1]
+            if isinstance(last, dict):
+                net = _extract_net_value(last)
+                if net is not None:
+                    lines.append(f"### 全市场大盘（补充）\n- 主力净流入：{_fmt_flow_yi(net)}")
+
     if (
         isinstance(mh, dict)
         and mh.get("success") is False
-        and not any("### 全市场大盘" in ln for ln in lines)
+        and not any("### 全市场大盘（补充）" in ln for ln in lines)
     ):
         lines.insert(0, "### 全市场大盘\n- 当日全市场净流入主源暂不可用，已使用行业/概念分布做替代观察。")
 
     if not lines:
-        lines.append("### 资金流向专题\n- 暂未拉取有效数据块（见 openclaw-data-china-stock）")
+        # 无行业/概念/大盘资金流工具块时：用宽基 ETF 涨跌家数 + 涨跌停侧板块热度占位，避免与东财主力口径混读。
+        lines.append("### 资金与成交状态（替代口径）")
+        lines.append(
+            "- **口径**：以下为样本宽基 ETF 的收涨/收跌只数及涨跌停侧板块热度，**不等同**于全市场或板块主力净流入；**勿与**东财/同花顺主力净额页面作一一对应。"
+        )
+        etf_rt = report_data.get("tool_fetch_etf_realtime")
+        etf_rows = etf_rt.get("data") if isinstance(etf_rt, dict) else None
+        if isinstance(etf_rows, list) and etf_rows:
+            strong = 0
+            weak = 0
+            flat = 0
+            total = 0
+            for row in etf_rows[:12]:
+                if not isinstance(row, dict):
+                    continue
+                cp = row.get("change_percent")
+                try:
+                    pct = float(cp)
+                except (TypeError, ValueError):
+                    continue
+                total += 1
+                if pct > 0:
+                    strong += 1
+                elif pct < 0:
+                    weak += 1
+                else:
+                    flat += 1
+            if total > 0:
+                bias = "偏强" if strong > weak else ("偏弱" if weak > strong else "中性")
+                flat_note = f"，平盘 {flat}" if flat else ""
+                lines.append(
+                    f"- 样本 ETF 涨跌家数：涨 {strong} / 跌 {weak} / 有效样本 {total}{flat_note}（{bias}；仅统计涨跌幅有效字段）"
+                )
+        sh = report_data.get("tool_sector_heat_score")
+        if isinstance(sh, dict) and sh.get("success") and isinstance(sh.get("sectors"), list):
+            sector_rows = [x for x in (sh.get("sectors") or []) if isinstance(x, dict)]
+            top = []
+            for row in sector_rows[:5]:
+                name = str(row.get("name") or row.get("sector") or "").strip()
+                score = row.get("score")
+                if not name:
+                    continue
+                if score is None:
+                    top.append(name)
+                    continue
+                try:
+                    top.append(f"{name}({float(score):.0f})")
+                except (TypeError, ValueError):
+                    top.append(name)
+            if top:
+                lines.append("- 涨跌停侧板块热度靠前：" + "、".join(top))
+        if len(lines) == 2:
+            lines.append("- 暂未拉取有效资金流工具数据；已保留专题位，接入同花顺/东财口径工具后可展示主力净额。")
     return lines
 
 
 def _build_daily_market_etf_universe_lines(
     report_data: Dict[str, Any],
-    _analysis: Dict[str, Any],
+    analysis: Dict[str, Any],
 ) -> List[str]:
     raw = report_data.get("tool_fetch_etf_realtime")
-    if not isinstance(raw, dict) or not raw.get("success"):
-        return []
-    data = raw.get("data")
-    if not isinstance(data, list):
-        return []
+    data: List[Dict[str, Any]] = []
+    if isinstance(raw, dict) and raw.get("success") and isinstance(raw.get("data"), list):
+        data = [x for x in (raw.get("data") or []) if isinstance(x, dict)]
+
     out: List[str] = []
     for row in data[:12]:
         if not isinstance(row, dict):
@@ -365,21 +688,55 @@ def _build_daily_market_etf_universe_lines(
                 pr_s = f"价 {price}"
         bits = [f"{code} {name}".strip(), cp_s, pr_s]
         out.append("- " + " ".join(x for x in bits if x).strip())
+
+    # 兜底：来自 trend_analysis overlay 的第二宽基快照，避免章节全空。
+    if not out and isinstance(analysis, dict):
+        ov = analysis.get("daily_report_overlay")
+        if isinstance(ov, dict):
+            sec = ov.get("secondary_benchmark_etf")
+            if isinstance(sec, dict):
+                code = str(sec.get("code") or "").strip()
+                name = str(sec.get("name") or "").strip()
+                cp = sec.get("change_pct")
+                price = sec.get("current_price")
+                bits = [f"{code} {name}".strip()]
+                if cp is not None:
+                    try:
+                        bits.append(f"涨跌 {float(cp):+.2f}%")
+                    except (TypeError, ValueError):
+                        bits.append(f"涨跌 {cp}%")
+                if price is not None:
+                    try:
+                        bits.append(f"价 {float(price):.3f}")
+                    except (TypeError, ValueError):
+                        bits.append(f"价 {price}")
+                if code:
+                    out.append("- " + " ".join(x for x in bits if x).strip())
     return out
 
 
 def _coverage_semantic_present(topic: str, rd: Dict[str, Any], _analysis: Dict[str, Any]) -> bool:
     t = (topic or "").strip().lower()
     if t in ("northbound", "northbound_flow"):
-        if isinstance(rd.get("northbound"), dict):
-            return True
-        if isinstance(rd.get("tool_fetch_northbound_flow"), dict):
-            return True
-        if _capital_flow_topic_substantive(rd):
-            return True
+        # 北向数据口径已下线：不再作为日报覆盖性检查项。
         return False
     if t == "capital_flow_topic":
         return _capital_flow_topic_substantive(rd)
+    return False
+
+
+def _key_levels_data_present(rd: Dict[str, Any], an: Dict[str, Any]) -> bool:
+    """与发送层一致：顶层 key_levels / tool_compute，或盘后 overlay 已有关键位工具结果。"""
+    if any(isinstance(rd.get(k), dict) for k in ("tool_compute_index_key_levels", "key_levels")):
+        for k in ("tool_compute_index_key_levels", "key_levels"):
+            blk = rd.get(k)
+            if isinstance(blk, dict) and blk.get("success") is not False:
+                return True
+    ov = an.get("daily_report_overlay") if isinstance(an, dict) else None
+    if isinstance(ov, dict):
+        kl = ov.get("key_levels")
+        if isinstance(kl, dict) and kl.get("success"):
+            return True
     return False
 
 
@@ -393,13 +750,9 @@ def _assess_daily_report_completeness(
     an = analysis or {}
     if not _capital_flow_topic_substantive(rd):
         missing.append("资金流向专题")
-    if not isinstance(rd.get("northbound"), dict) and not isinstance(
-        rd.get("tool_fetch_northbound_flow"), dict
-    ):
-        if not any(
-            isinstance(rd.get(k), dict) for k in ("tool_compute_index_key_levels", "key_levels")
-        ):
-            missing.append("北向/关键位等（示例门禁）")
+    # 日报不再因关键位缺失阻断发送；仅用于审计行提示。
+    if not _key_levels_data_present(rd, an):
+        missing.append("关键位")
     degraded = bool(missing)
     return degraded, missing
 
@@ -421,6 +774,15 @@ def _normalize_daily_report_fields(
         sh = ov.get("sector_heat")
         if isinstance(sh, dict) and sh.get("success") and not out.get("sector_rotation"):
             out["sector_rotation"] = sh
+        # 与 trend_analysis overlay 对齐：关键位已在 overlay 时写入
+        kl_ov = ov.get("key_levels")
+        if (
+            isinstance(kl_ov, dict)
+            and kl_ov.get("success")
+            and not out.get("tool_compute_index_key_levels")
+            and not out.get("key_levels")
+        ):
+            out["tool_compute_index_key_levels"] = kl_ov
 
     if (out.get("report_type") or "").strip() == "daily_market":
         has_kl = isinstance(out.get("key_levels"), dict) and bool(out.get("key_levels"))
@@ -437,5 +799,8 @@ def _normalize_daily_report_fields(
                     out["key_levels_fill_source"] = "send_layer_autofill"
             except Exception:
                 pass
+
+    if (out.get("report_type") or "").strip() == "daily_market":
+        _normalize_global_index_display_names(out)
 
     return out, echo

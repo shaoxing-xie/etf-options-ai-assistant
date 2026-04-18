@@ -56,7 +56,7 @@
 - tool_get_a_share_market_regime: A股市场时段细分（集合竞价/连续竞价/午休/收盘集合竞价/盘后/非交易日）
 - tool_trading_copilot: 交易助手统一入口（状态→时段→快扫→信号→持仓）
 - tool_event_sentinel: 事件哨兵（外部事件检索/摘要→影响提示→是否触发再分析）
-- tool_calculate_technical_indicators: 计算技术指标（standard=pandas_ta，legacy=旧数值；可选 kdj/cci/adx/atr；见合并后配置 `technical_indicators`，来源：`config/domains/analytics.yaml`）
+- tool_calculate_technical_indicators_unified: 统一技术指标入口（迁移期推荐；与旧工具参数兼容；见合并后配置 `technical_indicators`，来源：`config/domains/analytics.yaml`）
 - tool_analyze_after_close: 执行盘后趋势分析
 - tool_analyze_before_open: 执行开盘前趋势分析
 - tool_analyze_opening_market: 执行开盘行情分析

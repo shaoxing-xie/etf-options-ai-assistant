@@ -12,6 +12,11 @@
 
 实现入口：[src/config_loader.py](../../src/config_loader.py) 中 `load_layered_user_config` / `load_system_config`。
 
+## 环境变量（`.env`）
+
+- 项目根 **`.env`** 在加载配置前读入；另会尝试 **`~/.openclaw/.env`**（`override=False`，已存在变量不被覆盖），便于 Gateway 与本地共用密钥。
+- **Financial Modeling Prep（全球指数最新快照）**：OpenClaw 插件 `tool_fetch_global_index_spot` 读取 `data_sources.global_index.latest.fmp`；占位符对应环境变量 **`FMP_API_KEY`**、**`FMP_API_KEY_BACKUP`**（可选 **`FINANCIAL_MODELING_PREP_API_KEY`**）。详见仓库根 [`.env.example`](../../.env.example) 与 `config/domains/market_data.yaml`。
+
 ## 延伸阅读
 
 - [功能域与代码包矩阵（完整版）](domain_matrix.md)

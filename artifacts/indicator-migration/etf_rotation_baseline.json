@@ -1,0 +1,14 @@
+{
+  "generated_at": "2026-04-17 19:20:36",
+  "success": false,
+  "message": "无法生成轮动评分（无可用ETF数据）",
+  "indicator_runtime": null,
+  "shadow_compare": null,
+  "top10": [],
+  "duration_ms": 921276,
+  "params": {
+    "lookback_days": 120,
+    "top_k": 3,
+    "mode": "test"
+  }
+}

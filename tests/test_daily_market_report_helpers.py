@@ -6,7 +6,11 @@ import pandas as pd
 import pytest
 from unittest.mock import patch, MagicMock
 
+from plugins.notification.daily_report_normalization import (
+    _daily_capital_flow_topic_has_registered_flow_tools,
+)
 from plugins.notification.send_daily_report import (
+    _build_opening_overnight_index_lines,
     _build_opening_overnight_outer_lines,
     _build_opening_hot_sector_bullets,
     _build_policy_news_lines,
@@ -16,7 +20,6 @@ from plugins.notification.send_daily_report import (
     _build_sector_rotation_lines,
     _build_daily_market_etf_universe_lines,
     _build_market_overview_lines,
-    _build_northbound_lines,
     _build_a_share_market_flow_lines,
     _build_daily_capital_flow_topic_lines,
     _capital_flow_topic_substantive,
@@ -29,9 +32,9 @@ from plugins.notification.send_daily_report import (
     _maybe_autofill_cron_daily_market_p0,
     _assess_daily_report_completeness,
     _resolve_trend_fields,
+    _format_daily_report,
 )
 from plugins.notification.send_dingtalk_message import _normalize_dingtalk_keyword_fragments
-from plugins.data_collection.northbound import _board_net_from_summary_df, _generate_signal, tool_fetch_northbound_flow
 from plugins.data_collection.index.fetch_global import fetch_global_index_spot
 
 
@@ -65,35 +68,6 @@ def test_etf_universe_lines_from_realtime_list_not_top_level_message() -> None:
     assert "Successfully fetched" not in joined
     assert "510300" in joined
     assert "涨跌" in joined
-
-
-def test_northbound_generate_signal_zero_is_neutral_not_micro_outflow() -> None:
-    sig = _generate_signal({"total_net": 0.0}, None, 0)
-    assert sig["strength"] == "neutral"
-    assert "微幅流出" not in sig["description"]
-    assert "披露口径" in sig["description"] or "沪深港通" in sig["description"]
-
-
-def test_northbound_generate_signal_nan_is_unknown_not_strong_sell() -> None:
-    sig = _generate_signal({"total_net": float("nan")}, None, 0)
-    assert sig["strength"] == "unknown"
-    assert "大幅流出" not in sig["description"]
-    assert "不可用" in sig["description"]
-
-
-def test_build_northbound_lines_nan_skips_misleading_signal() -> None:
-    rd = {
-        "northbound": {
-            "status": "success",
-            "date": "2026-04-10",
-            "data": {"total_net": float("nan")},
-            "signal": {"description": "大幅流出（>50亿），强烈风险信号"},
-        }
-    }
-    lines = _build_northbound_lines(rd)
-    joined = "\n".join(lines)
-    assert "大幅流出" not in joined
-    assert "暂不可用" in joined
 
 
 def test_capital_flow_topic_substantive_with_sector_blocks() -> None:
@@ -144,24 +118,6 @@ def test_build_daily_capital_flow_topic_with_industry_and_concept() -> None:
     assert "人工智能" in joined
 
 
-def test_build_northbound_zero_single_paragraph_no_duplicate_signal() -> None:
-    rd = {
-        "northbound": {
-            "status": "success",
-            "date": "2026-04-10",
-            "data": {"total_net": 0.0},
-            "signal": {
-                "description": "沪深港通成交净买额汇总为 0（常见为披露口径或当日无净买分量；勿解读为方向性「流出」）"
-            },
-        }
-    }
-    lines = _build_northbound_lines(rd)
-    assert len(lines) == 1
-    assert "见下条" not in lines[0]
-    assert "0.00" in lines[0]
-    assert "披露口径" not in "\n".join(lines)
-
-
 def test_build_a_share_market_flow_line_from_tool_block() -> None:
     rd = {
         "tool_fetch_a_share_fund_flow": {
@@ -180,6 +136,14 @@ def test_build_a_share_market_flow_line_from_tool_block() -> None:
 def test_capital_flow_topic_substantive_false_when_no_blocks() -> None:
     assert _capital_flow_topic_substantive({}) is False
     assert _capital_flow_topic_substantive({"a_share_capital_flow_sector_industry": {"success": False}}) is False
+
+
+def test_capital_flow_topic_substantive_daily_market_counts_fallback_section() -> None:
+    """仅有日报类型、无资金流块时，替代口径小节仍视为专题已覆盖（与审计一致）。"""
+    rd = {"report_type": "daily_market"}
+    assert _capital_flow_topic_substantive(rd) is True
+    degraded, missing = _assess_daily_report_completeness(rd, {})
+    assert "资金流向专题" not in missing
 
 
 def test_capital_flow_topic_substantive_true_market_history_only() -> None:
@@ -230,6 +194,26 @@ def test_capital_flow_market_history_prefers_dedicated_key_over_tool_fetch() -> 
     assert len(lines) == 1
     assert "2026-04-11" in lines[0]
     assert "primary" in lines[0]
+
+
+def test_daily_capital_flow_topic_has_registered_flow_tools_true_false() -> None:
+    assert _daily_capital_flow_topic_has_registered_flow_tools(
+        {
+            "a_share_capital_flow_sector_industry": {
+                "success": True,
+                "query_kind": "sector_rank",
+                "records": [{"名称": "银行", "净额": 1.0}],
+            }
+        }
+    )
+    assert not _daily_capital_flow_topic_has_registered_flow_tools(
+        {
+            "tool_fetch_etf_realtime": {
+                "success": True,
+                "data": [{"code": "510300", "change_percent": 0.1}],
+            }
+        }
+    )
 
 
 def test_build_daily_capital_flow_topic_skips_non_market_tool_fetch() -> None:
@@ -296,8 +280,8 @@ def test_coverage_semantic_capital_flow_topic() -> None:
         }
     }
     assert _coverage_semantic_present("capital_flow_topic", rd, {}) is True
-    assert _coverage_semantic_present("northbound", rd, {}) is True
-    assert _coverage_semantic_present("northbound_flow", rd, {}) is True
+    assert _coverage_semantic_present("northbound", rd, {}) is False
+    assert _coverage_semantic_present("northbound_flow", rd, {}) is False
 
 
 def test_assess_daily_completeness_lists_capital_flow_when_absent() -> None:
@@ -324,54 +308,6 @@ def test_capital_flow_exec_summary_market_over_sector() -> None:
     frag = _capital_flow_exec_summary_fragment(rd)
     assert frag is not None
     assert "全市场大盘" in frag or "主力净流入" in frag
-
-
-def test_board_net_from_summary_prefers_northbound_row() -> None:
-    df = pd.DataFrame(
-        [
-            {"板块": "沪股通", "资金方向": "北向", "成交净买额": 1.5},
-            {"板块": "沪股通", "资金方向": "其他", "成交净买额": 99.0},
-        ]
-    )
-    assert abs(_board_net_from_summary_df(df, "沪股通") - 1.5) < 1e-9
-
-
-@patch("plugins.data_collection.northbound.ak")
-def test_northbound_hist_fallback_when_summary_zero(mock_ak: MagicMock) -> None:
-    mock_ak.stock_hsgt_fund_flow_summary_em.return_value = pd.DataFrame(
-        [
-            {
-                "板块": "沪股通",
-                "资金方向": "北向",
-                "成交净买额": 0.0,
-                "交易日": pd.Timestamp("2026-04-10"),
-            },
-            {
-                "板块": "深股通",
-                "资金方向": "北向",
-                "成交净买额": 0.0,
-                "交易日": pd.Timestamp("2026-04-10"),
-            },
-        ]
-    )
-    mock_ak.stock_hsgt_hist_em.side_effect = [
-        pd.DataFrame(
-            [
-                {"日期": "2026-04-09", "当日成交净买额": 10.0},
-                {"日期": "2026-04-10", "当日成交净买额": 5.5},
-            ]
-        ),
-        pd.DataFrame(
-            [
-                {"日期": "2026-04-09", "当日成交净买额": -2.0},
-                {"日期": "2026-04-10", "当日成交净买额": 3.2},
-            ]
-        ),
-    ]
-    r = tool_fetch_northbound_flow(lookback_days=1)
-    assert r.get("status") == "success"
-    assert abs(float(r["data"]["total_net"]) - 8.7) < 0.01
-    assert "hist_em_fallback" in str(r.get("source") or "")
 
 
 def test_dingtalk_keyword_orphan_bracket_stripped() -> None:
@@ -436,6 +372,7 @@ def test_looks_like_completed_tool_json() -> None:
 def test_p0_syncs_global_index_spot_when_refetch(mock_fetch: MagicMock, monkeypatch: pytest.MonkeyPatch) -> None:
     """P0 补拉全球指数后 global_index_spot 应与 tool_fetch 同源，避免与首次 ingest 残留不一致。"""
     monkeypatch.delenv("DAILY_REPORT_DISABLE_CRON_P0_AUTOFILL", raising=False)
+    monkeypatch.setenv("DAILY_REPORT_DISABLE_GLOBAL_OUTER_FALLBACK", "1")
     rich = {"success": True, "data": [{"code": "^DJI"}, {"code": "^GSPC"}, {"code": "^IXIC"}]}
     mock_fetch.return_value = rich
     rd = {
@@ -646,6 +583,37 @@ def test_market_overview_tavily_summary_replaces_na_grid() -> None:
     assert "检索摘要归纳" in joined
 
 
+def test_daily_market_format_outer_footnote_tool_not_research_digest() -> None:
+    """数值型外盘概览：脚注应为工具口径，不得误标为检索摘要。"""
+    rd = {
+        "report_type": "daily_market",
+        "market_overview": {
+            "indices": [
+                {"name": "恒生指数", "code": "^HSI", "change_pct": 0.29},
+                {"name": "标普500", "code": "^GSPC", "change_pct": 1.18},
+            ]
+        },
+        "analysis": {"final_trend": "弱势", "trend_strength": 0.93},
+    }
+    _title, body = _format_daily_report(report_data=rd, report_date="20260416")
+    assert "外盘：注册工具拉取" in body
+    assert "检索摘要归纳，非交易所逐指数实时行情" not in body
+
+
+def test_daily_market_format_tavily_digest_no_duplicate_research_footnote() -> None:
+    """综述单行已含「检索摘要归纳」时不再重复一条脚注。"""
+    rd = {
+        "report_type": "daily_market",
+        "global_market_digest": {
+            "summary": "美股三大指数集体收涨。",
+            "replaces_index_overview": True,
+        },
+        "analysis": {"final_trend": "弱势", "trend_strength": 0.93},
+    }
+    _title, body = _format_daily_report(report_data=rd, report_date="20260416")
+    assert body.count("检索摘要归纳") == 1
+
+
 def test_sector_rotation_skip_hot_sectors_points_to_etf_section() -> None:
     """无 sector_rotation 数据且 skip 时：不重复 dump config/hot_sectors，引导读主要 ETF。"""
     out = _build_sector_rotation_lines({}, skip_hot_sectors_fallback=True)
@@ -727,6 +695,32 @@ def test_build_opening_overnight_outer_lines_tavily_summary_override() -> None:
     lines = _build_opening_overnight_outer_lines(rd)
     assert lines and "美股收涨" in lines[0]
     assert "每日市场分析报告" in lines[1]
+
+
+def test_build_opening_overnight_index_lines_always_four_categories() -> None:
+    """四类各一行：A50｜日韩｜欧股｜美股（主源齐全时为数值行）。"""
+    rd = {
+        "analysis": {"a50_change": 0.12},
+        "tool_fetch_global_index_spot": {
+            "success": True,
+            "data": [
+                {"code": "^DJI", "name": "道琼斯", "change_pct": 0.1},
+                {"code": "^GSPC", "name": "标普500", "change_pct": 0.05},
+                {"code": "^IXIC", "name": "纳斯达克", "change_pct": 0.06},
+                {"code": "^N225", "name": "日经225", "change_pct": -0.2},
+                {"code": "^KS11", "name": "韩国综合", "change_pct": 0.03},
+                {"code": "^FTSE", "name": "英国富时100", "change_pct": 0.01},
+                {"code": "^GDAXI", "name": "德国DAX", "change_pct": 0.02},
+                {"code": "^STOXX50E", "name": "欧洲斯托克50", "change_pct": 0.04},
+            ],
+        },
+    }
+    lines = _build_opening_overnight_index_lines(rd)
+    assert len(lines) == 4
+    assert "A50期指（主源）" in lines[0]
+    assert "日/韩（当日已开盘）" in lines[1]
+    assert "欧股（上一交易日收市）" in lines[2]
+    assert "美股（北京时间当日凌晨时段）" in lines[3]
 
 
 def test_opening_hxc_line_hidden_on_hard_failure() -> None:

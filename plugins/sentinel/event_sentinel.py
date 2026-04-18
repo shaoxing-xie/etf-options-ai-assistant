@@ -15,8 +15,6 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-import os
-
 import pytz
 
 
@@ -79,32 +77,29 @@ def _tavily_search(
     days: Optional[int],
     deep: bool,
 ) -> Dict[str, Any]:
-    api_key = (os.getenv("TAVILY_API_KEY") or "").strip()
-    if not api_key:
-        return {"success": False, "message": "Missing TAVILY_API_KEY", "data": None}
-
     try:
-        import requests
-
-        body: Dict[str, Any] = {
-            "api_key": api_key,
-            "query": query,
-            "search_depth": "advanced" if deep else "basic",
-            "topic": topic,
-            "max_results": max(1, min(int(n), 20)),
-            "include_answer": True,
-            "include_raw_content": False,
-        }
-        if topic == "news" and days:
-            body["days"] = int(days)
-
-        resp = requests.post("https://api.tavily.com/search", json=body, timeout=20)
-        if not resp.ok:
-            return {"success": False, "message": f"Tavily failed: {resp.status_code} {resp.text[:200]}", "data": None}
-        data = resp.json()
-        return {"success": True, "data": data}
+        from plugins.utils.tavily_client import tavily_post_search
     except Exception as e:
-        return {"success": False, "message": f"Tavily search error: {e}", "data": None}
+        return {"success": False, "message": f"Tavily import error: {e}", "data": None}
+
+    body: Dict[str, Any] = {
+        "query": query,
+        "search_depth": "advanced" if deep else "basic",
+        "topic": topic,
+        "max_results": max(1, min(int(n), 20)),
+        "include_answer": True,
+        "include_raw_content": False,
+    }
+    if topic == "news" and days:
+        body["days"] = int(days)
+    post = tavily_post_search(body, timeout=20)
+    if post.get("success") and isinstance(post.get("data"), dict):
+        return {"success": True, "data": post["data"]}
+    return {
+        "success": False,
+        "message": post.get("message") or "Tavily failed",
+        "data": None,
+    }
 
 
 def tool_event_sentinel(

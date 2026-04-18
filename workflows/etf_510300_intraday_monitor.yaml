@@ -43,7 +43,7 @@ steps:
       lookback_bars: 200
 
   - name: technical_30m_510300
-    tool: tool_calculate_technical_indicators
+    tool: tool_calculate_technical_indicators_unified
     description: 基于30分钟K线计算510300的MA10/MA20与RSI14（pandas_ta standard）
     depends_on:
       - read_etf_minute_510300
@@ -60,6 +60,7 @@ steps:
         - 10
         - 20
       rsi_length: 14
+      task_key: "etf_510300_intraday_monitor"
 
   - name: predict_intraday_range_510300
     tool: tool_predict_intraday_range

@@ -12,6 +12,8 @@
   - 按“数据 / 计算 / 网络 / 配置 / 安装 / 性能 / 日志与监控”等分类整理的 FAQ 列表。
 - `RISK_CONTROL_AND_ROLLBACK.md`  
   - 当引入新的 Agent / 插件 / 工作流后，如何在出现问题时进行风险控制与快速回滚。
+- `回测使用指导-自动任务与日常交互.md`
+  - **`backtesting-trading-strategies`** 脚本回测在 Cron/Workflow 与 **钉钉/OpenClaw** 下的实操（**§5** 可复制话术与 `exec` 模板、`settings.yaml`、数据源、**§6** 故障、**§7** 脚本实测）；不含涨停回马枪专题工具说明。
 - 其他运维相关清单与指南（例如需要添加交易日判断跳过参数的工具清单等）。
 - [`cron_signal_inspection_triage.md`](cron_signal_inspection_triage.md) — **宽基 ETF 信号+风控巡检**（`workflows/signal_risk_inspection.yaml`）Cron 失败时的排查与分流（含钉钉 `310000` 加签、工具冒烟脚本索引）。
 

@@ -1,0 +1,17 @@
+version: 1
+
+signal_thresholds:
+  main_force_large_inflow_billion: 5
+  main_force_large_outflow_billion: -5
+  northbound_large_inflow_billion: 50
+  northbound_large_outflow_billion: -50
+  continuity_days:
+    short: 3
+    mid: 5
+    long: 20
+
+output_policy:
+  require_continuity_view: true
+  require_counterevidence: true
+  allow_execution_instruction: false
+

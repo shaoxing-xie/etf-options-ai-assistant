@@ -302,9 +302,10 @@ def _try_enhance_510300_position(base_position: str) -> str:
     except Exception:
         pass
     try:
-        from plugins.analysis.technical_indicators import tool_calculate_technical_indicators
+        from src.services.indicator_runtime import calculate_indicators_via_tool, resolve_indicator_runtime
 
-        r2 = tool_calculate_technical_indicators(
+        _ind_rt = resolve_indicator_runtime("signal_risk_inspection")
+        r2 = calculate_indicators_via_tool(
             symbol="510300",
             data_type="etf_minute",
             timeframe_minutes=30,
@@ -317,6 +318,7 @@ def _try_enhance_510300_position(base_position: str) -> str:
                 compact = compact[:220] + "…"
             if compact:
                 parts.append(f"30m技术：{compact}")
+            parts.append(f"指标路由：{_ind_rt.route}")
     except Exception:
         pass
     if not parts:

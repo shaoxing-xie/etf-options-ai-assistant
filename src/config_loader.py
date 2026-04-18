@@ -169,8 +169,6 @@ def get_default_config() -> Dict[str, Any]:
             'enabled': True,
             'opening_dir': None,
             'overlay': {
-                'northbound_enabled': True,
-                'northbound_lookback_days': 5,
                 'global_index_enabled': True,
                 'global_index_codes': (
                     '^N225,^HSI,^KS11,^GDAXI,^STOXX50E,^FTSE,^GSPC,^IXIC,^DJI'

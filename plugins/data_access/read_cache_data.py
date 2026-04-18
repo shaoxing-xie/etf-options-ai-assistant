@@ -111,14 +111,37 @@ def _try_refill_daily_cache(
     仅用于 index_daily / etf_daily。
     """
     try:
-        from src.data_collector import fetch_index_daily_em, fetch_etf_daily_em  # type: ignore
-    except Exception:
-        return
-    try:
         if data_type == "index_daily":
-            fetch_index_daily_em(symbol=symbol, start_date=start_date, end_date=end_date)  # type: ignore
+            # 指数日线仍沿用既有 src.data_collector 逻辑
+            try:
+                from src.data_collector import fetch_index_daily_em  # type: ignore
+
+                fetch_index_daily_em(symbol=symbol, start_date=start_date, end_date=end_date)  # type: ignore
+            except Exception:
+                return
         elif data_type == "etf_daily":
-            fetch_etf_daily_em(symbol=symbol, start_date=start_date, end_date=end_date)  # type: ignore
+            # ETF 日线优先使用 plugins 的多源链路（含 mootdx/TDX），确保在公网不通时仍能回填缓存；
+            # 如不可用再回退到 src.data_collector 的 Tushare/新浪/东财链路。
+            try:
+                from plugins.data_collection.etf.fetch_historical import (  # type: ignore
+                    fetch_single_etf_historical,
+                )
+
+                fetch_single_etf_historical(
+                    etf_code=str(symbol),
+                    period="daily",
+                    start_date=str(start_date),
+                    end_date=str(end_date),
+                    use_cache=True,
+                )
+                return
+            except Exception:
+                try:
+                    from src.data_collector import fetch_etf_daily_em  # type: ignore
+
+                    fetch_etf_daily_em(symbol=symbol, start_date=start_date, end_date=end_date)  # type: ignore
+                except Exception:
+                    return
     except Exception:
         return
 
@@ -133,6 +156,7 @@ def read_cache_data(
     date: Optional[str] = None,
     use_closest: bool = True,
     return_df: bool = False,
+    skip_online_refill: bool = False,
     **_: Any,
 ) -> Dict[str, Any]:
     """
@@ -146,6 +170,8 @@ def read_cache_data(
         date: 期权 minute/greeks 的日期（YYYYMMDD 或 YYYYMMDD hh:mm:ss）
         use_closest: option_greeks 缓存缺失时是否回退到最近缓存日
         return_df: True 返回 pandas.DataFrame；False 返回 records 列表（工具输出更友好）
+        skip_online_refill: 为 True 时，index_daily/etf_daily 仅读 parquet，不触发在线补拉。
+            供 `load_etf_daily_df` 等路径使用，避免与上层 `fetch_single_*` 重复打源站。
     """
 
     from src import data_cache
@@ -206,7 +232,8 @@ def read_cache_data(
             df, missing = data_cache.get_cached_etf_daily(sym, start_date, end_date)
         if df is None or missing:
             # 尝试补拉一次（失败则继续按 miss/partial 返回）
-            _try_refill_daily_cache(data_type=dt, symbol=sym, start_date=start_date, end_date=end_date)
+            if not skip_online_refill:
+                _try_refill_daily_cache(data_type=dt, symbol=sym, start_date=start_date, end_date=end_date)
             if dt == "index_daily":
                 df, missing = data_cache.get_cached_index_daily(sym, start_date, end_date)
             else:

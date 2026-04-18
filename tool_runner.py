@@ -222,9 +222,9 @@ TOOL_MAP: Dict[str, ToolSpec] = {
         module_path="notification.send_feishu_card_webhook",
         function_name="tool_send_feishu_card_webhook",
     ),
-    "tool_calculate_technical_indicators": ToolSpec(
-        module_path="analysis.technical_indicators",
-        function_name="tool_calculate_technical_indicators",
+    "tool_calculate_technical_indicators_unified": ToolSpec(
+        module_path="analysis.technical_indicators_unified",
+        function_name="tool_calculate_technical_indicators_unified",
     ),
     "tool_generate_signals": ToolSpec(
         module_path="src.signal_generation",
@@ -267,10 +267,6 @@ TOOL_MAP: Dict[str, ToolSpec] = {
         module_path="analysis.daily_volatility_range",
         function_name="tool_predict_daily_volatility_range",
         param_mapping={"underlying": "symbol"},
-    ),
-    "tool_fetch_northbound_flow": ToolSpec(
-        module_path="data_collection.northbound",
-        function_name="tool_fetch_northbound_flow",
     ),
     "tool_analyze_market": ToolSpec(
         module_path="merged.analyze_market",
@@ -348,6 +344,10 @@ TOOL_MAP: Dict[str, ToolSpec] = {
         module_path="notification.run_signal_risk_inspection",
         function_name="tool_run_signal_risk_inspection_and_send",
     ),
+    "tool_run_midday_recap_and_send": ToolSpec(
+        module_path="notification.run_midday_recap",
+        function_name="tool_run_midday_recap_and_send",
+    ),
     "tool_run_opening_analysis_and_send": ToolSpec(
         module_path="notification.run_opening_analysis",
         function_name="tool_run_opening_analysis_and_send",
@@ -363,6 +363,14 @@ TOOL_MAP: Dict[str, ToolSpec] = {
     "tool_send_analysis_report": ToolSpec(
         module_path="notification.send_analysis_report",
         function_name="tool_send_analysis_report",
+    ),
+    "tool_send_etf_rotation_research_report": ToolSpec(
+        module_path="notification.send_etf_rotation_research",
+        function_name="tool_send_etf_rotation_research_report",
+    ),
+    "tool_send_etf_rotation_research_last_report": ToolSpec(
+        module_path="notification.send_etf_rotation_research_last_report",
+        function_name="tool_send_etf_rotation_research_last_report",
     ),
     "tool_send_daily_report": ToolSpec(
         module_path="notification.send_daily_report",
@@ -383,6 +391,15 @@ TOOL_MAP: Dict[str, ToolSpec] = {
     "tool_sector_heat_score": ToolSpec(
         module_path="data_collection.limit_up.sector_heat",
         function_name="tool_sector_heat_score",
+    ),
+    # A 股资金流向（实现位于 openclaw-data-china-stock 的 plugins/data_collection，主仓 symlink）
+    "tool_capital_flow": ToolSpec(
+        module_path="plugins.data_collection.capital_flow",
+        function_name="tool_capital_flow",
+    ),
+    "tool_fetch_a_share_fund_flow": ToolSpec(
+        module_path="plugins.data_collection.a_share_fund_flow",
+        function_name="tool_fetch_a_share_fund_flow",
     ),
     "tool_backtest_limit_up_pullback": ToolSpec(
         module_path="backtest.limit_up_pullback",

@@ -14,6 +14,12 @@ class ApiRoutes:
     def handle_get(self, path: str, query: dict[str, list[str]]):
         if path == "/api/health":
             return {"success": True, "message": "ok"}, 200
+        if path == "/api/alerts/config":
+            return self.svc.get_alerts_config_text(), 200
+        if path == "/api/config/market_data":
+            return self.svc.get_market_data_config_text(), 200
+        if path == "/api/config/analytics":
+            return self.svc.get_analytics_config_text(), 200
         if path == "/api/ohlcv":
             symbol = (query.get("symbol") or ["510300"])[0]
             lookback_days = int((query.get("lookback_days") or ["180"])[0])
@@ -81,6 +87,24 @@ class ApiRoutes:
         return {"success": False, "message": "not found"}, 404
 
     def handle_post(self, path: str, body: dict):
+        if path == "/api/alerts/config/save":
+            text = body.get("text")
+            if not isinstance(text, str):
+                return {"success": False, "message": "missing text"}, 400
+            resp = self.svc.save_alerts_config_text(text)
+            return resp, 200 if resp.get("success") else 400
+        if path == "/api/config/market_data/save":
+            text = body.get("text")
+            if not isinstance(text, str):
+                return {"success": False, "message": "missing text"}, 400
+            resp = self.svc.save_market_data_config_text(text)
+            return resp, 200 if resp.get("success") else 400
+        if path == "/api/config/analytics/save":
+            text = body.get("text")
+            if not isinstance(text, str):
+                return {"success": False, "message": "missing text"}, 400
+            resp = self.svc.save_analytics_config_text(text)
+            return resp, 200 if resp.get("success") else 400
         if path == "/api/workspaces/save":
             name = str(body.get("name", "")).strip()
             state = body.get("state")

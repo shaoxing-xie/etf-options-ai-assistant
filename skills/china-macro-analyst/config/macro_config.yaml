@@ -1,0 +1,43 @@
+macro_thresholds:
+  pmi:
+    expansion: 50.0
+  cpi:
+    high_inflation: 3.0
+  m1_m2_gap:
+    neutral: 0.0
+
+quadrant_rules:
+  recovery:
+    when:
+      growth: expansion
+      inflation: moderate
+    style_bias: growth
+  overheating:
+    when:
+      growth: expansion
+      inflation: high
+    style_bias: resource
+  stagflation:
+    when:
+      growth: contraction
+      inflation: high
+    style_bias: defensive
+  recession:
+    when:
+      growth: contraction
+      inflation: moderate
+    style_bias: defensive
+
+style_mapping:
+  growth:
+    etf_candidates: ["159915", "588000", "512480"]
+  resource:
+    etf_candidates: ["512400", "515220", "159930"]
+  defensive:
+    etf_candidates: ["511880", "510880", "512800"]
+
+output_policy:
+  allow_execution_instruction: false
+  require_counterevidence: true
+  confidence_band: ["low", "medium", "high"]
+

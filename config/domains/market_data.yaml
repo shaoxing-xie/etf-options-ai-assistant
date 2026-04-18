@@ -1,7 +1,6 @@
 realtime_full_fetch_cache:
   enabled: true
   ttl_seconds: 45
-
 data_sources:
   circuit_breaker:
     enabled: true
@@ -14,13 +13,15 @@ data_sources:
     eastmoney:
       enabled: true
       max_retries: 5
-      retry_delay: 3.0
+      retry_delay: 3
     sina:
       enabled: true
       max_retries: 3
-      retry_delay: 1.0
-      referer: "http://finance.sina.com.cn"
-      user_agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+      retry_delay: 1
+      referer: http://finance.sina.com.cn
+      user_agent: >-
+        Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124
+        Safari/537.36
   index_minute:
     priority:
       - sina
@@ -28,25 +29,40 @@ data_sources:
     eastmoney:
       enabled: true
       max_retries: 5
-      retry_delay: 3.0
+      retry_delay: 3
     sina:
       enabled: true
       max_retries: 3
-      retry_delay: 1.0
-      referer: "http://finance.sina.com.cn"
-      user_agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+      retry_delay: 1
+      referer: http://finance.sina.com.cn
+      user_agent: >-
+        Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124
+        Safari/537.36
   a50_futures:
     priority:
       - akshare_foreign_hist
     sina:
       enabled: false
       max_retries: 3
-      retry_delay: 1.0
-      referer: "http://finance.sina.com.cn"
-      user_agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+      retry_delay: 1
+      referer: http://finance.sina.com.cn
+      user_agent: >-
+        Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124
+        Safari/537.36
   global_index:
     hxc:
       enabled: true
+    # 全球主要指数最新快照：tool_fetch_global_index_spot（openclaw-data-china-stock fetch_global.py）
+    latest:
+      priority:
+        - yfinance
+        - fmp
+        - sina
+      fmp:
+        enabled: true
+        api_keys:
+          - "${FMP_API_KEY}"
+          - "${FMP_API_KEY_BACKUP}"
   stock_realtime:
     priority:
       - mootdx
@@ -56,19 +72,19 @@ data_sources:
     mootdx:
       enabled: true
       max_retries: 3
-      retry_delay: 1.0
+      retry_delay: 1
     akshare:
       enabled: true
       max_retries: 3
-      retry_delay: 1.0
+      retry_delay: 1
     eastmoney:
       enabled: true
       max_retries: 5
-      retry_delay: 3.0
+      retry_delay: 3
     tushare:
       enabled: true
       max_retries: 3
-      retry_delay: 1.0
+      retry_delay: 1
   stock_daily:
     priority:
       - tushare
@@ -77,15 +93,15 @@ data_sources:
     tushare:
       enabled: true
       max_retries: 3
-      retry_delay: 1.0
+      retry_delay: 1
     akshare:
       enabled: true
       max_retries: 3
-      retry_delay: 1.0
+      retry_delay: 1
     eastmoney:
       enabled: true
       max_retries: 5
-      retry_delay: 3.0
+      retry_delay: 3
   stock_minute:
     priority:
       - mootdx
@@ -94,65 +110,64 @@ data_sources:
     mootdx:
       enabled: true
       max_retries: 3
-      retry_delay: 1.0
+      retry_delay: 1
     akshare:
       enabled: true
       max_retries: 3
-      retry_delay: 1.0
+      retry_delay: 1
     eastmoney:
       enabled: true
       max_retries: 5
-      retry_delay: 3.0
+      retry_delay: 3
   tick:
     primary: alltick
     secondary: itick
     symbols:
-      "000300":
+      '399006':
         type: index
-        itick: "000300.SH"
-        alltick: "000300.SH"
-        itick_region: "SH"
-      "399006":
+        itick: 399006.SZ
+        alltick: 399006.SZ
+        itick_region: SZ
+      '000300':
         type: index
-        itick: "399006.SZ"
-        alltick: "399006.SZ"
-        itick_region: "SZ"
+        itick: 000300.SH
+        alltick: 000300.SH
+        itick_region: SH
     providers:
       itick:
         enabled: true
-        base_url_rest: "https://api-free.itick.org"
-        base_url_ws: "wss://api-free.itick.org"
+        base_url_rest: https://api-free.itick.org
+        base_url_ws: wss://api-free.itick.org
         timeout_ms: 2000
-        api_key: "${ITICK_API_KEY}"
+        api_key: ${ITICK_API_KEY}
       alltick:
         enabled: true
-        base_url_rest: "https://quote.alltick.co/quote-stock-b-api"
-        base_url_ws: "wss://quote.alltick.co/quote-stock-b-ws-api"
+        base_url_rest: https://quote.alltick.co/quote-stock-b-api
+        base_url_ws: wss://quote.alltick.co/quote-stock-b-ws-api
         timeout_ms: 2000
-        api_key: "${ALLTICK_API_KEY}"
-
+        api_key: ${ALLTICK_API_KEY}
 tushare:
   enabled: true
-  token: "${TUSHARE_TOKEN}"
+  token: ${TUSHARE_TOKEN}
   prefer_minute: false
-
 iopv_fallback:
-  # 可扩展：按 ETF 代码配置当天手工录入 IOPV；仅 updated_date=任务当天时生效
   manual_iopv_overrides:
-    "513880":
-      iopv: 1.8096
-      source: "manual_after_14_00"
-      updated_date: "2026-04-14"
-
+    '513300':
+      iopv: 2.2377
+      source: manual_after_14_00
+      updated_date: '2026-04-17'
+    '513880':
+      iopv: 1.8428
+      source: manual_after_14_00
+      updated_date: '2026-04-17'
 wide_inspection_overnight_refs:
-  # 宽基巡检尾盘建议：隔夜参考变量可用性与降级口径
   sources:
     a50_futures:
       enabled: false
-      provider: "pending_integration"
+      provider: pending_integration
     usd_cny:
       enabled: false
-      provider: "pending_integration"
+      provider: pending_integration
     us_equity_futures:
       enabled: false
-      provider: "pending_integration"
+      provider: pending_integration

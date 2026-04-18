@@ -80,6 +80,7 @@ SEND_OK=0
 SEND_FAIL=0
 SEND_UNKNOWN=0
 HARD_FAIL_ON_MISSING_SEND="1"
+PREFLIGHT_CHECK="${PREFLIGHT_CHECK:-1}"
 
 usage() {
   cat <<'EOF'
@@ -128,6 +129,7 @@ while [[ $# -gt 0 ]]; do
     --wait-timeout-seconds) WAIT_TIMEOUT_SECONDS="$2"; shift 2 ;;
     --poll-seconds) POLL_SECONDS="$2"; shift 2 ;;
     --no-hard-fail-send) HARD_FAIL_ON_MISSING_SEND="0"; shift ;;
+    --no-preflight) PREFLIGHT_CHECK="0"; shift ;;
     -h|--help) usage; exit 0 ;;
     *)
       echo "未知参数: $1"
@@ -136,6 +138,14 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+if [[ "${PREFLIGHT_CHECK:-1}" == "1" ]]; then
+  if ! bash scripts/verify_openclaw_config.sh >/dev/null; then
+    echo "[test_cron_tools] preflight failed: scripts/verify_openclaw_config.sh" >&2
+    echo "[test_cron_tools] hint: set PREFLIGHT_CHECK=0 or pass --no-preflight to bypass (not recommended)" >&2
+    exit 1
+  fi
+fi
 
 mkdir -p "$OUT_DIR"
 LOG="$OUT_DIR/run_$(date +%Y%m%d_%H%M%S).log"
@@ -222,7 +232,6 @@ default_args_for_tool() {
     tool_dragon_tiger_list) echo "{\"date\":\"${today}\"}" ;;
     tool_limit_up_daily_flow) echo '{"write_json":true,"write_report":true,"send_feishu":false}' ;;
     tool_capital_flow) echo '{"symbols":"600000,000001,300750","lookback_days":3}' ;;
-    tool_fetch_northbound_flow) echo '{"lookback_days":5}' ;;
     tool_fetch_policy_news) echo '{"disable_network":true}' ;;
     tool_fetch_macro_commodities) echo '{"disable_network":true}' ;;
     tool_fetch_overnight_futures_digest) echo '{"disable_network":true}' ;;
@@ -326,7 +335,17 @@ run_job_cron() {
   fi
 
   # 注意：cron run 会按任务真实 payload 执行，可能触发真实外部通知/投递
-  local cmd=(openclaw cron run "$job_id" --timeout "$CRON_TIMEOUT_MS")
+  # openclaw cron run --timeout 默认 30min 时，若 jobs.json 的 timeoutSeconds 更大（如轮动研究 45–60min），
+  # 会导致 CLI 侧先超时或 finished 记录为 job execution timed out；此处与 payload 对齐并留缓冲。
+  local effective_cron_ms="$CRON_TIMEOUT_MS"
+  if [[ -n "$job_timeout_sec" && "$job_timeout_sec" =~ ^[0-9]+$ ]]; then
+    local need_ms=$(( (job_timeout_sec + 180) * 1000 ))
+    if [[ "$need_ms" -gt "$effective_cron_ms" ]]; then
+      effective_cron_ms="$need_ms"
+      echo "INFO: cron run --timeout bumped to ${effective_cron_ms}ms (job payload.timeoutSeconds=${job_timeout_sec}s)" | tee -a "$LOG"
+    fi
+  fi
+  local cmd=(openclaw cron run "$job_id" --timeout "$effective_cron_ms")
   if [[ "$EXPECT_FINAL" == "1" ]]; then
     cmd+=(--expect-final)
   fi
@@ -501,6 +520,7 @@ def is_send_tool(name: str) -> bool:
         "tool_run_before_open_analysis_and_send",
         "tool_run_signal_risk_inspection_and_send",
         "tool_run_tail_session_analysis_and_send",
+        "tool_run_midday_recap_and_send",
     ):
         return True
     return name.startswith("tool_send_")
@@ -537,6 +557,9 @@ def tool_result_send_success(m: dict) -> str:
         if coverage_below_gate(d):
             return "fail"
         if d.get("success") is True:
+            # success=True + skipped=True：同日幂等/重复调用跳过，仍视为发送链路 OK（无第二条消息属预期）
+            if d.get("skipped") is True:
+                return "ok"
             resp = d.get("response")
             if isinstance(resp, dict):
                 ec = resp.get("errcode")
@@ -562,6 +585,8 @@ def tool_result_send_success(m: dict) -> str:
                 return "fail"
             continue
         if o.get("success") is True:
+            if o.get("skipped") is True:
+                return "ok"
             if coverage_below_gate(o):
                 return "fail"
             r = o.get("response")
@@ -634,6 +659,7 @@ if (
     and "tool_run_signal_risk_inspection_and_send" not in tools_csv
     and "tool_run_before_open_analysis_and_send" not in tools_csv
     and "tool_run_tail_session_analysis_and_send" not in tools_csv
+    and "tool_run_midday_recap_and_send" not in tools_csv
 ):
     print("SKIP\tno send-related tool in message\t")
     sys.exit(0)
@@ -687,11 +713,10 @@ if finished_status != "ok":
     print("FAIL\tfinished status=%s\t%s" % (finished_status, rec.get("error") or ""))
     sys.exit(0)
 
-if re.search(r"ERROR_NO_DELIVERY_TOOL_CALL", summary):
-    print("FAIL\tprompt marker ERROR_NO_DELIVERY_TOOL_CALL\t")
-    sys.exit(0)
-
 # 2) 会话文件：~/.openclaw/agents/<agentId>/sessions/<sessionId>.jsonl
+#    必须在 summary 里的 ERROR_NO_DELIVERY_TOOL_CALL 之前扫描：复合工具（如
+#    tool_run_tail_session_analysis_and_send）若已成功，应以 toolResult 为准，避免
+#    模型在 summary 中误带错误提示导致假失败。
 session_file = None
 if session_id and session_id not in ("None", "null"):
     cand = os.path.join(home, ".openclaw", "agents", agent_id, "sessions", session_id + ".jsonl")
@@ -710,19 +735,12 @@ structured_daily_ok = False
 if session_file:
     attempted, any_ok, any_fail, structured_daily_ok = scan_session(session_file)
 
-summary_ok = bool(
-    re.search(
-        r"已发送|发送成功|successfully delivered|飞书通知已发送|钉钉.*已发送|errcode\"\s*:\s*0|投递成功",
-        summary,
-        re.I,
-    )
-)
-
 require_structured_daily = job_id in STRUCTURED_DAILY_MARKET_JOB_IDS
 require_structured_before_open = job_id in STRUCTURED_BEFORE_OPEN_JOB_IDS
 
 # 3) 判定：必须有一次发送工具的成功 toolResult；仅有调用无成功则失败
 #    每日市场分析任务：必须 tool_send_daily_report / tool_send_analysis_report 成功（钉钉短消息不算）。
+#    结构化日报/盘前：禁止仅凭 finished.summary 弱关键词通过（模型易编造「已发送」而未产生 toolResult）。
 if require_structured_daily or require_structured_before_open:
     if structured_daily_ok:
         print(
@@ -734,10 +752,36 @@ if require_structured_daily or require_structured_before_open:
             "FAIL\tstructured report required but only other tool_send_* succeeded\t%s" % session_file
         )
         sys.exit(0)
+    if not session_file:
+        print("FAIL\tno session file for sessionId=%s agentId=%s" % (session_id, agent_id))
+        sys.exit(0)
+    if require_structured_before_open:
+        print(
+            "FAIL\tstructured before_open requires successful tool_run_before_open_analysis_and_send (or tool_send_daily_report) in session; assistant text alone is invalid\t%s"
+            % session_file
+        )
+    else:
+        print(
+            "FAIL\tstructured daily requires successful tool_analyze_after_close_and_send_daily_report (or tool_send_daily_report) in session; assistant text alone is invalid\t%s"
+            % session_file
+        )
+    sys.exit(0)
 else:
     if any_ok:
         print("PASS\tsession tool_send_* success\t%s" % session_file)
         sys.exit(0)
+
+if re.search(r"ERROR_NO_DELIVERY_TOOL_CALL", summary):
+    print("FAIL\tprompt marker ERROR_NO_DELIVERY_TOOL_CALL\t")
+    sys.exit(0)
+
+summary_ok = bool(
+    re.search(
+        r"已发送|发送成功|successfully delivered|飞书通知已发送|钉钉.*已发送|errcode\"\s*:\s*0|投递成功",
+        summary,
+        re.I,
+    )
+)
 if any_fail and not any_ok:
     print("FAIL\tsession tool_send_* returned failure\t%s" % session_file)
     sys.exit(0)

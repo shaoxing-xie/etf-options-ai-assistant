@@ -97,12 +97,13 @@ steps:
 
   - name: technical_indicators
     agent: analysis_agent
-    tool: tool_calculate_technical_indicators
+    tool: tool_calculate_technical_indicators_unified
     description: 技术指标（日线）
     params:
       symbol: "510300"
       data_type: "etf_daily"
       indicators: [ma, macd, rsi, bollinger, atr]
+      task_key: "opening_real_session_report"
     continue_on_failure: true
 
   - name: analyze_opening_market

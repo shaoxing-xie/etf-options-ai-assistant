@@ -25,7 +25,6 @@ def patch_before_open_chain() -> object:
             "allows_intraday_continuous_wording": False,
         },
     }
-    nb = {"success": True, "data": {"statistics": {"net_buy": 1.0}}}
     pn = {"success": True, "data": {"items": [{"title": "t", "url": "http://x"}]}}
     macro = {"success": True, "data": {"items": [{"name": "原油", "change_pct": 0.1}]}}
     od = {
@@ -71,9 +70,6 @@ def patch_before_open_chain() -> object:
     ), patch(
         "plugins.merged.fetch_index_data.tool_fetch_index_data",
         side_effect=_mock_fetch_index_data,
-    ), patch(
-        "plugins.data_collection.northbound.tool_fetch_northbound_flow",
-        return_value=nb,
     ), patch(
         "plugins.data_collection.morning_brief_fetchers.tool_fetch_policy_news",
         return_value=pn,

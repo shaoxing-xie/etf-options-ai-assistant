@@ -26,7 +26,6 @@ def patch_opening_chain() -> object:
             "allows_intraday_continuous_wording": False,
         },
     }
-    nb = {"success": True, "data": {"statistics": {"net_buy": 1.0}}}
     pn = {"success": True, "data": {"items": [{"title": "t", "url": "http://x"}]}}
     macro = {"success": True, "data": {"items": [{"name": "原油", "change_pct": 0.1}]}}
     od = {
@@ -84,9 +83,6 @@ def patch_opening_chain() -> object:
                 {"date": "2026-04-10", "close": 101.0},
             ],
         },
-    ), patch(
-        "plugins.data_collection.northbound.tool_fetch_northbound_flow",
-        return_value=nb,
     ), patch(
         "plugins.data_collection.morning_brief_fetchers.tool_fetch_policy_news",
         return_value=pn,

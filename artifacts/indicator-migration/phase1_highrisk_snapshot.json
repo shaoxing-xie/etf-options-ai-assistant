@@ -1,0 +1,75 @@
+{
+  "generated_at": "2026-04-17 20:08:20",
+  "success": true,
+  "message": "loaded from cache",
+  "indicator_runtime": null,
+  "shadow_compare": null,
+  "top10": [
+    {
+      "symbol": "512690",
+      "name": null,
+      "score": 1.4000000000000001,
+      "pool": null
+    },
+    {
+      "symbol": "159819",
+      "name": null,
+      "score": 0.9423076923076924,
+      "pool": null
+    },
+    {
+      "symbol": "513310",
+      "name": null,
+      "score": 0.9000000000000001,
+      "pool": null
+    },
+    {
+      "symbol": "515400",
+      "name": null,
+      "score": 0.8884615384615384,
+      "pool": null
+    },
+    {
+      "symbol": "513130",
+      "name": null,
+      "score": 0.855,
+      "pool": null
+    },
+    {
+      "symbol": "159748",
+      "name": null,
+      "score": 0.6900000000000001,
+      "pool": null
+    },
+    {
+      "symbol": "159992",
+      "name": null,
+      "score": 0.6423076923076924,
+      "pool": null
+    },
+    {
+      "symbol": "516160",
+      "name": null,
+      "score": 0.5096153846153846,
+      "pool": null
+    },
+    {
+      "symbol": "520500",
+      "name": null,
+      "score": 0.47,
+      "pool": null
+    },
+    {
+      "symbol": "560260",
+      "name": null,
+      "score": 0.4625,
+      "pool": null
+    }
+  ],
+  "duration_ms": 2,
+  "params": {
+    "lookback_days": 120,
+    "top_k": 3,
+    "mode": "test"
+  }
+}

@@ -1,5 +1,7 @@
 name: backtesting_research_on_demand
-description: 按需回测研究入口（A股/ETF），优先使用 openclaw-data-china-stock 数据与指标能力，再执行 backtesting-trading-strategies。
+description: |
+  按需回测研究：默认分支为单条 exec 跑 backtesting-trading-strategies（宽基/技术指标）；
+  仅当要对齐 openclaw 58 指标与缓存时才先走 MCP 数据链。
 schedule: null
 
 meta:
@@ -14,30 +16,28 @@ meta:
 structured_message: |
   执行“按需回测研究（A股/ETF）”。
 
-  【目标】
-  - 对指定标的与策略做历史验证与参数优化，输出研究级结论（非实盘指令）。
+  【OpenClaw 分支判断 — 须先选一路，禁止两路混跑】
+  - **不确定时 → 一律分支 A**（单条 exec），不要用长 MCP 链「试探」。
+  - **分支 A（默认，含钉钉日常）**：用户要内置策略回测（RSI/SMA/MACD 等）、宽基 ETF、optimize、或提到 price_loader / backtest.py。
+    - **硬约束**：第一条动作为 **单条 exec**：`python3 <REPO>/skills/backtesting-trading-strategies/scripts/backtest.py ...` 或 `<REPO>/scripts/run_backtest_trading_strategies.py ...`（绝对路径、禁止 cd &&；详见 `docs/ops/回测使用指导-自动任务与日常交互.md` §5.4）。
+    - **禁止**在成功前串联 tool_fetch_etf_*、tool_read_etf_daily、tool_calculate_technical_indicators_unified 来「手搓」同一次回测；**成功后**也禁止再串一轮拉数「核实」。
+  - **分支 B（深度对账）**：用户明确要求与 tool_calculate_technical_indicators_unified（58 指标口径）或插件缓存口径对齐、跨工具校验特征时。
+    - 顺序：tool_fetch_* / tool_read_market_data → 必要时 tool_calculate_technical_indicators_unified → 再 backtest / optimize 或结论文本互证。
 
-  【执行顺序（硬约束）】
-  1) 先使用 openclaw-data-china-stock 体系的数据工具确认数据可用性：
-     - 采集：tool_fetch_index_historical / tool_fetch_etf_historical / tool_fetch_stock_historical（按标的类型择一或组合）
-     - 读取：tool_read_market_data（或 tool_read_* 别名）优先读取缓存
-  2) 若策略需要技术特征，调用 tool_calculate_technical_indicators（58指标体系）。
-  3) 再进入 backtesting-trading-strategies 的 backtest / optimize 流程（回测与参数搜索）。
-  4) 最终整理并输出研究结论（收益、回撤、Sharpe、胜率、关键参数、样本区间、局限性）。
+  【目标】
+  - 历史验证与参数优化，输出研究级结论（非实盘指令）。
 
   【默认输入模板】
-  - symbol: 510300
-  - asset_type: etf
-  - period: daily
-  - lookback_days: 240
-  - strategy: sma_crossover
+  - symbol: 510300 或 510300.SS（团队内统一写法）
+  - strategy: rsi_reversal 等
+  - period: 1y（SMA/EMA 长 lookback 须足够窗口，见回测使用指导 §3.4）
   - optimize: false
   - report_channel: dingtalk
 
   【输出要求】
-  - 必须包含：样本期、参数、核心绩效指标、风险指标、过拟合风险提示。
-  - 必须明确：该结果用于研究，不直接替代盘中风控与执行链路。
+  - 分支 A：三段短答（结论 / 指标 / 风险），总字数控制；price_loader 以终端 `price_loader=` 为准。
+  - 分支 B：须说明数据与指标口径来源；样本期、过拟合风险。
 
   【禁止】
-  - A股/ETF 场景跳过本地数据插件，直接以 yfinance 默认结果作为唯一依据。
+  - 分支 A 下用 MCP 工具链替代单次 backtest.py 导致上下文爆炸。
   - 将单次回测结果表述为确定性交易建议。

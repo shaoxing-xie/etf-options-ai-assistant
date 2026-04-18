@@ -1,6 +1,10 @@
 technical_indicators:
   engine: standard
-  ma_periods: [5, 10, 20, 60]
+  ma_periods:
+    - 5
+    - 10
+    - 20
+    - 60
   macd:
     fast: 12
     slow: 26
@@ -20,11 +24,48 @@ technical_indicators:
     length: 14
   atr:
     length: 14
-  default_indicators: [ma, macd, rsi, bollinger]
-
+  default_indicators:
+    - ma
+    - macd
+    - rsi
+    - bollinger
+indicator_migration:
+  enabled: true
+  default_route: plugin_tool
+  dual_run_default: false
+  rollback_enabled: true
+  tasks:
+    opening_analysis:
+      enabled: true
+      route: plugin_tool
+      dual_run: false
+      rollback_enabled: true
+    signal_risk_inspection:
+      enabled: true
+      route: plugin_tool
+      dual_run: false
+      rollback_enabled: true
+    trend_analysis:
+      enabled: true
+      route: plugin_tool
+      dual_run: false
+      rollback_enabled: true
+    etf_rotation_research:
+      enabled: true
+      route: direct_engine
+      dual_run: true
+      rollback_enabled: true
+      force_rollback_to_legacy: false
+      score_engine_primary: "58"
+      score_engine_shadow: "legacy"
 historical_snapshot:
   enabled: true
-  default_windows: [5, 10, 20, 60, 252]
+  default_windows:
+    - 5
+    - 10
+    - 20
+    - 60
+    - 252
   max_symbols: 20
   cone_history_calendar_days: 756
   include_vol_cone_default: false
@@ -34,7 +75,6 @@ historical_snapshot:
     near_month_min_days: 7
     atm_method: average_call_put
     eq_30d_enabled: true
-
 volatility_engine:
   ab_test:
     active_profile: fusion_safe
@@ -48,7 +88,10 @@ volatility_engine:
           min_data_points: 40
           garch_p: 1
           garch_q: 1
-          arima_order: [1, 1, 1]
+          arima_order:
+            - 1
+            - 1
+            - 1
           confidence_level: 0.95
         iv_hv_fusion:
           enabled: true
@@ -71,7 +114,10 @@ volatility_engine:
           min_data_points: 40
           garch_p: 1
           garch_q: 1
-          arima_order: [1, 1, 1]
+          arima_order:
+            - 1
+            - 1
+            - 1
           confidence_level: 0.95
         iv_hv_fusion:
           enabled: true
@@ -94,7 +140,10 @@ volatility_engine:
           min_data_points: 50
           garch_p: 1
           garch_q: 1
-          arima_order: [1, 1, 1]
+          arima_order:
+            - 1
+            - 1
+            - 1
           confidence_level: 0.95
         iv_hv_fusion:
           enabled: true
@@ -116,7 +165,10 @@ volatility_engine:
     min_data_points: 40
     garch_p: 1
     garch_q: 1
-    arima_order: [1, 1, 1]
+    arima_order:
+      - 1
+      - 1
+      - 1
     confidence_level: 0.95
   volume_adjustment:
     enabled: true
@@ -129,7 +181,7 @@ volatility_engine:
     enabled: true
     bid_adjustment: 0.98
     ask_adjustment: 1.02
-    max_deviation_pct: 20.0
+    max_deviation_pct: 20
   iv_percentile_adjustment:
     enabled: true
     lookback_days: 30
@@ -140,7 +192,9 @@ volatility_engine:
   garch_iv:
     enabled: true
     lookback_days: 30
-    garch_order: [1, 1]
+    garch_order:
+      - 1
+      - 1
     distribution: normal
     confidence_level: 0.95
   iv_hv_fusion:
@@ -154,24 +208,29 @@ volatility_engine:
       max_spread_pct: 0.5
       min_depth: 100
     good:
-      max_spread_pct: 1.0
+      max_spread_pct: 1
       min_depth: 50
     fair:
-      max_spread_pct: 2.0
+      max_spread_pct: 2
       min_depth: 20
     poor:
-      max_spread_pct: 5.0
+      max_spread_pct: 5
       min_depth: 10
     critical:
-      max_spread_pct: 10.0
+      max_spread_pct: 10
       min_depth: 5
-
 daily_volatility_range:
   enabled: true
   horizon: 1d
   target_session: current
-  windows: [5, 22, 63]
-  hv_weights: [0.25, 0.35, 0.4]
+  windows:
+    - 5
+    - 22
+    - 63
+  hv_weights:
+    - 0.25
+    - 0.35
+    - 0.4
   atr_period: 14
   atr_weight: 0.2
   parkinson_enabled: false
@@ -187,16 +246,15 @@ daily_volatility_range:
     minute_lookback: 30
     max_adjust_pct: 0.8
   range_clamp:
-    min_range_pct: 1.0
-    max_range_pct: 12.0
-
+    min_range_pct: 1
+    max_range_pct: 12
 nikkei_tail_session:
   enabled: true
-  etf_code: "513880"
-  index_symbol: "^N225"
+  etf_code: '513880'
+  index_symbol: ^N225
   decision_mode: user_final_decision
   technical_thresholds:
-    ma25_dev_overheat: 5.0
+    ma25_dev_overheat: 5
     rsi_overbought: 70
     rsi_oversold: 30
   streak_thresholds:
@@ -206,24 +264,29 @@ nikkei_tail_session:
     premium_hard_stop:
       enabled: true
       trigger:
-        premium_pct_gte: 5.0
+        premium_pct_gte: 5
     premium_extreme_exit_bias:
       enabled: true
       trigger:
-        premium_pct_gte: 10.0
+        premium_pct_gte: 10
     manager_notice_gate:
       enabled: true
       trigger:
         manager_premium_notice: true
-        premium_pct_gte: 3.0
+        premium_pct_gte: 3
     degraded_data_gate:
       enabled: true
       trigger:
-        data_quality_in: [partial, stale, degraded]
+        data_quality_in:
+          - partial
+          - stale
+          - degraded
     overnight_shock_gate:
       enabled: true
       trigger:
-        overnight_risk_level_in: [high, extreme]
+        overnight_risk_level_in:
+          - high
+          - extreme
     high_volatility_gate:
       enabled: true
       trigger:
@@ -235,65 +298,192 @@ nikkei_tail_session:
   option_profiles:
     conservative:
       max_position_pct: 20
-      preferred_actions: [hold, reduce, exit_wait, buy_light]
+      preferred_actions:
+        - hold
+        - reduce
+        - exit_wait
+        - buy_light
     neutral:
       max_position_pct: 40
-      preferred_actions: [hold, reduce, buy_light, buy_split]
+      preferred_actions:
+        - hold
+        - reduce
+        - buy_light
+        - buy_split
     aggressive:
       max_position_pct: 60
-      preferred_actions: [buy_light, buy_split, hold, reduce]
+      preferred_actions:
+        - buy_light
+        - buy_split
+        - hold
+        - reduce
   risk_notice_state:
     manager_premium_notice: false
   risk_notice_rules:
     premium_notice:
       when:
-        premium_pct_gte: 3.0
-      message: "当前溢价偏高，需警惕价格向IOPV回归带来的被动回撤。"
+        premium_pct_gte: 3
+      message: 当前溢价偏高，需警惕价格向IOPV回归带来的被动回撤。
     extreme_premium_notice:
       when:
-        premium_pct_gte: 10.0
-      message: "当前属于极端溢价区间，不宜将上涨直接等同于安全盈利。"
+        premium_pct_gte: 10
+      message: 当前属于极端溢价区间，不宜将上涨直接等同于安全盈利。
     discount_notice:
       when:
-        premium_pct_lt: 0.0
-      message: "当前处于折价区间，具备一定安全垫，但仍需结合周期层与风险层判断。"
+        premium_pct_lt: 0
+      message: 当前处于折价区间，具备一定安全垫，但仍需结合周期层与风险层判断。
     overbought_notice:
       when:
         rsi14_gte: 70
-      message: "技术面处于过热区域，追高胜率与盈亏比可能同时恶化。"
+      message: 技术面处于过热区域，追高胜率与盈亏比可能同时恶化。
     deviation_notice:
       when:
-        ma25_dev_pct_gte: 5.0
-      message: "价格相对25日均线乖离偏大，需防范均值回归。"
+        ma25_dev_pct_gte: 5
+      message: 价格相对25日均线乖离偏大，需防范均值回归。
     manager_notice:
       when:
         manager_premium_notice: true
-      message: "基金管理人已发布溢价风险提示，当前更应从风险控制而非追涨逻辑出发。"
+      message: 基金管理人已发布溢价风险提示，当前更应从风险控制而非追涨逻辑出发。
     degraded_data_notice:
       when:
-        data_quality_in: [partial, stale, degraded]
-      message: "当前部分数据源存在缺口或时滞，系统建议仅作参考，不宜据此激进决策。"
-
+        data_quality_in:
+          - partial
+          - stale
+          - degraded
+      message: 当前部分数据源存在缺口或时滞，系统建议仅作参考，不宜据此激进决策。
+nasdaq_tail_session_513300:
+  enabled: true
+  etf_code: '513300'
+  index_symbol: ^IXIC
+  decision_mode: user_final_decision
+  technical_thresholds:
+    ma25_dev_overheat: 5
+    rsi_overbought: 70
+    rsi_oversold: 30
+  streak_thresholds:
+    up_days: 5
+    down_days: 3
+  timing_signal:
+    us_futures_main_contracts:
+      - NQ00Y
+      - ES00Y
+      - YM00Y
+    nq_futures_up_dn_threshold: 1
+    consensus_rule: at_least_2_of_3
+    consensus_fail_action_cap:
+      - hold
+      - reduce
+      - exit_wait
+  gate_rules:
+    premium_hard_stop:
+      enabled: true
+      trigger:
+        premium_pct_gte: 5
+    premium_extreme_exit_bias:
+      enabled: true
+      trigger:
+        premium_pct_gte: 10
+    manager_notice_gate:
+      enabled: true
+      trigger:
+        manager_premium_notice: true
+        premium_pct_gte: 3
+    event_hard_gate:
+      enabled: true
+      trigger:
+        major_event_night: true
+    degraded_data_gate:
+      enabled: true
+      trigger:
+        data_quality_in:
+          - partial
+          - stale
+          - degraded
+          - estimated
+    liquidity_guard_gate:
+      enabled: true
+      trigger:
+        min_amount_yuan_lte: 20000000
+  option_profiles:
+    conservative:
+      max_position_pct: 20
+      preferred_actions:
+        - hold
+        - reduce
+        - exit_wait
+        - buy_light
+    neutral:
+      max_position_pct: 40
+      preferred_actions:
+        - hold
+        - reduce
+        - buy_light
+    aggressive:
+      max_position_pct: 60
+      preferred_actions:
+        - buy_light
+        - hold
+        - reduce
+  risk_notice_state:
+    manager_premium_notice: false
+  risk_notice_rules:
+    premium_notice:
+      when:
+        premium_pct_gte: 3
+      message: 当前溢价偏高，需警惕价格向IOPV回归带来的被动回撤。
+    extreme_premium_notice:
+      when:
+        premium_pct_gte: 5
+      message: 当前溢价已达高风险区间，不宜追高。
+    discount_notice:
+      when:
+        premium_pct_lt: 0
+      message: 当前处于折价区间，具备一定安全垫。
+    overbought_notice:
+      when:
+        rsi14_gte: 70
+      message: 技术面进入过热区域，短线追高风险上升。
+    deviation_notice:
+      when:
+        ma25_dev_pct_gte: 5
+      message: 价格相对25日均线偏离过大，需防范均值回归。
+    degraded_data_notice:
+      when:
+        data_quality_in:
+          - partial
+          - stale
+          - degraded
+          - estimated
+      message: 当前关键数据存在缺口或估算成分，建议降级执行。
+midday_recap:
+  enabled: true
+  p0_requires_fund_flow: true
+  p0_requires_sector_heat: false
+  index_codes: 000300,399006,000905
+  etf_codes: 510300,510500,159915,159326,159153,513120
+  cross_border_etf_codes: 513880,513300
+  market_state:
+    strong_avg_pct: 0.5
+    weak_avg_pct: -0.5
+  user_decision_note: 本报告提供多视角信息与下午倾向参考，不替代你的最终交易决策；路径为可选执行框架。
 wide_inspection_tail_advice:
   enabled: true
-  # 交易日且当前时间超过此阈值时，宽基巡检报告追加“尾盘操作建议”
-  time_gate_after: "14:00"
+  time_gate_after: '14:00'
   trend:
-    up_threshold_pct: 0.30
-    down_threshold_pct: -0.30
+    up_threshold_pct: 0.3
+    down_threshold_pct: -0.3
   timing:
-    # 任一核心指数盘中涨幅超过该阈值，视作短线节奏偏热
-    hot_change_pct: 1.50
+    hot_change_pct: 1.5
   risk:
-    drawdown_warn_pct_lte: -5.0
-    drawdown_exit_pct_lte: -10.0
-    var_warn_pct_gte: 2.0
+    drawdown_warn_pct_lte: -5
+    drawdown_exit_pct_lte: -10
+    var_warn_pct_gte: 2
     var_exit_pct_gte: 2.5
   paths:
-    conservative_cap: "20%"
-    neutral_cap: "40%"
-    aggressive_cap: "60%"
+    conservative_cap: 20%
+    neutral_cap: 40%
+    aggressive_cap: 60%
   next_focus:
-    - "A50期货夜盘方向"
-    - "晚间重大政策/事件"
-    - "隔夜美股与中概指数波动"
+    - A50期货夜盘方向
+    - 晚间重大政策/事件
+    - 隔夜美股与中概指数波动

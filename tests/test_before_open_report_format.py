@@ -74,6 +74,5 @@ def test_before_open_uses_readable_sections_for_regime_links_and_nb() -> None:
     assert "- - 收盘后" not in body
     assert "### 🔗 参考链接" in body
     assert "- 1. https://a.com/1" in body
-    assert "### 💹 北向资金" in body
-    assert "暂无可用北向数据" in body
+    assert "### 💹 北向资金" not in body
 

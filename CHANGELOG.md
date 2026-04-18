@@ -6,7 +6,13 @@ The format is inspired by Keep a Changelog and follows semantic versioning.
 
 ## [Unreleased]
 
+### Added
+- **`tool_backtest_limit_up_pullback`**: optional `sector_keywords` (e.g. 军工 / 国防) to filter backtest trades by `board_name` substring; trades now include `sector`; ops doc §3.5.1 describes DingTalk-safe flow (tool-first, no spurious web search).
+
 ### Changed
+- **OpenClaw 回测路由（A/B + cron 入口）**：`skills/ota-backtesting-integration-brief/SKILL.md` — **分支 A 默认单条 `exec`**，禁止先串 MCP 拉数+指标；文首 **速判表**、分支 A **成功后禁止再拉数核实**；仅 **分支 B** 深度对账走数据链。`workflows/backtesting_research_on_demand.yaml` 同步（**不确定默认 A**、成功后禁补链）。`config/snippets/openclaw_agents_ota_skills.json` 将 **`ota_backtesting_integration_brief` + `backtesting-trading-strategies` 排在 `ota_technical_indicators_brief` 之前**。`config/agents/cron_agents.yaml` 为 **`etf_cron_research_agent`** 补齐上述两 Skill（`requiredSkills` 全量替换模板，此前工作流入口可能读不到规程）。`docs/ops/回测使用指导-自动任务与日常交互.md` 文首补充 cron Agent 与 `render_agents_config.py`。
+- **`docs/ops/回测使用指导-自动任务与日常交互.md`**：全文改为仅指导 `backtesting-trading-strategies` 脚本与 exec/运维；删除涨停回马枪工具（`tool_backtest_limit_up_*`）相关章节与提示词；原脚本实测并入 **§7**，`SKILL.md` 交叉引用更新为 §7；新增 **§5** 钉钉/OpenClaw 交互（通道约束、自然语言示例、`exec` 模板、回群结构与强约束话术）。
+- **Backtesting skill (`skills/backtesting-trading-strategies`)**: CN six-digit symbols default to the repo `plugins/data_collection` ETF pipeline (aligned with `openclaw-data-china-stock`) instead of Yahoo; added `scripts/china_stock_loader.py`, `scripts/skill_settings.py` (YAML + `BACKTEST_SKILL_SETTINGS`, precedence CLI → env → `data.provider`), wired `data.cache_dir` / `reporting.output_dir` / `backtest.*` defaults from `config/settings.yaml`; `--data-source` / `--source` / optional `coingecko`; `scripts/run_backtest_trading_strategies.py` for single-command `exec`. Strategy-aware minimum bar check via `min_bars_for_strategy()`; `attrs['price_loader']` for audit logs.
 - Removed deprecated, unregistered ETF rotation backtest implementation `plugins/backtest/etf_rotation_backtest.py` and cleaned stale documentation references to `tool_backtest_etf_rotation`, aligning docs with the active backtesting path (`backtesting-trading-strategies` + `backtesting_research_on_demand`).
 
 ## [0.2.0] - 2026-04-14

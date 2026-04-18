@@ -24,13 +24,37 @@
       .error-banner { margin-top: 8px; background: #5a1f2f; border: 1px solid #a0435a; padding: 8px; border-radius: 8px; font-size: 12px; }
       table { width: 100%; border-collapse: collapse; font-size: 12px; }
       td, th { border-bottom: 1px solid #2a3562; padding: 4px 6px; text-align: left; }
+      .nav { display: flex; gap: 6px; margin-left: 8px; }
+      .tab { font-size: 12px; padding: 6px 10px; border-radius: 999px; }
+      .tab[aria-selected="true"] { border-color: #9ad1ff; background: #1a2a5a; }
+      .view { display: none; }
+      .view.active { display: block; }
+      .config-grid { display: grid; grid-template-columns: 1fr; gap: 10px; }
+      .subnav { display: flex; gap: 6px; margin: 0 0 10px 0; }
+      .subtab { font-size: 12px; padding: 6px 10px; border-radius: 999px; }
+      .subtab[aria-selected="true"] { border-color: #9ad1ff; background: #1a2a5a; }
+      .config-view { display: none; }
+      .config-view.active { display: block; }
+      .card { background: #101831; border: 1px solid #28335f; border-radius: 10px; padding: 10px; }
+      .card h4 { margin: 0 0 8px 0; font-size: 13px; opacity: 0.9; }
+      textarea { width: 100%; min-height: 420px; resize: vertical; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px; line-height: 1.35; }
+      @media (max-width: 980px) { .config-grid { grid-template-columns: 1fr; } }
     </style>
     <script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/js-yaml@4.1.0/dist/js-yaml.min.js"></script>
   </head>
   <body>
     <div class="wrap">
       <div id="bootError" class="error-banner" style="display:none;"></div>
-      <div class="bar">
+      <div class="bar" id="topNav">
+        <div class="nav" role="tablist" aria-label="Views">
+          <button class="tab" id="tab-chart" role="tab" aria-selected="true" data-view="chart">图形</button>
+          <button class="tab" id="tab-config" role="tab" aria-selected="false" data-view="config">配置中心</button>
+        </div>
+      </div>
+
+      <section class="view active" id="view-chart" data-view="chart">
+        <div class="bar" id="chartBar">
         <select id="symbol"><option>510300</option><option>510500</option><option>510050</option></select>
         <select id="tf"><option value="5">5m</option><option value="15">15m</option><option value="30" selected>30m</option><option value="60">1h</option><option value="None">1d</option></select>
         <input id="lookback" type="number" value="180" min="60" max="600" />
@@ -63,22 +87,55 @@
         <label><input id="layerMa" type="checkbox" checked />MA</label>
       </div>
 
-      <div class="grid">
-        <div class="panel">
-          <div id="chartMain"></div>
-          <div id="chartSecond"></div>
-          <div id="chartMacd"></div>
-          <div id="chartRsi"></div>
+        <div class="grid">
+          <div class="panel">
+            <div id="chartMain"></div>
+            <div id="chartSecond"></div>
+            <div id="chartMacd"></div>
+            <div id="chartRsi"></div>
+          </div>
+          <div class="panel">
+            <h4>指标/回测/告警回放</h4>
+            <pre id="indicatorJson" class="small"></pre>
+            <h4>回测指标</h4>
+            <pre id="backtestJson" class="small"></pre>
+            <h4>告警事件（最近20）</h4>
+            <table id="alertTable"><thead><tr><th>ts</th><th>symbol</th><th>status</th><th>rule</th></tr></thead><tbody></tbody></table>
+          </div>
         </div>
-        <div class="panel">
-          <h4>指标/回测/告警回放</h4>
-          <pre id="indicatorJson" class="small"></pre>
-          <h4>回测指标</h4>
-          <pre id="backtestJson" class="small"></pre>
-          <h4>告警事件（最近20）</h4>
-          <table id="alertTable"><thead><tr><th>ts</th><th>symbol</th><th>status</th><th>rule</th></tr></thead><tbody></tbody></table>
+      </section>
+
+      <section class="view" id="view-config" data-view="config">
+        <div class="subnav" role="tablist" aria-label="Config tabs">
+          <button class="subtab" id="subtab-market" role="tab" aria-selected="true" data-subview="market">market配置</button>
+          <button class="subtab" id="subtab-analytics" role="tab" aria-selected="false" data-subview="analytics">analytic配置</button>
         </div>
-      </div>
+
+        <div class="config-view active" id="config-market" data-subview="market">
+          <div class="card">
+            <h4>market_data.yaml（IOPV 配置）</h4>
+            <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:8px;">
+              <button id="btnMarketLoad" type="button">加载</button>
+              <button id="btnMarketSave" type="button">保存</button>
+            </div>
+            <div class="small" style="margin-top:10px; opacity:0.9;">
+              主要关注：`iopv_fallback.manual_iopv_overrides`（按 ETF 代码手工录入当天 IOPV）。
+            </div>
+          </div>
+          <div id="marketCards" class="config-grid"></div>
+        </div>
+
+        <div class="config-view" id="config-analytics" data-subview="analytics">
+          <div class="card">
+            <h4>analytics.yaml（分析配置）</h4>
+            <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:8px;">
+              <button id="btnAnalyticsLoad" type="button">加载</button>
+              <button id="btnAnalyticsSave" type="button">保存</button>
+            </div>
+          </div>
+          <div id="analyticsCards" class="config-grid"></div>
+        </div>
+      </section>
     </div>
     <script type="module" src="/app.js"></script>
   </body>

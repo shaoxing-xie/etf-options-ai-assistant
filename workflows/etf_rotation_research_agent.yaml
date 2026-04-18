@@ -9,7 +9,12 @@ timezone: "Asia/Shanghai"
 structured_message: |
   执行 ETF 轮动研究。先读取并严格遵循 research.md 第一至六节及第十节「ETF 轮动研究」步骤与口径，按序执行并输出完整 Markdown 报告（研究级+免责声明）。
 
+  【标的池硬约束】
+  - 禁止传入固定6只或任意显式 `etf_pool`。
+  - 必须调用 `tool_etf_rotation_research` 且 `etf_pool=""`（留空），由 `config/rotation_config.yaml + config/symbols.json` 自动解析候选池（industry_etf + concept_etf + extra）。
+  - `top_k` 至少为 10，正文必须包含：行业池 Top5、概念池 Top5、全池观察榜 Top10。
+
   【钉钉投递（硬约束）】完整条款见仓库 docs/openclaw/dingtalk_delivery_contract.md §标准长文。
-  摘要：delivery=none；须钉钉自定义机器人；投递优先级：① tool_send_analysis_report（report_data.report_type 须为 etf_rotation_research）② tool_send_dingtalk_message(mode=prod，title 以「ETF 轮动」开头）③ 不得已才用 tool_send_daily_report（仍须 report_type=etf_rotation_research）；禁飞书扇出同文；需 OPENCLAW_DINGTALK_*；失败不以 error 结束。
+  摘要：delivery=none；须钉钉自定义机器人；投递优先级：① tool_send_dingtalk_message（mode=prod，title 必须以「ETF 轮动」开头，正文使用轮动研究 llm_summary）② tool_send_analysis_report（report_data.report_type 须为 etf_rotation_research，且不得回退为“市场日报”模板）③ 不得已才用 tool_send_daily_report（仍须 report_type=etf_rotation_research）；禁飞书扇出同文；需 OPENCLAW_DINGTALK_*；失败不以 error 结束。
 
   【通知要求】delivery.mode 保持 none（同上文档）。

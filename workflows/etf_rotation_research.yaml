@@ -1,6 +1,7 @@
 name: etf_rotation_research
 description: |
   ETF轮动研究工作流（研究级），用于每日评估预设ETF池的强弱与轮动方向，仅输出研究结论与通知，不直接驱动交易或仓位调整。
+  OpenClaw Cron 若走 agentTurn：请用单次 tool_send_etf_rotation_research_report（见 jobs.json etf-rotation-research），勿拆成仅 tool_etf_rotation_research（易超大 toolResult）。
 
 # 建议执行时间：盘后或晚间，避免与盘中信号/风控链路冲突
 schedule: "0 18 * * 1-5"  # 工作日 18:00

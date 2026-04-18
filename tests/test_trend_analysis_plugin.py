@@ -10,7 +10,7 @@ from plugins.analysis import trend_analysis as ta
 def test_merge_trend_plugin_config_defaults():
     cfg = ta._merge_trend_plugin_config(None)
     assert cfg["enabled"] is True
-    assert cfg["overlay"]["northbound_lookback_days"] == 5
+    assert cfg["overlay"].get("global_index_enabled") is True
     assert "adx_index" in cfg["overlay"]
     assert cfg["fallback"]["use_simple_opening"] is True
 
@@ -20,7 +20,7 @@ def test_merge_trend_plugin_config_partial_overlay():
         {"trend_analysis_plugin": {"overlay": {"adx_enabled": False}}}
     )
     assert cfg["overlay"]["adx_enabled"] is False
-    assert cfg["overlay"]["northbound_lookback_days"] == 5
+    assert cfg["overlay"].get("sector_heat_enabled") is True
 
 
 def test_simple_opening_analysis_summary_fields():

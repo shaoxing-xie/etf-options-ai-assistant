@@ -6,7 +6,10 @@ from unittest.mock import MagicMock, patch
 
 import pandas as pd
 
-from plugins.data_collection.index.fetch_global_hist_sina import fetch_global_index_hist_sina
+from plugins.data_collection.index.fetch_global_hist_sina import (
+    _normalize_symbol,
+    fetch_global_index_hist_sina,
+)
 
 
 @patch("plugins.data_collection.index.fetch_global_hist_sina._load_global_name_table")
@@ -40,4 +43,13 @@ def test_fetch_global_hist_rejects_unknown_symbol(mock_tbl: MagicMock) -> None:
         pass
     else:
         raise AssertionError("expected KeyError")
+
+
+def test_normalize_accepts_opening_runner_yfinance_codes() -> None:
+    """开盘补采欧股/韩股时传入 ^FTSE 等，须能归一化到新浪 hist 内部码。"""
+    assert _normalize_symbol("^FTSE") == "UKX"
+    assert _normalize_symbol("^GDAXI") == "DAX"
+    assert _normalize_symbol("^STOXX50E") == "SX5E"
+    assert _normalize_symbol("^KS11") == "KOSPI"
+    assert _normalize_symbol("^GSPC") == "SPX"
 

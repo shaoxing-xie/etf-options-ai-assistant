@@ -42,14 +42,6 @@ steps:
     continue_on_failure: true
     depends_on: [fetch_global_index_spot]
 
-  - name: fetch_northbound
-    agent: data_collector_agent
-    tool: tool_fetch_northbound_flow
-    description: 北向资金
-    params:
-      lookback_days: 5
-    continue_on_failure: true
-
   - name: fetch_policy_news
     agent: data_collector_agent
     tool: tool_fetch_policy_news
@@ -164,18 +156,17 @@ structured_message: |
   1) `tool_fetch_index_opening` → 并入 `market_overview` / 竞价相关摘要。
   2) `tool_fetch_global_index_spot` → `report_data.market_overview.indices`。
   2b) 若正文需要“昨收/上周五收市”等**收盘口径**，或 spot 对欧股代表等缺 `change_pct`：直接调 `tool_fetch_global_index_hist_sina(symbol='^GDAXI'|'^FTSE'|'^STOXX50E', limit=2)`，并将返回整段挂 `report_data.tool_fetch_global_index_hist_sina`（复合工具 `tool_run_before_open_analysis_and_send` 已内置补齐逻辑）。
-  3) `tool_fetch_northbound_flow` lookback_days=5 → `report_data.capital_flow.northbound`（正文标注 **T-1 / 昨日收盘后**）。
-  4) `tool_fetch_policy_news` → `report_data.policy_news`（`data`）。
-  5) `tool_fetch_macro_commodities` → `report_data.macro_snapshot`。
-  6) `tool_fetch_overnight_futures_digest` → `report_data.overnight_digest`。
-  7) `tool_fetch_announcement_digest` → `report_data.announcement_digest`。
-  8) `tool_sector_heat_score` → `report_data.sector_rotation`（可写 `summary` 文本）。
-  9) `tool_compute_index_key_levels` index_code=000300 → `report_data.key_levels`。
-  10) `tool_analyze_before_open` → `report_data.analysis`；汇总 `overall_trend`、`trend_strength` 与 `final_trend`/`final_strength`。
-  11) `tool_predict_volatility` underlying=510300 → `report_data.volatility`（日内剩余时段等）。
-  12) `tool_predict_intraday_range` symbol=510300 → `report_data.intraday_range`。
-  13) `tool_predict_daily_volatility_range` underlying=510300 → `report_data.daily_volatility_range`（**完整交易日**全日区间；勿与 volatility/intraday 混为一谈）。
-  14) `tool_get_yesterday_prediction_review` → `report_data.prediction_review`（可选）。
+  3) `tool_fetch_policy_news` → `report_data.policy_news`（`data`）。
+  4) `tool_fetch_macro_commodities` → `report_data.macro_snapshot`。
+  5) `tool_fetch_overnight_futures_digest` → `report_data.overnight_digest`。
+  6) `tool_fetch_announcement_digest` → `report_data.announcement_digest`。
+  7) `tool_sector_heat_score` → `report_data.sector_rotation`（可写 `summary` 文本）。
+  8) `tool_compute_index_key_levels` index_code=000300 → `report_data.key_levels`。
+  9) `tool_analyze_before_open` → `report_data.analysis`；汇总 `overall_trend`、`trend_strength` 与 `final_trend`/`final_strength`。
+  10) `tool_predict_volatility` underlying=510300 → `report_data.volatility`（日内剩余时段等）。
+  11) `tool_predict_intraday_range` symbol=510300 → `report_data.intraday_range`。
+  12) `tool_predict_daily_volatility_range` underlying=510300 → `report_data.daily_volatility_range`（**完整交易日**全日区间；勿与 volatility/intraday 混为一谈）。
+  13) `tool_get_yesterday_prediction_review` → `report_data.prediction_review`（可选）。
 
   **评估与可达性（内嵌口径）**
   - 日内区间、波动预测须说明依赖的数据时点与是否可能滞后。
@@ -189,7 +180,7 @@ structured_message: |
   - **可选增强（与日报「最小补采」同源、择要）**：`tool_fetch_global_index_spot`（多市场代码，勿只传 `^HSI`）、`tool_tavily_search`（隔夜外盘文字摘要，供 LLM 摘要节；勿替代 A50/HXC 官方口径）、`tool_fetch_macro_commodities`。
 
   **钉钉正文版式（由 `send_daily_report` 渲染，勿手抄重复大段）**
-  - 顶栏顺序：**分析时间** →（可选 `a_share_regime_note`）→ **参考链接**（来自 `overnight_digest.evidence_urls` + 政策条目 URL）→ **政策要闻** → **北向** → **趋势判定** → **关键位** → **波动/区间** →（可选 **开盘策略建议**）→ **情景推演 / 盘中时间锚点** → **热点与板块** →（公告/预判）→ **摘要（LLM）**。
+  - 顶栏顺序：**分析时间** →（可选 `a_share_regime_note`）→ **参考链接**（来自 `overnight_digest.evidence_urls` + 政策条目 URL）→ **政策要闻** → **趋势判定** → **关键位** → **波动/区间** →（可选 **开盘策略建议**）→ **情景推演 / 盘中时间锚点** → **热点与板块** →（公告/预判）→ **摘要（LLM）**。
   - **隔夜外盘、A50/金龙叙事**：优先写入 **`llm_summary` / LLM 摘要节**（工具 `enhance_with_llm` 已含 `market_overview`、`overnight_digest` 等），与顶栏结构化小节分工，避免与「参考链接+政策」重复堆叠。
 
   **钉钉投递（硬约束，与 cron 调度任务「etf: 盘前机构晨报」一致）**

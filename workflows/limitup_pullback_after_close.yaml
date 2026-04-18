@@ -18,15 +18,15 @@ structured_message: |
   【1）要闻与公告】`tool_fetch_policy_news`；`tool_fetch_industry_news_brief`；`tool_fetch_announcement_digest`。
   - **行业要闻（Agent 精选）**：`tool_fetch_industry_news_brief` 返回的是 Tavily 检索 + 规则过滤（`_industry_noise` 硬规则/软规则、时效、相关性等）后的候选，**不在工具内再做 LLM 精选**。你在成稿前须对返回的 `items`（及可选 `brief_answer`）自行**精选**：按本报告需要删减、排序、合并表述，去掉与盘后复盘无关、明显旧稿或标题党，再写入 `report_data.industry_news` 与「要闻与公告」正文。
 
-  【2）资金】`tool_fetch_northbound_flow`，`lookback_days=5`。
+  【2）资金】以 A 股主力资金/板块工具为主（如 `tool_capital_flow`、`tool_fetch_a_share_fund_flow` 等同花顺口径）；**不再**使用本仓库已下线的北向进程内采集。
 
-  【3）校准与情景】`tool_overnight_calibration`；`tool_build_limitup_scenarios`（传入 global/macro/a50/northbound/calibration/key_levels 等已得字段；禁止编造未返回数值）。
+  【3）校准与情景】`tool_overnight_calibration`；`tool_build_limitup_scenarios`（传入 global/macro/a50/calibration/key_levels 等已得字段；禁止编造未返回数值）。
 
   【4）回顾】`tool_get_yesterday_prediction_review`（若已有510300收盘则 `underlying_close=`）；`tool_record_limitup_watch_outcome`（龙头观察落盘，见 research.md）。
 
-  【5）第七节五技能】1) `tool_dragon_tiger_list`；2) `tool_limit_up_daily_flow`，`write_json=true`，`write_report=true`，`send_feishu=false`；3) `tool_capital_flow`（龙头代码，`lookback_days=3`）；4) 北向已在【2】；5) 可选 `tool_quantitative_screening`。
+  【5）第七节五技能】1) `tool_dragon_tiger_list`；2) `tool_limit_up_daily_flow`，`write_json=true`，`write_report=true`，`send_feishu=false`；3) `tool_capital_flow`（龙头代码，`lookback_days=3`）；4) 可选 `tool_quantitative_screening`。
 
-  【6）终稿结构】`report_data` 含 market_overview、policy_news、industry_news、announcements、northbound、key_levels、overnight_calibration、scenarios、prediction_review、limitup_record、涨停龙虎与流向等；`llm_summary` 建议二级标题顺序：## 外盘与大宗 → ## 要闻与公告 → ## 资金与关键位 → ## 隔夜校准与情景 → ## 昨日预判回顾 → ## 涨停回马枪专题。
+  【6）终稿结构】`report_data` 含 market_overview、policy_news、industry_news、announcements、key_levels、overnight_calibration、scenarios、prediction_review、limitup_record、涨停龙虎与流向等；`llm_summary` 建议二级标题顺序：## 外盘与大宗 → ## 要闻与公告 → ## 资金与关键位 → ## 隔夜校准与情景 → ## 昨日预判回顾 → ## 涨停回马枪专题。
 
   【钉钉投递（硬约束）】完整条款见仓库 docs/openclaw/dingtalk_delivery_contract.md §涨停回马枪盘后。
   摘要：须钉钉自定义机器人；tool_send_analysis_report(mode=prod, split_markdown_sections=true)；禁飞书扇出同文；需 OPENCLAW_DINGTALK_*。

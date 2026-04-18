@@ -1,4 +1,9 @@
 {
   "version": 1,
-  "skills": {}
+  "skills": {
+    "backtesting-trading-strategies": {
+      "version": "2.0.0",
+      "installedAt": 1776345554021
+    }
+  }
 }

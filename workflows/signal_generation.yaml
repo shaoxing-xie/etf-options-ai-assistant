@@ -17,7 +17,7 @@ steps:
       end_date: null
     
   - name: technical_indicators
-    tool: tool_calculate_technical_indicators
+    tool: tool_calculate_technical_indicators_unified
     description: 计算技术指标（默认四件套 + ATR 波动尺度；可按需在 indicators 中加 kdj/cci/adx）
     params:
       symbol: "510300"
@@ -28,6 +28,7 @@ steps:
         - rsi
         - bollinger
         - atr
+      task_key: "signal_generation"
     
   - name: historical_volatility
     tool: tool_calculate_historical_volatility

@@ -22,7 +22,6 @@ notification:
 trend_analysis_plugin:
   enabled: true
   overlay:
-    northbound_lookback_days: 5
     global_index_codes: "^N225,^HSI,^KS11,^GDAXI,^STOXX50E,^FTSE,^GSPC,^IXIC,^DJI"
     key_levels_index: "000300"
     daily_volatility_range_enabled: true
@@ -30,7 +29,6 @@ trend_analysis_plugin:
     option_signals_enabled: true
     signals_underlying: "510300"
     tavily_fallback_enabled: true
-    tavily_northbound_query: "沪深港通 北向资金 净流入 最新"
     tavily_global_query: "全球股市 道琼斯 纳斯达克 标普 恒生 最新 涨跌"
     tavily_global_deep: true
     tavily_global_days: 2
@@ -83,5 +81,5 @@ llm_structured_extract:
   profiles:
     default:
       models:
-        - "z-ai-glm5-nvidia-com-sxxiefg/deepseek-ai/deepseek-v3.1"
-        - "glm5-api-nvidia-com/deepseek-ai/deepseek-v3.1"
+        - "z-ai-glm5-nvidia-com-sxxiefg/nvidia/nemotron-3-super-120b-a12b"
+        - "glm5-api-nvidia-com/nvidia/nemotron-3-nano-30b-a3b"

@@ -19,6 +19,35 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_DATA_DIR = PROJECT_ROOT / "data" / "limit_up_research"
 
 
+def _normalize_sector_keywords(sector_keywords: Any) -> Optional[List[str]]:
+    """Accept list, comma/Chinese-comma separated str, or None."""
+    if sector_keywords is None:
+        return None
+    if isinstance(sector_keywords, str):
+        s = sector_keywords.replace("，", ",")
+        out = [p.strip() for p in s.split(",") if p.strip()]
+        return out or None
+    if isinstance(sector_keywords, (list, tuple)):
+        out = [str(x).strip() for x in sector_keywords if str(x).strip()]
+        return out or None
+    return None
+
+
+def _sector_board_matches_keywords(board_name: str, keywords: List[str]) -> bool:
+    bn = board_name or ""
+    for kw in keywords:
+        if not kw:
+            continue
+        if kw in bn:
+            return True
+        try:
+            if kw.casefold() in bn.casefold():
+                return True
+        except Exception:
+            pass
+    return False
+
+
 @dataclass
 class BacktestOrder:
     """虚拟订单"""
@@ -202,12 +231,19 @@ def run_next_day_dip(
     hold_days: int = 5,
     sector_score_min: int = 70,
     fetch_daily: bool = True,
+    sector_keywords: Optional[List[str]] = None,
 ) -> List[BacktestTrade]:
     """
     次日低吸回测：T-1 涨停+启动期+热度>=70 → T 日低开 2-5%、量萎缩 → 以 T 日开盘价买入，止损/目标/持仓日数。
     若 fetch_daily 为 True，会请求 akshare 获取日线并模拟；否则返回空列表。
     """
     candidates = select_next_day_dip_candidates(payload_prev, sector_score_min=sector_score_min, phase="启动")
+    if sector_keywords:
+        candidates = [
+            c
+            for c in candidates
+            if _sector_board_matches_keywords(c.get("board_name", ""), sector_keywords)
+        ]
     if not candidates:
         return []
     trades = []
@@ -325,6 +361,7 @@ def run_backtest(
         payload_prev = payloads[prev_date]
         payload_t = payloads.get(t_date)
         if "next_day_dip" in strategies:
+            kw = _normalize_sector_keywords(strategy_params.get("sector_keywords"))
             trades = run_next_day_dip(
                 payload_prev,
                 payload_t,
@@ -334,6 +371,7 @@ def run_backtest(
                 stop_loss_below_limit_pct=float(strategy_params.get("stop_loss_below_limit_pct", 5)),
                 target_pct=float(strategy_params.get("target_pct", 5)),
                 fetch_daily=True,
+                sector_keywords=kw,
             )
             all_trades.extend(trades)
     # 统计：胜率、平均盈亏、盈亏比、最大回撤、交易次数、持仓分布
@@ -367,6 +405,7 @@ def run_backtest(
         return {
             "symbol": o.symbol if o else "",
             "name": o.name if o else "",
+            "sector": o.sector if o else "",
             "strategy": o.strategy if o else "",
             "entry_date": o.entry_date if o else "",
             "entry_price": o.entry_price if o else 0,
@@ -376,11 +415,21 @@ def run_backtest(
             "pnl_pct": round(t.pnl_pct, 2),
             "hold_days_actual": t.hold_days_actual,
         }
+    params_out = {
+        "start_date": start_date,
+        "end_date": end_date,
+        "strategies": strategies,
+        **strategy_params,
+    }
+    nk = _normalize_sector_keywords(strategy_params.get("sector_keywords"))
+    if nk is not None:
+        params_out["sector_keywords"] = nk
+
     return {
         "success": True,
         "trades": [_trade_to_dict(t) for t in all_trades],
         "stats": stats,
-        "params": {"start_date": start_date, "end_date": end_date, "strategies": strategies, **strategy_params},
+        "params": params_out,
     }
 
 
@@ -393,11 +442,14 @@ def tool_backtest_limit_up_pullback(
     hold_days: int = 5,
     stop_loss_below_limit_pct: float = 5.0,
     target_pct: float = 5.0,
+    sector_keywords: Any = None,
 ) -> Dict[str, Any]:
     """
     涨停回马枪回测工具。可被 tool_runner 调用。
+    sector_keywords: 仅保留板块名 board_name 命中任一关键词的候选（如军工主题：["军工","国防"]）。
     """
     path = Path(data_dir) if data_dir else DEFAULT_DATA_DIR
+    kw = _normalize_sector_keywords(sector_keywords)
     return run_backtest(
         data_dir=path,
         start_date=start_date,
@@ -407,6 +459,7 @@ def tool_backtest_limit_up_pullback(
         hold_days=hold_days,
         stop_loss_below_limit_pct=stop_loss_below_limit_pct,
         target_pct=target_pct,
+        sector_keywords=kw,
     )
 
 

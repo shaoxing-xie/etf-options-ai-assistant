@@ -135,8 +135,6 @@ def _merge_trend_plugin_config(config: Optional[Dict[str, Any]]) -> Dict[str, An
         "enabled": True,
         "opening_dir": None,
         "overlay": {
-            "northbound_enabled": True,
-            "northbound_lookback_days": 5,
             "global_index_enabled": True,
             "global_index_codes": _DEFAULT_GLOBAL_INDEX_CODES,
             "key_levels_enabled": True,
@@ -303,38 +301,6 @@ def _attach_report_meta(
         except Exception:
             pass
     analysis_result["report_meta"] = meta
-
-
-def _tavily_fallback_northbound(ov: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    """接口失败时用 Tavily 检索北向等定性摘要（非交易所原始数值）。"""
-    if not ov.get("tavily_fallback_enabled", True):
-        return None
-    try:
-        from datetime import datetime
-
-        from plugins.utils.tavily_client import tavily_effective_answer_text, tavily_search
-
-        q = str(ov.get("tavily_northbound_query") or "沪深港通 北向资金 净流入 最新").strip()
-        t = tavily_search(q, max_results=4, days=2)
-        if not t.get("success"):
-            return None
-        text = tavily_effective_answer_text(t)
-        if not text.strip():
-            return None
-        today = datetime.now().strftime("%Y-%m-%d")
-        return {
-            "status": "success",
-            "date": today,
-            "data": {"total_net": None, "sh_net": None, "sz_net": None},
-            "statistics": {"trend": "网络检索摘要"},
-            "signal": {
-                "description": f"（Tavily 摘要，非交易所接口原始值）{text[:650]}",
-            },
-            "source": "tavily_fallback",
-        }
-    except Exception as e:
-        logger.warning("tavily northbound fallback: %s", e)
-        return None
 
 
 def _tavily_fallback_global_digest(ov: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -514,7 +480,7 @@ def _attach_daily_report_overlay(
     config: Optional[Dict[str, Any]] = None,
 ) -> None:
     """
-    为每日市场报告附加结构化字段（北向、全球指数现货、关键位、板块热度、可选 ADX）。
+    为每日市场报告附加结构化字段（全球指数现货、关键位、板块热度、可选 ADX）。
     任一步失败则跳过，不抛异常。
     """
     plugin = _merge_trend_plugin_config(config)
@@ -523,24 +489,6 @@ def _attach_daily_report_overlay(
 
     ov = plugin.get("overlay") or {}
     overlay: Dict[str, Any] = {}
-
-    nb_ok = False
-    if ov.get("northbound_enabled", True):
-        try:
-            from plugins.data_collection.northbound import tool_fetch_northbound_flow
-
-            days = int(ov.get("northbound_lookback_days", 5))
-            nb = tool_fetch_northbound_flow(lookback_days=days)
-            if isinstance(nb, dict) and nb.get("status") == "success":
-                overlay["northbound"] = nb
-                nb_ok = True
-        except Exception as e:
-            logger.warning("daily_report_overlay: northbound 接口异常: %s", e)
-        if not nb_ok:
-            fb_nb = _tavily_fallback_northbound(ov)
-            if fb_nb:
-                overlay["northbound"] = fb_nb
-                logger.info("daily_report_overlay: northbound 已使用 Tavily 兜底")
 
     g_ok = False
     if ov.get("global_index_enabled", True):
@@ -705,11 +653,12 @@ def _attach_daily_report_overlay(
 
     if ov.get("adx_enabled", False):
         try:
-            from plugins.analysis.technical_indicators import calculate_technical_indicators
+            from src.services.indicator_runtime import calculate_indicators_via_tool, resolve_indicator_runtime
 
             idx = str(ov.get("adx_index") or ov.get("key_levels_index") or "000300")
             lb = int(ov.get("adx_lookback_days", 60))
-            adx_r = calculate_technical_indicators(
+            ind_rt = resolve_indicator_runtime("trend_analysis")
+            adx_r = calculate_indicators_via_tool(
                 symbol=idx,
                 data_type="index_daily",
                 indicators=["adx"],
@@ -723,6 +672,7 @@ def _attach_daily_report_overlay(
                         "adx": ind.get("adx"),
                         "signal": ind.get("signal"),
                         "length": ind.get("length"),
+                        "indicator_route": ind_rt.route,
                     }
         except Exception:
             pass

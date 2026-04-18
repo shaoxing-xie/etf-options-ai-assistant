@@ -1,5 +1,5 @@
 {
-  "_comment": "各 Agent 的 skills 数组片段：与 SKILL.md frontmatter 中 name（下划线）一致。合并到 ~/.openclaw/openclaw.json → agents.list[].skills 或对应 Agent 条目后重启 Gateway。第三方技能名以本机已安装为准（如 tavily / topic-monitor / qmd）。全 agent 建议挂载 ota_agent_model_probe（CLI probe_agent_models 探活）。etf_main / etf_business_core_agent 与 etf_analysis_agent 对齐挂载 ota_etf_rotation_research、ota_strategy_research_loop、ota_quantitative_screening_brief；改后须 sync_repo_skills_to_openclaw + 重载 Gateway。",
+  "_comment": "各 Agent 的 skills 数组片段：与 SKILL.md frontmatter 中 name（下划线）一致。合并到 ~/.openclaw/openclaw.json → agents.list[].skills 或对应 Agent 条目后重启 Gateway。第三方技能名以本机已安装为准（如 tavily / topic-monitor / qmd）。全 agent 建议挂载 ota_agent_model_probe（CLI probe_agent_models 探活）。etf_main / etf_business_core_agent 与 etf_analysis_agent 对齐挂载 ota_etf_rotation_research、ota_strategy_research_loop、ota_quantitative_screening_brief；**ota_backtesting_integration_brief** 规定钉钉/日常回测默认单条 exec 跑 backtesting-trading-strategies（勿先串 tool_fetch+指标），改后须 sync_repo_skills_to_openclaw + 重载 Gateway。",
   "byAgentId": {
     "etf_main": {
       "skills": [
@@ -7,7 +7,6 @@
         "ota_signal_risk_inspection",
         "ota_strategy_fusion_playbook",
         "ota_volatility_range_brief",
-        "ota_technical_indicators_brief",
         "ota_trend_analysis_brief",
         "ota_openclaw_tool_narration",
         "ota_volatility_prediction_narration",
@@ -19,8 +18,9 @@
         "ota_etf_rotation_research",
         "ota_strategy_research_loop",
         "ota_quantitative_screening_brief",
-        "backtesting-trading-strategies",
         "ota_backtesting_integration_brief",
+        "backtesting-trading-strategies",
+        "ota_technical_indicators_brief",
         "tavily",
         "topic-monitor",
         "qmd",
@@ -38,7 +38,6 @@
       "skills": [
         "ota_strategy_fusion_playbook",
         "ota_volatility_range_brief",
-        "ota_technical_indicators_brief",
         "ota_trend_analysis_brief",
         "ota_openclaw_tool_narration",
         "ota_volatility_prediction_narration",
@@ -51,8 +50,9 @@
         "ota_etf_rotation_research",
         "ota_strategy_research_loop",
         "ota_quantitative_screening_brief",
-        "backtesting-trading-strategies",
         "ota_backtesting_integration_brief",
+        "backtesting-trading-strategies",
+        "ota_technical_indicators_brief",
         "tavily",
         "topic-monitor",
         "qmd",
@@ -80,7 +80,6 @@
         "ota_signal_risk_inspection",
         "ota_daily_session_routine",
         "ota_volatility_range_brief",
-        "ota_technical_indicators_brief",
         "ota_trend_analysis_brief",
         "ota_openclaw_tool_narration",
         "ota_volatility_prediction_narration",
@@ -92,8 +91,9 @@
         "ota_etf_rotation_research",
         "ota_strategy_research_loop",
         "ota_quantitative_screening_brief",
-        "backtesting-trading-strategies",
         "ota_backtesting_integration_brief",
+        "backtesting-trading-strategies",
+        "ota_technical_indicators_brief",
         "tavily",
         "topic-monitor",
         "qmd",

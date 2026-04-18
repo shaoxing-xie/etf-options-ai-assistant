@@ -1,5 +1,5 @@
 # 工具清单 — 与 Gateway 扩展 option-trading-assistant 对齐。
-# 行情/参考数据 tool_* 由插件 openclaw-data-china-stock 注册；本仓库 plugins/data_collection 链向 ~/.openclaw/extensions/openclaw-data-china-stock/plugins/data_collection。
+# plugins/data_collection 链向 openclaw-data-china-stock；资金流向类 tool_capital_flow / tool_fetch_a_share_fund_flow 已在主仓 TOOL_MAP 注册，与扩展实现共用。
 # 修改后请运行: python3 scripts/generate_tools_json.py
 
 tools:
@@ -139,10 +139,10 @@ tools:
         default: 10
     required:
     - card
-- id: tool_calculate_technical_indicators
-  label: 计算技术指标
-  description: "计算MA、MACD、RSI、布林带等指标；默认 engine=standard（pandas_ta，Wilder RSI 等）。可选 kdj/cci/adx/atr（仅 standard）。legacy 与历史 Coze 数值一致。"
-  description_short: 计算技术指标（pandas_ta / 可选 legacy）
+- id: tool_calculate_technical_indicators_unified
+  label: 统一技术指标入口
+  description: 统一技术指标入口（迁移期推荐）；通过运行时 facade 路由并返回与旧工具兼容的数据结构。
+  description_short: 统一技术指标入口（迁移推荐）
   parameters:
     type: object
     properties:
@@ -156,29 +156,30 @@ tools:
         default: etf_daily
       period:
         type: string
-        description: 周期（分钟数据）
+        description: 周期（兼容参数，内部忽略）
       lookback_days:
         type: number
-        description: 回溯自然日（日线用；分钟线内部会放大窗口）
+        description: 回溯自然日
         default: 120
       engine:
         type: string
-        description: "standard（默认，pandas_ta）或 legacy（原列表实现，数值与旧版一致）"
-        enum:
-          - standard
-          - legacy
+        description: 兼容参数（内部忽略，由运行时路由决定）
       indicators:
         type: array
-        description: "指标列表，如 ma、macd、rsi、bollinger、kdj、cci、adx、atr；默认见合并后配置 technical_indicators.default_indicators（来源：config/domains/analytics.yaml）；亦兼容 MA10/RSI14 写法（与 ma_periods/rsi_length 二选一）"
+        description: 指标列表，如 ma、macd、rsi、bollinger、kdj、cci、adx、atr
       timeframe_minutes:
         type: number
-        description: "分钟 K 重采样周期（>=2 时生效），如 5m 源数据聚合为 30m 后再计算"
+        description: 分钟 K 重采样周期（>=2 时生效）
       ma_periods:
         type: array
-        description: "单次调用覆盖均线周期，如 [10,20]；与 intraday_monitor 的 30m MA 口径对齐"
+        description: 单次调用覆盖均线周期，如 [10,20]
       rsi_length:
         type: number
-        description: "单次调用覆盖 RSI 周期，默认见 config"
+        description: 单次调用覆盖 RSI 周期
+      task_key:
+        type: string
+        description: 任务路由键（用于迁移开关与审计）
+        default: workflow_default
 - id: tool_analyze_after_close
   label: 盘后趋势分析
   description: 执行盘后趋势分析（15:30执行）。
@@ -943,8 +944,7 @@ tools:
         type: integer
         description: 单条最大字符；省略则用合并后配置 notification.dingtalk_max_chars_per_message（来源：config/domains/outbound.yaml；默认 1600）
         default: 1600
-    required:
-    - message
+    required: []
 - id: tool_send_signal_risk_inspection
   label: 发送巡检快报
   description: 以结构化字段渲染“宽基ETF巡检快报”固定模板，并发送到钉钉。
@@ -1040,9 +1040,43 @@ tools:
       max_chars_per_message:
         type: integer
         description: 可选；单条目标字符上限，省略读 config notification.dingtalk_max_chars_per_message。
+- id: tool_run_midday_recap_and_send
+  label: 午间行情盘点采集并发送
+  description: 进程内汇总上午盘面、A股主力资金/行业流、板块热度与组合风险，给出下午倾向与三路径参考（report_type=midday_recap）；Cron 建议工作日 12:00 单次调用。数据工具上线前须按 docs/openclaw/midday_recap_data_tools_checklist.md 手工验证。
+  description_short: 午间盘点采集+发送
+  parameters:
+    type: object
+    properties:
+      mode:
+        type: string
+        description: prod|test（钉钉发送）
+        default: prod
+      fetch_mode:
+        type: string
+        description: production|test（行情采集门禁；test 可配合 debug_now）
+        default: production
+      debug_now:
+        type: string
+        description: 可选；仅 fetch_mode=test 时生效，如 2026-04-15 12:00:00
+      webhook_url:
+        type: string
+        description: 可选：自定义机器人 webhook（包含 access_token）
+      secret:
+        type: string
+        description: 可选：安全模式 SEC 密钥（用于 sign）
+      keyword:
+        type: string
+        description: 可选：关键词安全校验用（如果机器人启用关键词）
+      split_markdown_sections:
+        type: boolean
+        description: 是否按章节分条；默认 true。
+        default: true
+      max_chars_per_message:
+        type: integer
+        description: 可选；单条目标字符上限。
 - id: tool_run_tail_session_analysis_and_send
   label: 尾盘多角度建议采集并发送
-  description: 进程内执行513880尾盘监控，生成分层建议（周期/节奏/风险）与用户决策选项，调用 tool_send_analysis_report 发送 tail_session 报告。
+  description: 进程内执行尾盘监控（支持513880/513300），生成分层建议（周期/节奏/风险）与用户决策选项，调用 tool_send_analysis_report 发送 tail_session 报告。
   description_short: 尾盘监控采集+发送
   parameters:
     type: object
@@ -1055,6 +1089,10 @@ tools:
         type: string
         description: production|test（行情采集门禁）
         default: production
+      market_profile:
+        type: string
+        description: nikkei_513880|nasdaq_513300（策略画像）
+        default: nikkei_513880
       webhook_url:
         type: string
         description: 可选：自定义机器人 webhook（包含 access_token）
@@ -1176,6 +1214,32 @@ tools:
         type: string
         description: prod|test
         default: prod
+- id: tool_send_etf_rotation_research_report
+  label: ETF轮动研究（单次封装发送）
+  description: 单次 toolCall：内部串联 tool_etf_rotation_research 与 tool_send_analysis_report，完成轮动计算并发送报告；供 Cron agentTurn 避免超大 toolResult 与重复投递。
+  description_short: ETF轮动研究计算+发送（单次封装）。
+  parameters:
+    type: object
+    properties:
+      etf_pool:
+        type: string
+        description: 逗号分隔 ETF 代码；空字符串则按 rotation_config + symbols 解析默认池
+        default: ''
+      lookback_days:
+        type: number
+        description: 回看天数
+        default: 120
+      top_k:
+        type: number
+        description: 输出前 K 名
+        default: 3
+      mode:
+        type: string
+        description: prod|test
+        default: prod
+      config_path:
+        type: string
+        description: 可选，覆盖 rotation 配置文件路径
 - id: tool_strategy_research
   label: 策略研究与回放评估
   description: 策略研究与回放评估（研究级）。复用策略表现/评分/权重工具，生成研究报告与权重调整建议。
@@ -1222,6 +1286,90 @@ tools:
         default: 10
     required:
     - candidates
+- id: tool_capital_flow
+  label: 资金流向
+  description: 获取个股主力/散户资金流向（逗号分隔代码，可配合涨停回马枪等流程）。
+  description_short: 个股主力/散户资金流向摘要。
+  parameters:
+    type: object
+    properties:
+      symbols:
+        type: string
+        description: 股票代码列表，逗号分隔
+      lookback_days:
+        type: number
+        description: 回溯自然日近似窗口内的交易日序列
+        default: 3
+    required:
+    - symbols
+- id: tool_fetch_a_share_fund_flow
+  label: A股资金流向（统一）
+  description: >-
+    A 股大盘/板块/个股资金流向（东财直连优先，失败回退 AkShare；非投资建议）。
+    query_kind：market_history | market_flow_preferred | sector_rank | stock_rank | big_deal。
+  description_short: A 股境内资金流可查表（大盘/板块/个股）。
+  parameters:
+    type: object
+    properties:
+      query_kind:
+        type: string
+        description: >-
+          market_history=大盘历史；market_flow_preferred=大盘（日报补采）；sector_rank=板块；
+          stock_rank=个股排名；big_deal=东财大单净流入代理快照
+      provider_preference:
+        type: string
+        description: 保留字段，当前实现为 auto
+        default: auto
+      limit:
+        type: number
+        description: 排名类最大条数
+        default: 50
+      max_days:
+        type: number
+        description: 大盘历史最近交易日数量
+        default: 120
+      sector_type:
+        type: string
+        description: sector_rank 用 industry | concept | region
+        default: industry
+      rank_window:
+        type: string
+        description: immediate | d5 | d10 等（映射到今日/5日/10日）
+        default: immediate
+      stock_code:
+        type: string
+        description: 预留
+        default: ""
+      market:
+        type: string
+        description: 预留
+        default: ""
+      lookback_days:
+        type: number
+        description: 预留
+        default: 20
+      sector_name:
+        type: string
+        description: 预留
+        default: ""
+      drill_kind:
+        type: string
+        description: 预留
+        default: industry
+      include_hist:
+        type: boolean
+        description: 预留
+        default: false
+      main_force_symbol:
+        type: string
+        description: 预留
+        default: 全部股票
+      big_deal_stock_code:
+        type: string
+        description: 预留
+        default: ""
+    required:
+    - query_kind
 - id: tool_backtest_limit_up_pullback
   label: 涨停回马枪回测
   description: 涨停回马枪策略回测。
@@ -1259,6 +1407,11 @@ tools:
         type: number
         description: 目标收益%
         default: 5.0
+      sector_keywords:
+        type: array
+        description: 主题/板块过滤，board_name 子串命中任一即保留；军工示例 ["军工","国防"]
+        items:
+          type: string
 - id: tool_backtest_limit_up_sensitivity
   label: 涨停回测参数敏感性
   description: 对涨停回马枪关键参数做网格搜索，返回推荐参数。
@@ -1272,19 +1425,3 @@ tools:
         type: string
       data_dir:
         type: string
-- id: tool_sector_heat_score
-  label: 板块热度评分
-  description: 按涨停股聚合行业/板块，结合行业涨跌与净流入计算 0–100 热度分与周期 phase；内部调用 tool_fetch_limit_up_stocks 与 tool_fetch_sector_data。
-  description_short: 板块热度评分与周期阶段
-  parameters:
-    type: object
-    properties:
-      date:
-        type: string
-        description: 交易日 YYYYMMDD；省略则按当前日历日
-      limit_up_data:
-        type: array
-        description: 可选，已获取的涨停列表
-      sector_data:
-        type: object
-        description: 可选，行业板块行情

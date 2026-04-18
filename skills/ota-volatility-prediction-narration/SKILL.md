@@ -46,3 +46,12 @@ description: 在 tool_predict_volatility / tool_predict_intraday_range / tool_pr
 - 快报口径与缓存：`ota_volatility_range_brief`
 - 通用叙事纪律：`ota_openclaw_tool_narration`
 - 历史 HV 单窗 vs 复合快照：`ota_historical_volatility_snapshot`
+
+## 巡检快报口径（已合并：原 `ota_volatility_range_brief`）
+
+当用户问到「宽基 ETF 巡检快报」里的日内区间字段（如 `range_pct` / `confidence`），或问「为什么区间变窄/置信度上限」时，按以下**口径检查**解读（避免把预测工具口径与快报缓存混为一谈）：
+
+1. **快报数据源**：优先读取 `data/volatility_ranges/{date}.json`（同日可多条）；不要把 `tool_predict_intraday_range` 的直出当作快报字段口径。
+2. **收敛/夹紧规则**：生成源头在 `src/volatility_range.py`；合并后配置位于 `config/domains/signals.yaml` → `signal_params.intraday_monitor_510300.volatility` 的 `min_intraday_pct` / `max_intraday_pct`。
+3. **置信度硬上限**：`confidence` 不应超过 **0.6**；当区间很宽时，置信度应倾向更低，避免出现逻辑矛盾组合。
+4. **对称重算**：若 `range_pct` 被夹紧，说明上下界按对称逻辑重算（不要只改宽度不改边界）。

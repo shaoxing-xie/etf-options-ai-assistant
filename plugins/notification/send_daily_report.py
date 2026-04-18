@@ -35,7 +35,10 @@ def _fmt_pct(v: Any) -> Optional[str]:
     try:
         if v is None:
             return None
-        return f"{float(v):.2f}%"
+        x = float(v)
+        if x != x or x in (float("inf"), float("-inf")):  # NaN / inf
+            return None
+        return f"{x:.2f}%"
     except Exception:
         return None
 
@@ -77,6 +80,23 @@ def _extract_llm_summary(report_data: Dict[str, Any]) -> str:
         v = report_data.get(k)
         if isinstance(v, str) and v.strip():
             return v.strip()
+
+    # 1.5) 兼容嵌套：可能是 { report_data: {...} } 或 { data: { report_data: {...} } }
+    for outer_k in ("report_data", "data"):
+        outer = report_data.get(outer_k)
+        if not isinstance(outer, dict):
+            continue
+        for k in ("llm_summary", "analysis_summary", "summary"):
+            v = outer.get(k)
+            if isinstance(v, str) and v.strip():
+                return v.strip()
+        inner = outer.get("report_data")
+        if isinstance(inner, dict):
+            for k in ("llm_summary", "analysis_summary", "summary"):
+                v = inner.get(k)
+                if isinstance(v, str) and v.strip():
+                    return v.strip()
+
     # 2) analysis / analysis_data
     for key in ("analysis", "analysis_data"):
         v = report_data.get(key)
@@ -170,6 +190,16 @@ def _build_market_overview_lines(report_data: Dict[str, Any]) -> List[str]:
     return lines
 
 
+def _daily_market_outer_overview_is_research_digest(report_data: Dict[str, Any], mo_lines: List[str]) -> bool:
+    """外盘概览是否由 Tavily/综述替代逐指数数值（与 tool_fetch_global_index_spot 数值行区分）。"""
+    gmd = report_data.get("global_market_digest")
+    if isinstance(gmd, dict) and gmd.get("replaces_index_overview"):
+        return True
+    if mo_lines and len(mo_lines) == 1 and "检索摘要归纳" in (mo_lines[0] or ""):
+        return True
+    return False
+
+
 def _build_a_share_volume_lines(report_data: Dict[str, Any]) -> List[str]:
     snap = report_data.get("tool_fetch_index_realtime")
     if not isinstance(snap, dict):
@@ -181,6 +211,27 @@ def _build_a_share_volume_lines(report_data: Dict[str, Any]) -> List[str]:
     elif isinstance(data, dict):
         rows = [r for r in data.values() if isinstance(r, dict)]
     if not rows:
+        # 兜底：使用 trend_analysis overlay 的量能摘要，避免章节空白。
+        an = report_data.get("analysis")
+        ov = an.get("daily_report_overlay") if isinstance(an, dict) else None
+        mvd = ov.get("market_volume_digest") if isinstance(ov, dict) else None
+        if isinstance(mvd, dict):
+            latest = mvd.get("latest")
+            prev = mvd.get("previous")
+            dod = mvd.get("dod_pct")
+            benchmark = str(mvd.get("benchmark") or "上证指数").strip()
+            out: List[str] = []
+            try:
+                if latest is not None:
+                    out.append(f"{benchmark}成交额（最新）约 {float(latest)/1e8:.2f} 亿元")
+                if prev is not None:
+                    out.append(f"{benchmark}成交额（前值）约 {float(prev)/1e8:.2f} 亿元")
+                if dod is not None:
+                    out.append(f"{benchmark}成交额环比 {float(dod):+.2f}%")
+            except Exception:
+                pass
+            if out:
+                return out
         return []
     amount_sum = 0.0
     amount_cnt = 0
@@ -447,6 +498,32 @@ def _build_policy_news_lines(
     return lines
 
 
+def _build_info_fallback_lines_from_context_cache(max_lines: int = 2) -> List[str]:
+    """信息面兜底：读取已有分析缓存摘要（由上游分析流程产出），避免章节完全空白。"""
+    try:
+        p = Path(__file__).resolve().parents[2] / "data" / "cache" / "llm_context_today.json"
+        if not p.exists():
+            return []
+        raw = json.loads(p.read_text(encoding="utf-8"))
+        summaries = raw.get("summaries") if isinstance(raw, dict) else None
+        if not isinstance(summaries, list) or not summaries:
+            return []
+        out: List[str] = []
+        for s in summaries[:max_lines]:
+            if not isinstance(s, str):
+                continue
+            txt = s.strip()
+            if not txt:
+                continue
+            # 常见格式 "11:02 after_close: xxx"
+            if ":" in txt:
+                txt = txt.split(":", 1)[1].strip()
+            out.append(txt[:220])
+        return out
+    except Exception:
+        return []
+
+
 def _strip_prose_markdown_noise(text: str) -> str:
     """去掉 LLM 偶发的 # 标题行，压成机构晨报式一段。"""
     out: List[str] = []
@@ -600,6 +677,89 @@ def _refine_opening_global_digest_for_dingtalk(
     return fallback[:max_chars]
 
 
+def _fallback_us_tavily_strip_other_markets(text: str, max_chars: int) -> str:
+    """LLM 不可用时：去掉明显复述欧股/日韩的句子，减轻与同行重复。"""
+    t = _enforce_no_numeric_percentages(_strip_tavily_digest_noise(text))
+    if not t:
+        return ""
+    bad = re.compile(
+        r"(欧洲|欧股|斯托克|富时|德国\s*DAX|DAX|英国|法国|CAC|"
+        r"日经|韩国|KOSPI|恒生|A50)"
+    )
+    parts: List[str] = []
+    for seg in re.split(r"(?<=[。；\n])", t):
+        s = seg.strip()
+        if not s:
+            continue
+        if bad.search(s):
+            continue
+        parts.append(s)
+    out = "".join(parts).strip()
+    if not out:
+        out = t[:max_chars]
+    return out[:max_chars] + ("…" if len(out) > max_chars else "")
+
+
+def _refine_opening_us_tavily_for_dingtalk(
+    raw: str,
+    *,
+    max_chars: int = 480,
+    report_data: Optional[Dict[str, Any]] = None,
+) -> str:
+    """
+    美股类 Tavily 兜底：只谈道琼斯/标普500/纳斯达克，不复述欧股日韩（第三节其他行已覆盖）。
+    仍遵守无阿拉伯数字 % 的口径。
+    """
+    base = _strip_tavily_digest_noise(raw)
+    if not base:
+        return ""
+    anchor = _opening_digest_temporal_anchor_block(report_data)
+    material = (anchor + "\n\n---\n\n" + base) if anchor else base
+    try:
+        from src.config_loader import load_system_config
+        from plugins.utils.llm_structured_extract import llm_prose_from_unstructured
+
+        cfg = load_system_config(use_cache=True)
+        instructions = (
+            "下列为检索素材。请用简体中文写一段「美股三大指数隔夜要点」（约 4～8 句）。\n"
+            "结构要求：必须分别点到「道琼斯」「标普500」「纳斯达克」（可用「标普五百」「纳指」），"
+            "各用至少一句描述其定性走势（涨/跌/震荡/分化/偏强/偏弱等）。\n"
+            "硬约束：\n"
+            "1）全文禁止阿拉伯数字与 % 符号；禁止「约1.2%」类写法；不写点数。\n"
+            "2）严禁写欧洲股市、英国富时、德国DAX、欧洲斯托克、法国CAC、亚太泛述；"
+            "严禁写日经、韩国、恒生、A50——本报告上一行已写欧股/日韩/A50，本段只写美国三大股指。\n"
+            "3）素材若缺少某一指数的信息，用一句说明「公开报道对该指数着墨较少」即可，勿编造。\n"
+            "4）不要 markdown、不要链接说明、不要广告。"
+        )
+        r = llm_prose_from_unstructured(
+            material[:4200],
+            instructions,
+            config=cfg,
+            profile="default",
+            max_output_chars=min(max_chars + 400, 1200),
+        )
+        if r.get("success"):
+            prose = _strip_prose_markdown_noise(str(r.get("text") or "").strip())
+            if prose:
+                prose = _enforce_no_numeric_percentages(prose)
+                if prose:
+                    return prose[:max_chars] + ("…" if len(prose) > max_chars else "")
+    except Exception as e:
+        logger.warning("refine_opening_us_tavily_for_dingtalk: %s", e)
+    return _fallback_us_tavily_strip_other_markets(base, max_chars)
+
+
+def _opening_policy_placeholder_line(report_data: Dict[str, Any]) -> str:
+    """政策要闻无可用条目时的占位行；若 tool_fetch_policy_news 已失败，附带简短原因（如 Tavily HTTP 432）。"""
+    pn = report_data.get("tool_fetch_policy_news")
+    if isinstance(pn, dict) and pn.get("success") is False:
+        msg = str(pn.get("message") or "").strip()
+        if msg:
+            tail = "…" if len(msg) > 240 else ""
+            return f"- 暂无可用政策要闻摘要。（上游：{msg[:240]}{tail}）"
+    return "- 暂无可用政策要闻摘要。"
+
+
 def _build_opening_policy_news_institutional_lines(report_data: Dict[str, Any]) -> List[str]:
     """
     开盘专用：检索结果经 LLM 压成「综合要点」正文，不附链接（机构晨报口径）。
@@ -707,11 +867,23 @@ def _opening_pick_row(rows: List[Dict[str, Any]], wanted_yf: str) -> Optional[Di
     return None
 
 
+def _opening_global_index_row_key(row_code: Any) -> str:
+    """合并去重用：int_dji 与 ^DJI 等同为 DJI，避免 pick 命中带 NaN 的旧别名行。"""
+    k = _opening_normalized_row_code(row_code)
+    if k:
+        return k
+    s = str(row_code or "").strip()
+    return s.upper().replace("^", "") if s else ""
+
+
 def _opening_global_index_rows(report_data: Dict[str, Any]) -> List[Dict[str, Any]]:
     """
     合并 global_spot 各别名键与 market_overview.indices（按 code 去重后并列）。
     注意：若仅因 tool 返回 data=[] 就提前 return，会丢掉 market_overview 中的 A 股开盘行，
     且无法与新浪/yfinance 行合并；故必须合并后再返回。
+
+    现货与补全行可能并存 ``int_dji`` 与 ``^DJI``：按归一化键去重，且 **market_overview 后写入覆盖现货**，
+    以便 hist 补全后的有效涨跌幅参与隔夜节渲染。
     """
     by_code: Dict[str, Dict[str, Any]] = {}
     for key in ("global_index_spot", "tool_fetch_global_index_spot", "fetch_global_index_spot"):
@@ -725,8 +897,12 @@ def _opening_global_index_rows(report_data: Dict[str, Any]) -> List[Dict[str, An
             if not isinstance(x, dict):
                 continue
             c = x.get("code") or x.get("name")
-            if c:
-                by_code[str(c)] = x
+            if not c:
+                continue
+            rk = _opening_global_index_row_key(c)
+            if not rk:
+                continue
+            by_code[rk] = x
     mo = report_data.get("market_overview")
     if isinstance(mo, dict):
         idx = mo.get("indices")
@@ -735,8 +911,12 @@ def _opening_global_index_rows(report_data: Dict[str, Any]) -> List[Dict[str, An
                 if not isinstance(x, dict):
                     continue
                 c = x.get("code") or x.get("name")
-                if c:
-                    by_code[str(c)] = x
+                if not c:
+                    continue
+                rk = _opening_global_index_row_key(c)
+                if not rk:
+                    continue
+                by_code[rk] = x
     return list(by_code.values())
 
 
@@ -746,9 +926,8 @@ def _fmt_opening_index_group(label: str, codes: Tuple[str, ...], rows: List[Dict
         it = _opening_pick_row(rows, c)
         if it is None:
             continue
-        name = it.get("name") or _OPENING_DISPLAY_NAME_MAP.get(c) or c
-        if str(name).strip() == c and c in _OPENING_DISPLAY_NAME_MAP:
-            name = _OPENING_DISPLAY_NAME_MAP[c]
+        # 已知代码统一用中文简称，避免 FMP/yfinance 返回英文全称（如 Dow Jones Industrial Average）
+        name = _OPENING_DISPLAY_NAME_MAP.get(c) or it.get("name") or c
         chg = it.get("change_pct")
         if chg is None:
             chg = it.get("change_percent")
@@ -759,63 +938,194 @@ def _fmt_opening_index_group(label: str, codes: Tuple[str, ...], rows: List[Dict
     return f"**{label}** " + " | ".join(parts)
 
 
-def _build_opening_overnight_index_lines(report_data: Dict[str, Any]) -> List[str]:
-    rows = _opening_global_index_rows(report_data)
-    out: List[str] = []
-    us = _fmt_opening_index_group("美股（北京时间当日凌晨时段）", _OPENING_US_CODES, rows)
-    if us:
-        out.append(us)
-    eu = _fmt_opening_index_group("欧股（上一交易日收市）", _OPENING_EU_CODES, rows)
-    if eu:
-        out.append(eu)
-    jk = _fmt_opening_index_group("日/韩（当日已开盘）", _OPENING_JK_CODES, rows)
-    if jk:
-        out.append(jk)
-    if not out:
-        gmd = report_data.get("global_market_digest")
-        raw_spot = report_data.get("tool_fetch_global_index_spot")
-        if not isinstance(gmd, dict) and isinstance(raw_spot, dict):
-            gmd = raw_spot.get("global_market_digest")
-        overlay = report_data.get("daily_report_overlay")
-        if not isinstance(gmd, dict) and isinstance(overlay, dict):
-            gmd = overlay.get("global_market_digest")
-        if isinstance(gmd, dict):
-            summ = str(gmd.get("summary") or "").strip()
-            if summ:
-                refined = _refine_opening_global_digest_for_dingtalk(
-                    summ, max_chars=720, report_data=report_data
+def _resolve_opening_analysis_dict(report_data: Dict[str, Any]) -> Dict[str, Any]:
+    """合并 analysis / tool_analyze_market.data 等，供 A50 等字段读取。"""
+    a: Dict[str, Any] = {}
+    if isinstance(report_data.get("analysis"), dict):
+        a.update(report_data["analysis"])
+    elif isinstance(report_data.get("analysis_data"), dict):
+        a.update(report_data["analysis_data"])
+    for k in ("tool_analyze_market", "analyze_opening_market"):
+        t = report_data.get(k)
+        if isinstance(t, dict) and isinstance(t.get("data"), dict):
+            for kk, vv in t["data"].items():
+                if kk not in a or a.get(kk) is None:
+                    if vv is not None:
+                        a[kk] = vv
+    return a
+
+
+def _opening_a50_numeric_line(report_data: Dict[str, Any]) -> Optional[str]:
+    """A50：主源（期货/趋势模块）数值行；无有效涨跌幅则返回 None（触发 Tavily 类兜底）。"""
+    an = _resolve_opening_analysis_dict(report_data)
+    chg = an.get("a50_change")
+    s = _fmt_pct(chg)
+    if s is not None:
+        return f"**A50期指（主源）：** {s}"
+    return None
+
+
+def _opening_index_group_available(codes: Tuple[str, ...], rows: List[Dict[str, Any]]) -> bool:
+    return _fmt_opening_index_group("_", codes, rows) is not None
+
+
+def _tavily_opening_category_digest(cat: str) -> Optional[str]:
+    """
+    按类检索（与主源链路独立）：a50 / jk / eu / us。
+    受 overlay.tavily_fallback_enabled 控制。
+    """
+    overlay: Dict[str, Any] = {}
+    try:
+        from src.config_loader import load_system_config
+        from plugins.analysis.trend_analysis import _merge_trend_plugin_config
+
+        cfg = load_system_config(use_cache=True)
+        overlay = (_merge_trend_plugin_config(cfg).get("overlay") or {})
+    except Exception:
+        pass
+    if not overlay.get("tavily_fallback_enabled", True):
+        return None
+    try:
+        from plugins.utils.tavily_client import (
+            DEFAULT_FINANCE_NEWS_INCLUDE_DOMAINS,
+            parse_include_domains,
+            tavily_effective_answer_text,
+            tavily_search_with_include_domain_fallback,
+        )
+
+        domains = parse_include_domains(
+            overlay.get("tavily_global_include_domains"),
+            default=DEFAULT_FINANCE_NEWS_INCLUDE_DOMAINS,
+        )
+        deep = bool(overlay.get("tavily_global_deep", True))
+        days = int(overlay.get("tavily_global_days", 2) or 2)
+        mx = max(3, min(int(overlay.get("tavily_global_max_results", 6) or 6), 12))
+    except Exception as e:
+        logger.warning("tavily_opening_category_digest import: %s", e)
+        return None
+
+    # 美股：双路 query，减少泛全球综述里夹带欧股（与上一行重复）
+    if cat == "us":
+        chunks: List[str] = []
+        for q in (
+            "Dow Jones Industrial Average S&P 500 Nasdaq Composite previous US trading day close",
+            "道琼斯 标普500 纳斯达克 美股 上一交易日 收盘 涨跌 概况",
+        ):
+            try:
+                t = tavily_search_with_include_domain_fallback(
+                    q, max_results=mx, days=days, deep=deep, include_domains=domains
                 )
-                if refined:
-                    out.append("**外盘（检索摘要，非交易所逐点数值）：** " + refined)
-        if not out and isinstance(raw_spot, dict):
-            msg = str(raw_spot.get("message") or "").strip()
-            if msg and len(msg) > 10:
-                out.append("**外盘指数：** 数值接口未返回有效行（" + msg[:320] + ("…" if len(msg) > 320 else "") + "）")
-        if not out:
-            out.append(
-                "**外盘指数：** 主源不可用或未合并 global_spot；请补采 tool_fetch_global_index_spot（含 ^DJI,^GSPC,^IXIC,^N225,^KS11），"
-                "或检查网络/yfinance/新浪是否可达。"
-            )
-    return out
+                if t.get("success"):
+                    tx = tavily_effective_answer_text(t).strip()
+                    if tx:
+                        chunks.append(tx)
+            except Exception as ex:
+                logger.warning("tavily_opening_category_digest us subquery: %s", ex)
+        merged = "\n\n".join(chunks).strip()
+        return merged[:900] if merged else None
+
+    queries = {
+        "a50": "富时中国A50 期货 新加坡交易所 隔夜 涨跌",
+        "jk": "日经225指数 韩国综合指数 KOSPI 最新 涨跌",
+        "eu": "英国富时100 德国DAX 欧洲斯托克50 上一交易日 收市 涨跌",
+    }
+    q = queries.get(cat)
+    if not q:
+        return None
+    try:
+        t = tavily_search_with_include_domain_fallback(
+            q, max_results=mx, days=days, deep=deep, include_domains=domains
+        )
+        if not t.get("success"):
+            return None
+        text = tavily_effective_answer_text(t).strip()
+        return text[:650] if text else None
+    except Exception as e:
+        logger.warning("tavily_opening_category_digest %s: %s", cat, e)
+        return None
+
+
+def attach_opening_overnight_category_tavily(report_data: Dict[str, Any]) -> None:
+    """
+    开盘隔夜四类（A50 / 日韩 / 欧股 / 美股）主源缺有效行时，按类写入 Tavily 摘要至
+    ``opening_overnight_category_tavily``（键 a50/jk/eu/us）。
+    """
+    rows = _opening_global_index_rows(report_data)
+    need = {
+        "a50": _opening_a50_numeric_line(report_data) is None,
+        "jk": not _opening_index_group_available(_OPENING_JK_CODES, rows),
+        "eu": not _opening_index_group_available(_OPENING_EU_CODES, rows),
+        "us": not _opening_index_group_available(_OPENING_US_CODES, rows),
+    }
+    out: Dict[str, str] = {}
+    for k, miss in need.items():
+        if not miss:
+            continue
+        txt = _tavily_opening_category_digest(k)
+        if txt:
+            out[k] = txt
+    if out:
+        report_data["opening_overnight_category_tavily"] = out
+
+
+def _build_opening_overnight_four_lines_section(report_data: Dict[str, Any]) -> List[str]:
+    """
+    隔夜指示正文：四类顺序 A50 → 日韩 → 欧洲 → 美股。
+    主源失败时用 ``opening_overnight_category_tavily`` 中对应类检索摘要。
+    """
+    rows = _opening_global_index_rows(report_data)
+    tv = report_data.get("opening_overnight_category_tavily")
+    if not isinstance(tv, dict):
+        tv = {}
+
+    a50_n = _opening_a50_numeric_line(report_data)
+    jk_n = _fmt_opening_index_group("日/韩（当日已开盘）", _OPENING_JK_CODES, rows)
+    eu_n = _fmt_opening_index_group("欧股（上一交易日收市）", _OPENING_EU_CODES, rows)
+    us_n = _fmt_opening_index_group("美股（北京时间当日凌晨时段）", _OPENING_US_CODES, rows)
+
+    def _line(cat: str, numeric: Optional[str], digest_title: str) -> str:
+        if numeric:
+            return numeric
+        raw = tv.get(cat)
+        if isinstance(raw, str) and raw.strip():
+            if cat == "us":
+                refined = _refine_opening_us_tavily_for_dingtalk(
+                    raw.strip(), max_chars=480, report_data=report_data
+                )
+            else:
+                refined = _refine_opening_global_digest_for_dingtalk(
+                    raw.strip(), max_chars=480, report_data=report_data
+                )
+            if refined:
+                return f"**{digest_title}（检索摘要，非交易所逐点数值）：** {refined}"
+        return f"**{digest_title}：** 主源暂不可用（检索未返回有效摘要）"
+
+    return [
+        _line("a50", a50_n, "A50期指"),
+        _line("jk", jk_n, "日韩"),
+        _line("eu", eu_n, "欧洲股市"),
+        _line("us", us_n, "美股指数"),
+    ]
+
+
+def _build_opening_overnight_index_lines(report_data: Dict[str, Any]) -> List[str]:
+    """四类一行一条：A50 → 日韩 → 欧洲 → 美股（主源失败则该类用 Tavily 或降级文案）。"""
+    return _build_opening_overnight_four_lines_section(report_data)
 
 
 def _build_opening_overnight_outer_lines(report_data: Dict[str, Any]) -> List[str]:
     """
-    兼容旧版「外盘隔夜」两行标题（美股隔夜 / 日韩当日开盘），供日报与单元测试使用。
-    数据源与 `_opening_global_index_rows` 一致；无数值行时仅用 `global_market_digest` 摘要。
+    兼容旧版外盘隔夜展示；四类与 `_build_opening_overnight_index_lines` 同源。
+    若四类主源均无有效数值且仅有 ``global_market_digest``，保留「单段摘要 + 脚注」回退。
     """
     rows = _opening_global_index_rows(report_data)
-    out: List[str] = []
-    us = _fmt_opening_index_group("美股（隔夜）", _OPENING_US_CODES, rows)
-    if us:
-        out.append(us)
-    eu = _fmt_opening_index_group("欧股（上一交易日收市）", _OPENING_EU_CODES, rows)
-    if eu:
-        out.append(eu)
-    jk = _fmt_opening_index_group("日/韩（当日开盘）", _OPENING_JK_CODES, rows)
-    if jk:
-        out.append(jk)
-    if not out:
+    any_numeric = (
+        _opening_a50_numeric_line(report_data) is not None
+        or _opening_index_group_available(_OPENING_JK_CODES, rows)
+        or _opening_index_group_available(_OPENING_EU_CODES, rows)
+        or _opening_index_group_available(_OPENING_US_CODES, rows)
+    )
+    if not any_numeric:
         gmd = report_data.get("global_market_digest")
         raw_spot = report_data.get("tool_fetch_global_index_spot")
         if not isinstance(gmd, dict) and isinstance(raw_spot, dict):
@@ -831,7 +1141,38 @@ def _build_opening_overnight_outer_lines(report_data: Dict[str, Any]) -> List[st
                 )
                 if refined:
                     return [refined, "（摘要替代完整指数表；见每日市场分析报告）"]
-    return out
+
+    tv = report_data.get("opening_overnight_category_tavily")
+    if not isinstance(tv, dict):
+        tv = {}
+    a50_n = _opening_a50_numeric_line(report_data)
+    jk_n = _fmt_opening_index_group("日/韩（当日开盘）", _OPENING_JK_CODES, rows)
+    eu_n = _fmt_opening_index_group("欧股（上一交易日收市）", _OPENING_EU_CODES, rows)
+    us_n = _fmt_opening_index_group("美股（隔夜）", _OPENING_US_CODES, rows)
+
+    def _ol(cat: str, numeric: Optional[str], digest_title: str) -> str:
+        if numeric:
+            return numeric
+        raw = tv.get(cat)
+        if isinstance(raw, str) and raw.strip():
+            if cat == "us":
+                refined = _refine_opening_us_tavily_for_dingtalk(
+                    raw.strip(), max_chars=480, report_data=report_data
+                )
+            else:
+                refined = _refine_opening_global_digest_for_dingtalk(
+                    raw.strip(), max_chars=480, report_data=report_data
+                )
+            if refined:
+                return f"**{digest_title}（检索摘要，非交易所逐点数值）：** {refined}"
+        return f"**{digest_title}：** 主源暂不可用（检索未返回有效摘要）"
+
+    return [
+        _ol("a50", a50_n, "A50期指"),
+        _ol("jk", jk_n, "日韩"),
+        _ol("eu", eu_n, "欧洲股市"),
+        _ol("us", us_n, "美股指数"),
+    ]
 
 
 def _opening_should_emit_hxc_overnight_line(display: str) -> bool:
@@ -886,51 +1227,6 @@ def _build_opening_hot_sector_bullets(report_data: Dict[str, Any]) -> List[str]:
             bits.append(phase)
         lines.append("- " + " ".join(bits))
     return lines if len(lines) > 1 else []
-
-
-def _build_northbound_lines(report_data: Dict[str, Any]) -> List[str]:
-    import math
-
-    nb = report_data.get("northbound")
-    if not isinstance(nb, dict):
-        cf = report_data.get("capital_flow")
-        if isinstance(cf, dict):
-            nb = cf.get("northbound")
-    if not isinstance(nb, dict):
-        return []
-    if nb.get("status") == "error":
-        return [f"北向：获取失败（{nb.get('error', '未知')}）"]
-    if nb.get("status") != "success":
-        return []
-    data = nb.get("data") or {}
-    stats = nb.get("statistics") or {}
-    net_raw = data.get("total_net")
-    net_f: Optional[float] = None
-    try:
-        net_f = float(net_raw)
-    except (TypeError, ValueError):
-        net_f = None
-    if net_f is not None and isinstance(net_f, float) and math.isnan(net_f):
-        net_s = "N/A（净流入暂不可用，勿采信方向性话术）"
-    elif net_f is not None:
-        net_s = f"{net_f:.2f}"
-    else:
-        net_s = "N/A"
-    parts = [
-        f"最新日 {nb.get('date', '')} 净流入 **{net_s}** 亿元（口径：昨日收盘后可见，非实时）",
-    ]
-    if stats.get("consecutive_days") is not None:
-        parts.append(f"连续方向天数：{stats.get('consecutive_days')}")
-    sig = nb.get("signal") or {}
-    desc = sig.get("description") if isinstance(sig, dict) else None
-    if isinstance(desc, str) and desc.strip():
-        if net_s == "N/A" or (net_f is not None and isinstance(net_f, float) and math.isnan(net_f)):
-            pass
-        elif net_f == 0.0:
-            pass
-        else:
-            parts.append(desc)
-    return parts
 
 
 def _build_key_levels_lines(report_data: Dict[str, Any]) -> List[str]:
@@ -1148,12 +1444,6 @@ def _format_limitup_after_close_enhanced(
             lines.append(f"- {x}")
     lines.append("")
     lines.append("## 资金与关键位")
-    nb = _build_northbound_lines(report_data)
-    if nb:
-        for x in nb:
-            lines.append(f"- {x}")
-    else:
-        lines.append("- （北向未合并）")
     kl = _build_key_levels_lines(report_data)
     if kl:
         for x in kl:
@@ -1201,7 +1491,7 @@ def _build_institutional_extras_lines(*, intraday_allowed: bool = True) -> List[
     lines = [
         "### 情景推演（参考沪深主指 ±0.5% / ±0.2% 粗分档）",
         "- 高开(>0.5%)：关注 5 分钟量能验证，策略偏多但设止损",
-        "- 平开(±0.2%)：结构性轮动，结合北向与板块热度",
+        "- 平开(±0.2%)：结构性轮动，结合板块热度与量能",
         "- 低开(<-0.5%)：偏防守，反弹注意减仓节奏",
         "",
     ]
@@ -1545,11 +1835,25 @@ def _format_tail_session_report(
 ) -> Tuple[str, str]:
     analysis = report_data.get("analysis") if isinstance(report_data.get("analysis"), dict) else {}
     snap = report_data.get("tail_session_snapshot") if isinstance(report_data.get("tail_session_snapshot"), dict) else {}
-    lines: List[str] = [title, "", "## 📊 14:40 尾盘多角度建议报告", f"**分析时间：** {now}", ""]
+    etf_code = str(snap.get("etf_code") or "").strip()
+    index_symbol = str(analysis.get("index_symbol") or "").strip().upper()
+    if index_symbol == "^IXIC":
+        index_label = "纳斯达克指数"
+    elif index_symbol == "^N225":
+        index_label = "日经225指数"
+    else:
+        index_label = index_symbol or "指数"
+    non_trading = bool(report_data.get("non_trading_calendar_day"))
+    trade_date = str(report_data.get("trade_date") or report_data.get("date") or "").strip()
+    subtitle = "## 📊 14:40 尾盘多角度建议报告" if not non_trading else "## 📊 尾盘多角度建议（非交易日复盘口径）"
+    lines: List[str] = [title, "", subtitle, f"**分析时间：** {now}"]
+    if non_trading and trade_date:
+        lines.append(f"**数据日期：** {trade_date}（最近交易日）")
+    lines.append("")
 
     lines.append("### 一、尾盘快照")
     lines.append(
-        f"- 513880 现价 {_fmt_num(snap.get('latest_price'), 3) or 'N/A'} / IOPV {_fmt_num(snap.get('iopv'), 3) or 'N/A'} / 溢价率 {_fmt_pct(snap.get('premium_pct')) or 'N/A'}"
+        f"- {etf_code or 'N/A'} 现价 {_fmt_num(snap.get('latest_price'), 3) or 'N/A'} / IOPV {_fmt_num(snap.get('iopv'), 3) or 'N/A'} / 溢价率 {_fmt_pct(snap.get('premium_pct')) or 'N/A'}"
     )
     lines.append(f"- 数据质量：{snap.get('data_quality') or 'N/A'}")
     if snap.get("iopv_source"):
@@ -1567,7 +1871,7 @@ def _format_tail_session_report(
 
     lines.append("### 二、周期与技术状态")
     lines.append(
-        f"- N225 收盘 {(_fmt_num(analysis.get('index_close'), 2) or 'N/A')}，日涨跌 {_fmt_pct(analysis.get('index_day_ret_pct')) or 'N/A'}"
+        f"- 指数（参考）：{index_label} 收盘 {(_fmt_num(analysis.get('index_close'), 2) or 'N/A')}，日涨跌 {_fmt_pct(analysis.get('index_day_ret_pct')) or 'N/A'}"
     )
     streak_days = analysis.get("streak_days")
     streak_ret_raw = _safe_float(analysis.get("streak_return_pct"))
@@ -1588,7 +1892,7 @@ def _format_tail_session_report(
     except Exception:
         streak_txt = f"连涨跌天数 {streak_days}"
     lines.append(
-        f"- MA25 偏离 {_fmt_pct(analysis.get('ma25_dev_pct')) or 'N/A'}，RSI14 {_fmt_num(analysis.get('rsi14'), 2) or 'N/A'}，{streak_txt}"
+        f"- 指数技术状态（{index_label}）：MA25 偏离 {_fmt_pct(analysis.get('ma25_dev_pct')) or 'N/A'}，RSI14 {_fmt_num(analysis.get('rsi14'), 2) or 'N/A'}，{streak_txt}"
     )
     lines.append("")
 
@@ -1698,8 +2002,17 @@ def _format_daily_report(report_data: Dict[str, Any], report_date: Optional[str]
         title = "盘后市场复盘报告"
         subtitle = "## 📊 盘后市场复盘报告"
     elif rt == "tail_session":
-        title = "日经225ETF尾盘监控报告"
-        subtitle = "## 📊 日经225ETF尾盘监控报告"
+        snap = report_data.get("tail_session_snapshot") if isinstance(report_data.get("tail_session_snapshot"), dict) else {}
+        etf_code = str(snap.get("etf_code") or "").strip()
+        if etf_code == "513300":
+            title = "纳斯达克ETF华夏尾盘监控报告"
+            subtitle = "## 📊 纳斯达克ETF华夏尾盘监控报告"
+        else:
+            title = "日经225ETF尾盘监控报告"
+            subtitle = "## 📊 日经225ETF尾盘监控报告"
+    elif rt == "etf_rotation_research":
+        title = "ETF 轮动研究报告"
+        subtitle = "## 📊 ETF 轮动研究报告"
     else:
         title = "市场日报"
         subtitle = "## 📊 市场日报"
@@ -1749,6 +2062,18 @@ def _format_daily_report(report_data: Dict[str, Any], report_date: Optional[str]
             report_data, analysis, date_str, now, llm_text or ""
         )
 
+    # ETF轮动研究：优先直接使用已生成的研究摘要，避免误落入“市场日报/N-A趋势”通用模板。
+    if rt == "etf_rotation_research" and llm_text:
+        lines = [title, "", subtitle]
+        if date_str:
+            lines.append(f"**日期：** {date_str}")
+        lines.append(f"**分析时间：** {now}")
+        lines.append("")
+        lines.append(llm_text.strip())
+        lines.append("")
+        lines.append(f"*分析完成时间：{now}*")
+        return title, _dingtalk_trim("\n".join(lines).strip())
+
     # 关键指标（尽量结构化展示，不输出原始 dict）
     overall_trend, strength = _resolve_trend_fields(report_data, analysis)
 
@@ -1795,7 +2120,12 @@ def _format_daily_report(report_data: Dict[str, Any], report_date: Optional[str]
         if mo_lines:
             for ln in mo_lines:
                 lines.append(f"- {ln}")
-            lines.append("- （检索摘要归纳，非交易所逐指数实时行情）")
+            if _daily_market_outer_overview_is_research_digest(report_data, mo_lines):
+                # 综述单行已在括号内标注「检索摘要归纳」时不重复脚注
+                if not (mo_lines and "检索摘要归纳" in (mo_lines[0] or "")):
+                    lines.append("- （检索摘要归纳，非交易所逐指数实时行情）")
+            else:
+                lines.append("- （外盘：注册工具拉取；非连续竞价时段为最近可用收盘/日线口径）")
         else:
             lines.append("- 外盘/指数概览暂缺。")
         if volm_lines:
@@ -1841,7 +2171,13 @@ def _format_daily_report(report_data: Dict[str, Any], report_date: Optional[str]
         cf_lines = _build_daily_capital_flow_topic_lines(report_data)
         if cf_lines:
             lines.extend(cf_lines)
-            lines.append("- 扩展查阅：https://data.eastmoney.com/zjlx/dpzjlx.html · https://data.eastmoney.com/bkzj/jlr.html · https://data.eastmoney.com/bkzj/hy.html")
+            if _daily_capital_flow_topic_has_registered_flow_tools(report_data):
+                lines.append(
+                    "- 扩展查阅（与上方工具口径同属东财/行业主力维度，供交叉核对）："
+                    "https://data.eastmoney.com/zjlx/dpzjlx.html · "
+                    "https://data.eastmoney.com/bkzj/jlr.html · "
+                    "https://data.eastmoney.com/bkzj/hy.html"
+                )
         else:
             lines.append("- 资金流向专题暂缺。")
         lines.append("")
@@ -1878,7 +2214,13 @@ def _format_daily_report(report_data: Dict[str, Any], report_date: Optional[str]
             for ln in hints[:2]:
                 lines.append(f"  - {ln}")
         if not (pol or ind or ann):
-            lines.append("- 信息面数据暂缺。")
+            fb = _build_info_fallback_lines_from_context_cache(max_lines=2)
+            if fb:
+                lines.append("- 信息面主源暂缺，以下为最近分析缓存摘要：")
+                for ln in fb:
+                    lines.append(f"  - {ln}")
+            else:
+                lines.append("- 信息面数据暂缺。")
             lines.append("")
 
         lines.append("## 外围与大宗")
@@ -1940,6 +2282,21 @@ def _format_daily_report(report_data: Dict[str, Any], report_date: Optional[str]
             stale = analysis.get("data_stale_warning")
         if isinstance(stale, str) and stale.strip():
             lines.append(stale.strip())
+        gate = report_data.get("daily_report_gate")
+        if isinstance(gate, dict):
+            miss = gate.get("missing_fields")
+            if isinstance(miss, list) and miss:
+                lines.append("- 采集缺口：" + ",".join(str(x) for x in miss))
+        errs = report_data.get("runner_errors")
+        if isinstance(errs, list) and errs:
+            brief: List[str] = []
+            for e in errs[:3]:
+                if isinstance(e, dict):
+                    step = str(e.get("step") or "unknown")
+                    msg = str(e.get("error") or e.get("message") or "error")
+                    brief.append(f"{step}: {msg}")
+            if brief:
+                lines.append("- 采集告警：" + " | ".join(brief))
         degraded, missing = _assess_daily_report_completeness(report_data, analysis)
         status = "DEGRADED" if degraded else "OK"
         miss = ",".join(missing) if missing else "NONE"
@@ -1977,23 +2334,12 @@ def _format_daily_report(report_data: Dict[str, Any], report_date: Optional[str]
                 for ln in pol[:6]:
                     lines.append(f"- {ln}")
             else:
-                lines.append("- 暂无可用政策要闻摘要。")
+                lines.append(_opening_policy_placeholder_line(report_data))
             lines.append("")
 
-            lines.append("### 三、隔夜指示（外盘·A50）")
-            for ln in _build_opening_overnight_index_lines(report_data)[:3]:
+            lines.append("### 三、隔夜指示（A50｜日韩｜欧股｜美股）")
+            for ln in _build_opening_overnight_index_lines(report_data):
                 lines.append(f"- {ln}")
-            a50_s = _fmt_pct(a50_change)
-            if a50_s is None:
-                if a50_status == "insufficient_data":
-                    a50_display = "样本不足"
-                elif a50_status == "error":
-                    a50_display = "接口异常"
-                else:
-                    a50_display = "获取失败"
-            else:
-                a50_display = a50_s
-            lines.append(f"- **A50期指（主源）：** {a50_display}")
             lines.append("")
 
             lines.append("### 四、关键位（技术近似）")
@@ -2127,7 +2473,7 @@ def _format_daily_report(report_data: Dict[str, Any], report_date: Optional[str]
         lines.append("")
 
         lines.append("### 背景（隔夜）")
-        for ln in _build_opening_overnight_index_lines(report_data)[:2]:
+        for ln in _build_opening_overnight_index_lines(report_data)[:4]:
             lines.append(f"- {ln}")
         lines.append("")
 
@@ -2144,7 +2490,7 @@ def _format_daily_report(report_data: Dict[str, Any], report_date: Optional[str]
     _full_morning_brief = rt == "before_open"
 
     if _full_morning_brief:
-        # 版式对齐「机构盘前晨报」：参考链接 → 政策 → 北向 → 趋势 → 关键位 → 波动 → 策略 → 情景 → 热点 → LLM；
+        # 版式对齐「机构盘前晨报」：参考链接 → 政策 → 趋势 → 关键位 → 波动 → 策略 → 情景 → 热点 → LLM；
         # 隔夜外盘/A50 检索摘要等细节优先由 LLM 摘要展开，避免顶栏重复冗长。
         regime = report_data.get("a_share_regime_note")
         if isinstance(regime, str) and regime.strip():
@@ -2169,16 +2515,7 @@ def _format_daily_report(report_data: Dict[str, Any], report_date: Optional[str]
             for ln in pol:
                 lines.append(f"- {ln}")
         else:
-            lines.append("- 暂无可用政策要闻摘要。")
-        lines.append("")
-
-        nb_lines = _build_northbound_lines(report_data)
-        lines.append("### 💹 北向资金")
-        if nb_lines:
-            for ln in nb_lines:
-                lines.append(f"- {ln}")
-        else:
-            lines.append("- 暂无可用北向数据（盘前通常为 T-1 收盘后口径）。")
+            lines.append(_opening_policy_placeholder_line(report_data))
         lines.append("")
 
         lines.append("### 🔍 趋势判定")
@@ -2404,6 +2741,11 @@ def tool_send_daily_report(
         if rt == "daily_market":
             analysis = report_data.get("analysis") if isinstance(report_data.get("analysis"), dict) else {}
             payload, _ = _normalize_daily_report_fields(report_data, analysis)
+            analysis_p = payload.get("analysis") if isinstance(payload.get("analysis"), dict) else {}
+            gate = payload.get("daily_report_gate")
+            if isinstance(gate, dict):
+                degraded, missing = _assess_daily_report_completeness(payload, analysis_p)
+                payload["daily_report_gate"] = {**gate, "missing_fields": missing, "degraded": degraded}
     except Exception:
         payload = report_data
 
@@ -2493,23 +2835,26 @@ def tool_analyze_after_close_and_send_daily_report(
 
     # P0 自动补齐：避免日报退化为“有模板无内容”
     try:
-        from plugins.data_collection.northbound import tool_fetch_northbound_flow
         from plugins.data_collection.limit_up.sector_heat import tool_sector_heat_score
         from plugins.data_collection.morning_brief_fetchers import (
             tool_fetch_policy_news,
             tool_fetch_industry_news_brief,
             tool_fetch_announcement_digest,
         )
-        from plugins.data_collection.a_share_fund_flow import tool_fetch_a_share_fund_flow
         from plugins.merged.fetch_etf_data import tool_fetch_etf_data
         from plugins.merged.fetch_index_data import tool_fetch_index_data
         from plugins.analysis.daily_volatility_range import tool_predict_daily_volatility_range
         from src.signal_generation import tool_generate_option_trading_signals
 
-        if "tool_fetch_northbound_flow" not in rd:
-            rd["tool_fetch_northbound_flow"] = _safe_call(
-                "tool_fetch_northbound_flow", tool_fetch_northbound_flow, lookback_days=5
-            )
+        # 资金流工具在当前仓库可能由外部扩展提供；不可用时不能影响其它补采链路。
+        tool_fetch_a_share_fund_flow = None
+        try:
+            from plugins.data_collection.a_share_fund_flow import tool_fetch_a_share_fund_flow as _ff  # type: ignore
+
+            tool_fetch_a_share_fund_flow = _ff
+        except Exception:
+            tool_fetch_a_share_fund_flow = None
+
         if "tool_sector_heat_score" not in rd:
             rd["tool_sector_heat_score"] = _safe_call("tool_sector_heat_score", tool_sector_heat_score)
         if "tool_fetch_policy_news" not in rd:
@@ -2530,117 +2875,54 @@ def tool_analyze_after_close_and_send_daily_report(
             )
         if "announcement_digest" not in rd and isinstance(rd.get("tool_fetch_announcement_digest"), dict):
             rd["announcement_digest"] = rd.get("tool_fetch_announcement_digest")
-        if "a_share_capital_flow_market_history" not in rd:
-            rd["a_share_capital_flow_market_history"] = _safe_call(
-                "tool_fetch_a_share_fund_flow.market_history",
-                tool_fetch_a_share_fund_flow,
-                query_kind="market_history",
-                max_days=20,
-            )
-        mh_blk = rd.get("a_share_capital_flow_market_history")
-        if (
-            not (isinstance(mh_blk, dict) and mh_blk.get("success"))
-            and "a_share_capital_flow_stock_rank_proxy" not in rd
-        ):
-            rd["a_share_capital_flow_stock_rank_proxy"] = _safe_call(
-                "tool_fetch_a_share_fund_flow.stock_rank",
-                tool_fetch_a_share_fund_flow,
-                query_kind="stock_rank",
-                rank_window="immediate",
-                limit=100,
-            )
-        proxy_blk = rd.get("a_share_capital_flow_stock_rank_proxy")
-        if (
-            not (isinstance(mh_blk, dict) and mh_blk.get("success"))
-            and isinstance(proxy_blk, dict)
-            and proxy_blk.get("success")
-            and isinstance(proxy_blk.get("records"), list)
-            and proxy_blk.get("records")
-        ):
-            def _to_float_like(v: Any) -> Optional[float]:
-                if v is None:
-                    return None
-                if isinstance(v, (int, float)):
-                    return float(v)
-                s = str(v).strip().replace(",", "")
-                if not s:
-                    return None
-                mul = 1.0
-                if s.endswith("亿"):
-                    s = s[:-1]
-                elif s.endswith("万"):
-                    s = s[:-1]
-                    mul = 1.0 / 10000.0
-                try:
-                    return float(s) * mul
-                except Exception:
-                    return None
-            total = 0.0
-            cnt = 0
-            for row in proxy_blk.get("records", []):
-                if not isinstance(row, dict):
-                    continue
-                val = None
-                for k in ("今日主力净流入-净额", "主力净流入-净额", "净流入", "净额"):
-                    if row.get(k) is not None:
-                        val = row.get(k)
-                        break
-                if val is None:
-                    for k2, v2 in row.items():
-                        ks = str(k2)
-                        if ("净流入" in ks or "净额" in ks) and "占比" not in ks:
-                            val = v2
-                            break
-                fv = _to_float_like(val)
-                if fv is not None:
-                    total += fv
-                    cnt += 1
-            if cnt > 0:
-                try:
-                    import pytz as _pytz
+        # 资金流专题优先口径：同花顺行业/概念板块资金流；全市场大盘口径作为补充。
+        if callable(tool_fetch_a_share_fund_flow):
+            if "a_share_capital_flow_sector_industry" not in rd:
+                rd["a_share_capital_flow_sector_industry"] = _safe_call(
+                    "tool_fetch_a_share_fund_flow.sector_industry",
+                    tool_fetch_a_share_fund_flow,
+                    query_kind="sector_rank",
+                    sector_type="industry",
+                    rank_window="immediate",
+                    limit=12,
+                )
+            if "a_share_capital_flow_sector_concept" not in rd:
+                rd["a_share_capital_flow_sector_concept"] = _safe_call(
+                    "tool_fetch_a_share_fund_flow.sector_concept",
+                    tool_fetch_a_share_fund_flow,
+                    query_kind="sector_rank",
+                    sector_type="concept",
+                    rank_window="immediate",
+                    limit=12,
+                )
+            if "a_share_capital_flow_market_history" not in rd:
+                rd["a_share_capital_flow_market_history"] = _safe_call(
+                    "tool_fetch_a_share_fund_flow.market_flow_preferred",
+                    tool_fetch_a_share_fund_flow,
+                    query_kind="market_flow_preferred",
+                    provider_preference="auto",
+                    rank_window="immediate",
+                    limit=120,
+                    max_days=20,
+                )
+            mh_blk = rd.get("a_share_capital_flow_market_history")
+            if (
+                not (isinstance(mh_blk, dict) and mh_blk.get("success"))
+                and "a_share_capital_flow_stock_rank_proxy" not in rd
+            ):
+                rd["a_share_capital_flow_stock_rank_proxy"] = _safe_call(
+                    "tool_fetch_a_share_fund_flow.stock_rank",
+                    tool_fetch_a_share_fund_flow,
+                    query_kind="stock_rank",
+                    rank_window="immediate",
+                    limit=100,
+                )
+            proxy_blk = rd.get("a_share_capital_flow_stock_rank_proxy")
+        else:
+            mh_blk = rd.get("a_share_capital_flow_market_history")
+            proxy_blk = rd.get("a_share_capital_flow_stock_rank_proxy")
 
-                    from src.config_loader import load_system_config as _load_cfg
-                    from src.system_status import get_expected_latest_a_share_daily_bar_date as _exp_bar
-
-                    _tz = _pytz.timezone("Asia/Shanghai")
-                    _cfg = _load_cfg(use_cache=True)
-                    _bar = _exp_bar(
-                        datetime.now(_tz),
-                        _cfg if isinstance(_cfg, dict) else None,
-                    )
-                    _date_disp = f"{_bar[:4]}-{_bar[4:6]}-{_bar[6:8]}"
-                except Exception:
-                    _date_disp = datetime.now().strftime("%Y-%m-%d")
-                rd["a_share_capital_flow_market_history"] = {
-                    "success": True,
-                    "query_kind": "market_history",
-                    "source": "stock_rank_proxy",
-                    "records": [
-                        {
-                            "日期": _date_disp,
-                            "主力净流入-净额": total,
-                            "说明": f"由个股资金流排行样本({cnt})估算，非全市场精确口径",
-                        }
-                    ],
-                }
-        if "a_share_capital_flow_sector_industry" not in rd:
-            rd["a_share_capital_flow_sector_industry"] = _safe_call(
-                "tool_fetch_a_share_fund_flow.sector_industry",
-                tool_fetch_a_share_fund_flow,
-                query_kind="sector_rank",
-                sector_type="industry",
-                rank_window="immediate",
-                limit=12,
-            )
-        if "a_share_capital_flow_sector_concept" not in rd:
-            rd["a_share_capital_flow_sector_concept"] = _safe_call(
-                "tool_fetch_a_share_fund_flow.sector_concept",
-                tool_fetch_a_share_fund_flow,
-                query_kind="sector_rank",
-                sector_type="concept",
-                rank_window="immediate",
-                limit=12,
-            )
+        # 不对资金流做本地估算拼装；仅消费真实工具返回数据。
         if "tool_fetch_etf_realtime" not in rd:
             rd["tool_fetch_etf_realtime"] = _safe_call(
                 "tool_fetch_etf_realtime",
@@ -2686,6 +2968,142 @@ def tool_analyze_after_close_and_send_daily_report(
     except Exception:
         # 补齐失败不阻断主流程；由发送层审计行标识降级
         pass
+
+    # 传递层兜底重试：逐项补采，避免单点 import/调用失败导致整段缺失。
+    def _historical_to_realtime_like(his: Any, code_key: str) -> List[Dict[str, Any]]:
+        payload = his.get("data") if isinstance(his, dict) else None
+        items = payload if isinstance(payload, list) else ([payload] if isinstance(payload, dict) else [])
+        out_rows: List[Dict[str, Any]] = []
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            code = str(item.get(code_key) or item.get("code") or "").strip()
+            name = str(item.get("index_name") or item.get("etf_name") or item.get("name") or code).strip()
+            kl = item.get("klines")
+            if not isinstance(kl, list) or not kl:
+                continue
+            last = kl[-1]
+            if not isinstance(last, dict):
+                continue
+            out_rows.append(
+                {
+                    "code": code,
+                    "name": name,
+                    "current_price": last.get("close"),
+                    "change_percent": last.get("change_percent"),
+                    "volume": last.get("volume"),
+                    "amount": last.get("amount"),
+                }
+            )
+        return out_rows
+
+    def _ensure_index_etf_info_blocks() -> None:
+        # 指数实时
+        idx_rt = rd.get("tool_fetch_index_realtime")
+        idx_ok = isinstance(idx_rt, dict) and idx_rt.get("success") and isinstance(idx_rt.get("data"), list) and bool(
+            idx_rt.get("data")
+        )
+        if not idx_ok:
+            try:
+                from plugins.merged.fetch_index_data import tool_fetch_index_data
+
+                idx_rt2 = _safe_call(
+                    "tool_fetch_index_realtime",
+                    tool_fetch_index_data,
+                    data_type="realtime",
+                    index_code="000001,000300,399001,399006",
+                    mode="production",
+                )
+                if isinstance(idx_rt2, dict):
+                    rd["tool_fetch_index_realtime"] = idx_rt2
+                    idx_ok = bool(idx_rt2.get("success") and isinstance(idx_rt2.get("data"), list) and idx_rt2.get("data"))
+                if not idx_ok:
+                    idx_his = _safe_call(
+                        "tool_fetch_index_historical.daily",
+                        tool_fetch_index_data,
+                        data_type="historical",
+                        index_code="000001,000300,399001,399006",
+                        period="daily",
+                        mode="production",
+                    )
+                    his_rows = _historical_to_realtime_like(idx_his, "index_code")
+                    if his_rows:
+                        rd["tool_fetch_index_realtime"] = {
+                            "success": True,
+                            "source": "historical_fallback",
+                            "data": his_rows,
+                        }
+            except Exception:
+                pass
+
+        # ETF实时
+        etf_rt = rd.get("tool_fetch_etf_realtime")
+        etf_ok = isinstance(etf_rt, dict) and etf_rt.get("success") and isinstance(etf_rt.get("data"), list) and bool(
+            etf_rt.get("data")
+        )
+        if not etf_ok:
+            try:
+                from plugins.merged.fetch_etf_data import tool_fetch_etf_data
+
+                etf_rt2 = _safe_call(
+                    "tool_fetch_etf_realtime",
+                    tool_fetch_etf_data,
+                    data_type="realtime",
+                    etf_code="510300,510500,510050,159919,159915",
+                    mode="production",
+                )
+                if isinstance(etf_rt2, dict):
+                    rd["tool_fetch_etf_realtime"] = etf_rt2
+                    etf_ok = bool(etf_rt2.get("success") and isinstance(etf_rt2.get("data"), list) and etf_rt2.get("data"))
+                if not etf_ok:
+                    etf_his = _safe_call(
+                        "tool_fetch_etf_historical.daily",
+                        tool_fetch_etf_data,
+                        data_type="historical",
+                        etf_code="510300,510500,510050,159919,159915",
+                        period="daily",
+                        mode="production",
+                    )
+                    his_rows = _historical_to_realtime_like(etf_his, "etf_code")
+                    if his_rows:
+                        rd["tool_fetch_etf_realtime"] = {
+                            "success": True,
+                            "source": "historical_fallback",
+                            "data": his_rows,
+                        }
+            except Exception:
+                pass
+
+        # 信息面（逐项补齐）
+        try:
+            from plugins.data_collection.morning_brief_fetchers import (
+                tool_fetch_policy_news,
+                tool_fetch_industry_news_brief,
+                tool_fetch_announcement_digest,
+            )
+
+            if "tool_fetch_policy_news" not in rd:
+                rd["tool_fetch_policy_news"] = _safe_call("tool_fetch_policy_news", tool_fetch_policy_news, max_items=6)
+            if "policy_news" not in rd and isinstance(rd.get("tool_fetch_policy_news"), dict):
+                rd["policy_news"] = rd.get("tool_fetch_policy_news")
+
+            if "tool_fetch_industry_news_brief" not in rd:
+                rd["tool_fetch_industry_news_brief"] = _safe_call(
+                    "tool_fetch_industry_news_brief", tool_fetch_industry_news_brief, max_items=10
+                )
+            if "industry_news" not in rd and isinstance(rd.get("tool_fetch_industry_news_brief"), dict):
+                rd["industry_news"] = rd.get("tool_fetch_industry_news_brief")
+
+            if "tool_fetch_announcement_digest" not in rd:
+                rd["tool_fetch_announcement_digest"] = _safe_call(
+                    "tool_fetch_announcement_digest", tool_fetch_announcement_digest, max_items=10
+                )
+            if "announcement_digest" not in rd and isinstance(rd.get("tool_fetch_announcement_digest"), dict):
+                rd["announcement_digest"] = rd.get("tool_fetch_announcement_digest")
+        except Exception:
+            pass
+
+    _ensure_index_etf_info_blocks()
 
     # 派生字段：修复日报模板字段对齐
     gis = rd.get("global_index_spot")
@@ -2733,44 +3151,38 @@ def tool_analyze_after_close_and_send_daily_report(
         if analysis_obj:
             rd["analysis"] = analysis_obj
 
-    # 强门禁：关键字段缺失时直接按失败处理，并发送失败告警（同渠道）
+    # 发送层归一化（overlay 关键位、关键位补算等）后再做软门禁，避免 missing_fields 与正文不一致
+    analysis_obj = rd.get("analysis") if isinstance(rd.get("analysis"), dict) else {}
+    rd, _ = _drn._normalize_daily_report_fields(rd, analysis_obj)
+
+    # 软门禁：仅记录缺失并在审计行体现，不再阻断正式发送（对齐开盘实盘报告口径）
     analysis_obj = rd.get("analysis") if isinstance(rd.get("analysis"), dict) else {}
     degraded, missing = _drn._assess_daily_report_completeness(rd, analysis_obj)
     ac_success = bool(isinstance(ac, dict) and ac.get("success"))
-    if str(mode).lower() == "prod" and ((not ac_success) or degraded):
+    if degraded or (not ac_success):
         reasons: List[str] = []
         if not ac_success:
-            reasons.append(f"core analyze failed: {str((ac or {}).get('message') or (ac or {}).get('error') or 'unknown')}")
+            reasons.append(
+                f"core analyze failed: {str((ac or {}).get('message') or (ac or {}).get('error') or 'unknown')}"
+            )
         if degraded:
             reasons.append("missing sections: " + ",".join(missing))
         log_path = _append_failure_log(
             {
                 "task": "daily_market_report",
-                "reason": " | ".join(reasons),
+                "reason": " | ".join(reasons) if reasons else "degraded_without_reason",
                 "missing": missing,
                 "analyze_success": ac_success,
                 "report_date": report_date,
+                "send_mode": "soft_gate_continue_send",
             }
         )
-        alert = _send_failure_alert_to_dingtalk(
-            title="每日市场分析报告",
-            reason="日报关键数据不完整，已阻断正式发送",
-            detail_lines=reasons + ([f"log: {log_path}"] if log_path else []),
-            mode=mode,
-            webhook_url=webhook_url,
-            secret=secret,
-            keyword=keyword,
-        )
-        return {
-            "success": False,
-            "error_code": "ERROR_INCOMPLETE_REPORT_DATA",
-            "message": "daily report blocked due to missing critical sections",
-            "data": {
-                "missing_fields": missing,
-                "analyze_success": ac_success,
-                "failure_log_path": log_path,
-                "alert_delivery": alert,
-            },
+        rd["daily_report_gate"] = {
+            "mode": "soft",
+            "degraded": bool(degraded),
+            "missing_fields": missing,
+            "analyze_success": ac_success,
+            "failure_log_path": log_path,
         }
 
     send_kw: Dict[str, Any] = dict(kwargs)
@@ -2798,11 +3210,15 @@ _normalize_daily_report_fields = _daily_norm._normalize_daily_report_fields
 _build_daily_market_etf_universe_lines = _daily_norm._build_daily_market_etf_universe_lines
 _build_a_share_market_flow_lines = _daily_norm._build_a_share_market_flow_lines
 _build_daily_capital_flow_topic_lines = _daily_norm._build_daily_capital_flow_topic_lines
+_daily_capital_flow_topic_has_registered_flow_tools = (
+    _daily_norm._daily_capital_flow_topic_has_registered_flow_tools
+)
 _capital_flow_topic_substantive = _daily_norm._capital_flow_topic_substantive
 _capital_flow_exec_summary_fragment = _daily_norm._capital_flow_exec_summary_fragment
 _coverage_semantic_present = _daily_norm._coverage_semantic_present
 _looks_like_completed_tool_json = _daily_norm._looks_like_completed_tool_json
 _merge_extra_report_data_skipping_tool_arg_stubs = _daily_norm._merge_extra_report_data_skipping_tool_arg_stubs
 _maybe_autofill_cron_daily_market_p0 = _daily_norm._maybe_autofill_cron_daily_market_p0
+_merge_daily_market_global_outer_fallback = _daily_norm._merge_daily_market_global_outer_fallback
 _assess_daily_report_completeness = _daily_norm._assess_daily_report_completeness
 

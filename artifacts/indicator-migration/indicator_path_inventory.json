@@ -1,0 +1,22 @@
+{
+  "scripts/inventory_indicator_paths.py": [
+    "tool_calculate_technical_indicators(",
+    "calculate_technical_indicators(",
+    "score_engine='58'"
+  ],
+  "scripts/benchmark_etf_rotation_phases.py": [
+    "score_engine=\"58\""
+  ],
+  "src/services/indicator_service.py": [
+    "tool_calculate_technical_indicators(",
+    "calculate_technical_indicators("
+  ],
+  "src/services/indicator_runtime.py": [
+    "tool_calculate_technical_indicators(",
+    "calculate_technical_indicators("
+  ],
+  "plugins/analysis/technical_indicators.py": [
+    "tool_calculate_technical_indicators(",
+    "calculate_technical_indicators("
+  ]
+}

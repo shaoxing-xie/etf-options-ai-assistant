@@ -19,7 +19,7 @@ logger = get_module_logger(__name__)
 
 DEFAULT_ROTATION_CONFIG: Dict[str, Any] = {
     "version": 1,
-    "pool": {"symbol_groups": ["core", "industry_etf"], "extra_etf_codes": ["512100", "512880", "512690"]},
+    "pool": {"symbol_groups": ["industry_etf", "concept_etf"], "extra_etf_codes": ["512100", "512880", "512690"]},
     "features": {
         "use_correlation": True,
         "use_ma": True,
@@ -28,12 +28,15 @@ DEFAULT_ROTATION_CONFIG: Dict[str, Any] = {
         "use_mdd_gate": False,
     },
     "factors": {
+        "w_m5": 0.15,
         "w_m20": 0.30,
         "w_m60": 0.25,
         "w_vol": 0.15,
         "w_mdd": 0.05,
         "w_trend_r2": 0.10,
         "w_corr_penalty": 0.20,
+        "w_stability": 0.10,
+        "w_crowding": 0.10,
     },
     "legacy_factors": {"w_m20": 0.45, "w_m60": 0.35, "w_vol": 0.15, "w_mdd": 0.05},
     "filters": {
@@ -53,6 +56,18 @@ DEFAULT_ROTATION_CONFIG: Dict[str, Any] = {
         "mdd60_threshold": -0.99,
         "mdd_gate_mode": "off",
         "mdd_soft_penalty": 0.7,
+    },
+    "crowding": {
+        "enabled": True,
+        "window": 60,
+        "soft_threshold": 0.8,
+        "hard_threshold": 0.95,
+        "penalty_factor": 0.5,
+    },
+    "degradation": {
+        "industry_min_available": 5,
+        "concept_min_available": 5,
+        "fallback_strategy": "reduce_history_days",
     },
     "paths": {"history_jsonl": "data/etf_rotation_runs.jsonl"},
 }

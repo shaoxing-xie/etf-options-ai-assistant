@@ -1,0 +1,86 @@
+## main...origin/main
+ D .cursor/rules/cron-agent-boundaries.mdc
+ D .github/pull_request_template.md
+ D CONTRIBUTING.md
+ D Prompt_config.yaml
+ D agents/analysis_agent.yaml
+ D agents/data_collector_agent.yaml
+ M agents/notification_agent.yaml
+ M apps/chart_console/api/routes.py
+ M apps/chart_console/api/services.py
+ D apps/chart_console/frontend/app.js
+ M apps/chart_console/frontend/charts.js
+ M apps/chart_console/frontend/index.html
+ M config/domains/analytics.yaml
+ M config/domains/market_data.yaml
+ M config/domains/reference.yaml
+ M config/evolver_scope.yaml
+ M config/tools_manifest.json
+ M config/tools_manifest.yaml
+ D config/workflow_external_tool_ids.txt
+ D docs/openclaw/cron_delivery_delivered_field.md
+ D docs/openclaw/dingtalk_delivery_contract.md
+ D docs/openclaw/institutional_alignment_checklist.md
+ D docs/openclaw/nikkei225_tail_session_implementation.md
+ D docs/openclaw/workflow_cron_timeline.md
+ M docs/ops/cron_opening_analysis_triage.md
+ D docs/ops/cron_signal_inspection_triage.md
+ M docs/research/daily_market_report_web_benchmark.md
+ D docs/research/nikkei225_etf_513880_tail_strategy.md
+ M index.ts
+ M openclaw.plugin.json
+ D plugins/analysis/trend_analysis.py
+ D plugins/merged/volatility.py
+ M plugins/notification/README.md
+ M plugins/notification/daily_report_normalization.py
+ M plugins/notification/run_before_open_analysis.py
+ D plugins/notification/run_opening_analysis.py
+ D plugins/notification/run_signal_risk_inspection.py
+ D plugins/notification/run_tail_session_analysis.py
+ M plugins/notification/send_analysis_report.py
+ M plugins/notification/send_daily_report.py
+ D plugins/notification/send_signal_risk_inspection.py
+ D plugins/utils/llm_structured_extract.py
+ D plugins/utils/tavily_client.py
+ D pytest.ini
+ D requirements-dev.txt
+ D requirements.txt
+ D scripts/README.md
+ D scripts/check_openclaw_idle_config.py
+ D scripts/ensure_openclaw_china_stock_plugin.py
+ D scripts/install_china_stock_extension_copy.sh
+ M scripts/test_cron_tools.sh
+ D scripts/verify_daily_market_report_keywords.py
+ M skills/ota-openclaw-tool-narration/SKILL.md
+ D skills/ota-openclaw-tool-narration/_meta.json
+ D src/daily_volatility_range.py
+ M src/data_cache.py
+ M src/system_status.py
+ D src/trend_analyzer.py
+ D tests/test_before_open_report_format.py
+ D tests/test_daily_market_report_helpers.py
+ D tests/test_fetch_global_index_akshare.py
+ D tests/test_fetch_global_index_hist_sina.py
+ D tests/test_llm_structured_extract.py
+ D tests/test_opening_report_format.py
+ M tests/test_run_before_open_analysis.py
+ D tests/test_run_opening_analysis.py
+ D tests/test_run_signal_risk_inspection.py
+ D tests/test_run_tail_session_analysis.py
+ D tests/test_send_dingtalk_message.py
+ D tests/test_tail_session_report_format.py
+ D tests/test_tavily_client_helpers.py
+ D tests/test_verify_daily_market_report_keywords.py
+ M tool_runner.py
+ M workflows/README.md
+ D workflows/daily_market_report.yaml
+ D workflows/opening_analysis.yaml
+ D workflows/opening_real_session_report.yaml
+ D workflows/signal_risk_inspection.yaml
+ D workflows/tail_session_513880.yaml
+?? .recovery_backups/
+?? apps/__init__.py
+?? apps/chart_console/__init__.py
+?? apps/chart_console/api/__init__.py
+?? plugins/notification/run_midday_recap.py
+?? src/services/alerts_config_service.py

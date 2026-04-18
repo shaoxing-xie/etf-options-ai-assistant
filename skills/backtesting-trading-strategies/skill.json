@@ -1,0 +1,8 @@
+{
+  "name": "Backtesting Trading Strategies",
+  "description": "Backtest crypto and traditional trading strategies against historical data. Calculates performance metrics (Sharpe, Sortino, max drawdown), generates equity curves, and optimizes strategy parameters.",
+  "version": "2.0.0",
+  "identifier": "backtesting-trading-strategies",
+  "author": "Jeremy Longshore",
+  "category": "finance"
+}

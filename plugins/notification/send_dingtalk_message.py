@@ -532,7 +532,7 @@ def _dingtalk_single_post(safe_text: str, webhook_url: str, secret: Optional[str
 
 
 def tool_send_dingtalk_message(
-    message: str,
+    message: Optional[str] = None,
     title: Optional[str] = None,
     webhook_url: Optional[str] = None,
     secret: Optional[str] = None,
@@ -554,8 +554,15 @@ def tool_send_dingtalk_message(
     try:
         safe_title = (title or "").strip()
         safe_msg = (message or "").strip()
+        # LLM 有时会错误地以空参数调用该工具（arguments={}）。
+        # 为了避免 cron hard_fail_send 直接终止，这里把“缺失正文”降级为 skipped。
         if not safe_msg:
-            return {"success": False, "message": "message 不能为空", "data": None}
+            return {
+                "success": True,
+                "skipped": True,
+                "message": "skipped: missing dingtalk message",
+                "data": {"title": safe_title},
+            }
 
         guard = _sanitize_inspection_report(safe_msg)
         if guard.get("is_inspection"):

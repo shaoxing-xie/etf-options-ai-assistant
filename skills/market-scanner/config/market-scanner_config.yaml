@@ -1,0 +1,26 @@
+version: 1
+
+sentiment_thresholds:
+  ice_point:
+    limit_up_max: 20
+    broken_board_min_pct: 50
+  repair:
+    limit_up_min: 30
+    limit_up_max: 50
+  climax:
+    limit_up_min: 80
+    board_height_min: 5
+  ebb:
+    trigger: high_level_drawdown
+
+breadth_thresholds:
+  extreme_ratio_low: 0.5
+  warning_ratio_low: 0.8
+  warning_ratio_high: 1.2
+  extreme_ratio_high: 1.5
+
+output_policy:
+  require_trading_status_check: true
+  require_data_freshness: true
+  allow_execution_instruction: false
+

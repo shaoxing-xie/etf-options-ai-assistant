@@ -9,7 +9,7 @@ agent:
   type: tool_agent
   tools:
     # 技术指标
-    - tool_calculate_technical_indicators
+    - tool_calculate_technical_indicators_unified
     
     # 趋势分析
     - tool_analyze_after_close
@@ -27,7 +27,6 @@ agent:
     - tool_compute_index_key_levels
     # 日报 / 盘后补采（与 workflows/daily_market_report.yaml、tool_send_daily_report ingest 对齐；原在 data_collector_agent）
     - tool_fetch_global_index_spot
-    - tool_fetch_northbound_flow
     - tool_fetch_etf_realtime
     - tool_fetch_policy_news
     - tool_fetch_announcement_digest

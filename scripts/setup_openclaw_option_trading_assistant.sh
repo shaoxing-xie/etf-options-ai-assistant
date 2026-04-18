@@ -10,6 +10,7 @@
 #   OPENCLAW_JSON=path/to/openclaw.json
 #   OPENCLAW_EXTENSIONS_DIR=...   （与 ensure 脚本一致）
 #   OTA_KEEP_EXTENSION_SYMLINK=1  不删除 extensions 下的 option-trading-assistant 符号链接（不推荐）
+#   OTA_KEEP_EXTENSION_DIR_COPY=1 保留 extensions 下的同名物理目录副本（不推荐）
 #   OTA_SKIP_ENSURE_ALLOW=1       不向 plugins.allow 追加
 #   OTA_SKIP_ENSURE_ENTRY=1       不向 plugins.entries 追加
 set -euo pipefail
@@ -34,6 +35,18 @@ else
       rm -f "$DEST"
       echo "[setup_openclaw_option_trading_assistant] 已移除重复符号链接: $DEST（与 load.paths 指向同一仓库）"
     fi
+  fi
+fi
+
+if [[ -d "$DEST" && ! -L "$DEST" ]]; then
+  if [[ "${OTA_KEEP_EXTENSION_DIR_COPY:-}" == "1" ]]; then
+    echo "[setup_openclaw_option_trading_assistant] OTA_KEEP_EXTENSION_DIR_COPY=1：保留 $DEST 物理目录副本（可能导致重复加载，不推荐）"
+  else
+    ts="$(date +%Y%m%d_%H%M%S)"
+    bak="${DEST}.duplicate_backup_${ts}"
+    mv "$DEST" "$bak"
+    echo "[setup_openclaw_option_trading_assistant] 已归档重复物理目录: $DEST -> $bak"
+    echo "[setup_openclaw_option_trading_assistant] 当前仅保留项目目录作为 OTA 单一物理来源。"
   fi
 fi
 
