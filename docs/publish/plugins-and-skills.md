@@ -12,6 +12,7 @@
 
 ## 2. 建议项（能力增强）
 
+- **`openclaw-data-china-stock`**（A 股/ETF 等采集与情绪四工具 + `market-sentinel`）：安装、同步到 `~/.openclaw/extensions`、与 `etf-options-ai-assistant` Agent/工具白名单对齐见 [`openclaw-data-china-stock-etf-assistant.md`](../openclaw/openclaw-data-china-stock-etf-assistant.md)。
 - `tavily-search`：外部信息检索与事件补全
 - `topic-monitor`：主题监控（如已采用）
 - `qmd-cli` / 记忆相关技能：研究上下文沉淀

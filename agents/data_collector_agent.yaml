@@ -52,7 +52,7 @@ agent:
     - tool_get_a_share_market_regime
     - tool_filter_a_share_tradability
 
-    # ---------- 涨停 / 板块热度 / 资金 / 北向 / 龙虎榜 ----------
+    # ---------- 涨停 / 板块热度 / 资金 / 龙虎榜 ----------
     - tool_fetch_limit_up_stocks
     - tool_sector_heat_score
     - tool_write_limit_up_with_sector
@@ -60,8 +60,8 @@ agent:
     - tool_dragon_tiger_list
     - tool_capital_flow
     - tool_fetch_a_share_fund_flow
-    - tool_fetch_a_share_technical_screener
     - tool_fetch_northbound_flow
+    - tool_fetch_a_share_technical_screener
     - tool_fetch_policy_news
     - tool_fetch_macro_commodities
     - tool_fetch_overnight_futures_digest
