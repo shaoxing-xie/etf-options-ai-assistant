@@ -27,6 +27,9 @@ python3 tests/integration/run_all_workflow_tests.py
 - `extreme_sentiment_monitor` 触发次数 / 误报数
 - 开盘报告、盘中巡检、盘后日报中“情绪归因”字段缺失率
 - `insufficient_evidence` 占比
+- `sentiment_dispersion` 高值占比（建议阈值：stddev>=18 或 spread>=35）
+- `sentiment_meta.sentinel_version` / `weight_profile` 覆盖率（应接近 100%）
+- 分时段缓存命中表现（opening/mid/closing 三档 TTL）
 
 ## 回滚开关（运维级）
 
@@ -47,3 +50,21 @@ python3 scripts/validate_agent_skill_matrix.py
 ```
 
 说明：当前回滚开关以**任务级禁用**为主，而非单独运行时布尔变量；这样风险最小，不影响既有工具与 agent 技能装配。
+
+## 建议输出扩展（版本与分歧度）
+
+情绪聚合结果建议统一附加：
+
+- `sentiment_meta`:
+  - `sentinel_version`（如 `v0.5.3`）
+  - `weight_profile`（如 `default` / `short_term_game` / `institutional_view`）
+  - `generated_at`
+- `sentiment_dispersion`：
+  - 优先 `stddev`（四子项标准差）
+  - 兜底 `spread = max(sub_scores)-min(sub_scores)`
+
+盘中缓存策略（建议）：
+
+- `opening_first_hour`: 300 秒
+- `mid_session`: 900 秒
+- `closing_hour`: 600 秒

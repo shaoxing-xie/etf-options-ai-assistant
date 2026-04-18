@@ -257,7 +257,9 @@ structured_message: |
   4) tool_sector_heat_score → 板块温度（强弱与扩散）
   4b) `tool_fetch_limit_up_stocks` + `tool_fetch_a_share_fund_flow` + `tool_fetch_northbound_flow` + `tool_fetch_sector_data`
       → 09:20 前情绪前置检查。若运行环境支持 `market-sentinel` 规程，应将四工具聚合为 `report_data.sentiment_precheck`，至少含
-      `overall_score` / `sentiment_stage` / `data_completeness_ratio` / `action_bias` / `risk_counterevidence` / `degraded`。
+      `overall_score` / `sentiment_stage` / `sentiment_dispersion` / `data_completeness_ratio` / `action_bias` /
+      `risk_counterevidence` / `degraded` / `sentiment_meta(sentinel_version, weight_profile)`。
+      同时记录 `cache_ttl_policy`（opening_first_hour=300, mid_session=900, closing_hour=600）。
   5) tool_fetch_index_realtime / tool_fetch_etf_realtime → 大盘与ETF实时快照
   6) tool_compute_index_key_levels / tool_calculate_technical_indicators_unified → 关键位与风险
   7) tool_analyze_opening_market / tool_predict_volatility / tool_predict_intraday_range / tool_predict_daily_volatility_range / tool_generate_option_trading_signals
@@ -266,6 +268,7 @@ structured_message: |
   **情绪门禁（新增）**
   - 若 `sentiment_stage` 为 `冰点` 或 `退潮`：正文必须增加防御性提示，降低“进攻/追涨”措辞，不得把开盘信号写成高确定性方向。
   - 若 `sentiment_stage` 为 `高潮`：必须增加“过热/拥挤”反证检查，提示关注 vega / 波动率暴露，避免单边乐观表述。
+  - 若 `sentiment_dispersion` 偏高（子项分歧明显）：必须降低结论确定性，并将 `confidence_band` 下调一档（或说明下调原因）。
   - 若 `degraded=true` 或 `status=insufficient_evidence`：必须显式披露，并将情绪结论降级为背景参考，不得当作核心决策前提。
 
   **正文约束**

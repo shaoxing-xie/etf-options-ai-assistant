@@ -75,8 +75,10 @@ structured_message: |
   - `overall_score >= 85`
   - `overall_score <= 20`
   - 或 `sentiment_stage` 为 `冰点` / `退潮`
+  - 或 `sentiment_dispersion` 超阈值（建议：标准差 >= 18，或 spread >= 35）
 
   触发后动作：
   - 生成结构化预警，突出 `sentiment_stage`、`factor_attribution`、`risk_counterevidence`、`confidence_band`。
+  - 预警正文需附 `sentiment_meta.sentinel_version`、`sentiment_meta.weight_profile`、`sentiment_dispersion`，便于回溯模型版本与分歧度来源。
   - 明确说明这是“市场环境预警”，不是直接买卖建议。
   - 若 `degraded=true` 或 `insufficient_evidence`，则降低预警确定性，并说明缺失源。

@@ -116,10 +116,18 @@ structured_message: |
 
   若运行环境支持 `market-sentinel` 规程，应按其契约将四工具聚合为当轮情绪结论；若不支持直接 Skill 调用，则至少在风险评估与最终信号输出中体现：
   - 当前 `sentiment_stage`
+  - `sentiment_dispersion`
   - `risk_counterevidence`
   - `degraded` / `insufficient_evidence`
+  - `sentiment_meta`（`sentinel_version`、`weight_profile`）
+
+  盘中缓存策略（建议）：
+  - 开盘首小时（09:30-10:29）：情绪缓存 TTL 300 秒
+  - 盘中平稳时段（10:30-14:29）：情绪缓存 TTL 900 秒
+  - 尾盘时段（14:30-15:00）：情绪缓存 TTL 600 秒
 
   阶段切换检测要求：
   - 优先将本轮结果与最近一次成功的盘前/盘中情绪快照比较，识别 `prev_stage -> curr_stage`。
   - 若检测到 `修复 -> 高潮`、`震荡 -> 混沌`、`高潮 -> 退潮` 等切换，必须在风险评估中增加额外提示。
+  - 若 `sentiment_dispersion` 上升且 `prev_stage -> curr_stage` 同时恶化，必须提高预警级别并提示“情绪分歧扩大”。
   - 若当前执行上下文无法可靠获取上一轮快照，须明确写“未获取到上一轮情绪基线，本次仅输出当前快照”，不得伪造切换结论。

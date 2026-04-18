@@ -88,11 +88,19 @@ structured_message: |
   - `overall_score`
   - `sentiment_stage`
   - `factor_attribution`
+  - `sentiment_dispersion`（建议：四子项标准差；无标准差实现时至少给 max-min spread）
   - `data_completeness_ratio`
   - `action_bias`
   - `risk_counterevidence`
   - `confidence_band`
   - `degraded`
+  - `sentiment_meta`（至少含 `sentinel_version`、`weight_profile`、`generated_at`）
+
+  建议附加：
+  - `cache_ttl_policy`：按时段记录本次判定所采用的缓存策略，默认：
+    - `opening_first_hour`: 300 秒
+    - `mid_session`: 900 秒
+    - `closing_hour`: 600 秒
 
   强制规则：
   - 不给具体买卖点、仓位比例、杠杆建议。

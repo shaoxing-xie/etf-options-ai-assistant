@@ -49,7 +49,8 @@ structured_message: |
   - 情绪归因（新增）：建议补采 `tool_fetch_limit_up_stocks`、`tool_fetch_a_share_fund_flow(query_kind='market_history', max_days=5)`、
     `tool_fetch_northbound_flow(lookback_days=5)`、`tool_fetch_sector_data(sector_type='industry', period='today')`；若运行环境支持
     `market-sentinel` 规程，应按其契约生成 `report_data.sentiment_summary`，至少包含 `overall_score`、`sentiment_stage`、
-    `factor_attribution`、`data_completeness_ratio`、`risk_counterevidence`、`degraded`，并在正文新增“情绪归因”章节，说明
+    `factor_attribution`、`sentiment_dispersion`、`data_completeness_ratio`、`risk_counterevidence`、`degraded`、
+    `sentiment_meta(sentinel_version, weight_profile)`，并在正文新增“情绪归因”章节，说明
     当日阶段、主导因子、主要反证，以及与信号/盈亏叙事的对应关系。
   - tool_fetch_etf_realtime（建议，`etf_code` 含宽基+热点代表，如 `510300,512480,159819,516160,510880,512880`；整段挂 `tool_fetch_etf_realtime`；发送层在无实时数据时也会按 hot_sectors 尝试自动补拉，但以显式调用为准）
   - 如需“策略与仓位”章节，补 `analysis.opening_strategy`（来自对应盘前/开盘流程产物）
