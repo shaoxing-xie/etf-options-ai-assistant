@@ -88,6 +88,43 @@ steps:
     params: {}
     continue_on_failure: true
 
+  - name: sentiment_limit_up
+    agent: data_collector_agent
+    tool: tool_fetch_limit_up_stocks
+    description: 09:20 前情绪前置检查：涨停生态
+    params: {}
+    continue_on_failure: true
+    depends_on: [check_trading_status]
+
+  - name: sentiment_fund_flow
+    agent: data_collector_agent
+    tool: tool_fetch_a_share_fund_flow
+    description: 09:20 前情绪前置检查：A股资金流向
+    params:
+      query_kind: "market_history"
+      max_days: 5
+    continue_on_failure: true
+    depends_on: [check_trading_status]
+
+  - name: sentiment_northbound
+    agent: data_collector_agent
+    tool: tool_fetch_northbound_flow
+    description: 09:20 前情绪前置检查：北向资金
+    params:
+      lookback_days: 5
+    continue_on_failure: true
+    depends_on: [check_trading_status]
+
+  - name: sentiment_sector_structure
+    agent: data_collector_agent
+    tool: tool_fetch_sector_data
+    description: 09:20 前情绪前置检查：板块结构
+    params:
+      sector_type: "industry"
+      period: "today"
+    continue_on_failure: true
+    depends_on: [check_trading_status]
+
   - name: compute_key_levels
     agent: analysis_agent
     tool: tool_compute_index_key_levels
@@ -114,7 +151,7 @@ steps:
 
   - name: technical_indicators
     agent: analysis_agent
-    tool: tool_calculate_technical_indicators
+    tool: tool_calculate_technical_indicators_unified
     description: 技术指标（日线缓存；含 ATR 供波动与风险叙事，可选再加 kdj）
     params:
       symbol: "510300"
@@ -125,6 +162,7 @@ steps:
         - rsi
         - bollinger
         - atr
+      task_key: "opening_analysis"
     continue_on_failure: true
 
   - name: analyze_opening_market
@@ -173,6 +211,10 @@ steps:
       underlying: "510300"
     depends_on:
       [
+        sentiment_limit_up,
+        sentiment_fund_flow,
+        sentiment_northbound,
+        sentiment_sector_structure,
         technical_indicators,
         predict_intraday_range,
         predict_daily_volatility_range,
@@ -213,10 +255,18 @@ structured_message: |
   2) tool_fetch_global_index_spot + tool_fetch_global_index_hist_sina → 外盘背景（仅背景节）
   3) tool_fetch_policy_news / tool_fetch_macro_commodities / tool_fetch_overnight_futures_digest → 背景信息
   4) tool_sector_heat_score → 板块温度（强弱与扩散）
+  4b) `tool_fetch_limit_up_stocks` + `tool_fetch_a_share_fund_flow` + `tool_fetch_northbound_flow` + `tool_fetch_sector_data`
+      → 09:20 前情绪前置检查。若运行环境支持 `market-sentinel` 规程，应将四工具聚合为 `report_data.sentiment_precheck`，至少含
+      `overall_score` / `sentiment_stage` / `data_completeness_ratio` / `action_bias` / `risk_counterevidence` / `degraded`。
   5) tool_fetch_index_realtime / tool_fetch_etf_realtime → 大盘与ETF实时快照
-  6) tool_compute_index_key_levels / tool_calculate_technical_indicators → 关键位与风险
+  6) tool_compute_index_key_levels / tool_calculate_technical_indicators_unified → 关键位与风险
   7) tool_analyze_opening_market / tool_predict_volatility / tool_predict_intraday_range / tool_predict_daily_volatility_range / tool_generate_option_trading_signals
      → 当日预判与执行动作
+
+  **情绪门禁（新增）**
+  - 若 `sentiment_stage` 为 `冰点` 或 `退潮`：正文必须增加防御性提示，降低“进攻/追涨”措辞，不得把开盘信号写成高确定性方向。
+  - 若 `sentiment_stage` 为 `高潮`：必须增加“过热/拥挤”反证检查，提示关注 vega / 波动率暴露，避免单边乐观表述。
+  - 若 `degraded=true` 或 `status=insufficient_evidence`：必须显式披露，并将情绪结论降级为背景参考，不得当作核心决策前提。
 
   **正文约束**
   - 删除“北向资金”独立小节。

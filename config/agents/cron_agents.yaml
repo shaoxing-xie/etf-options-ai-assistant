@@ -16,6 +16,7 @@ managedAgents:
       - ota_daily_session_routine
       - ota_trend_analysis_brief
       - ota_notification_soul_routing
+      - market-sentinel
       - ota_openclaw_tool_narration
       - ota_volatility_prediction_narration
       - ota_historical_volatility_snapshot
@@ -40,6 +41,7 @@ managedAgents:
       - ota_daily_session_routine
       - ota_signal_risk_inspection
       - ota_notification_soul_routing
+      - market-sentinel
       - ota_market_regime_checklist
       - ota_volatility_range_brief
       - ota_openclaw_tool_narration
@@ -63,6 +65,9 @@ managedAgents:
       - ota_strategy_research_loop
       - ota_strategy_fusion_playbook
       - ota_quantitative_screening_brief
+      # 与 workflows/backtesting_research_on_demand 对齐：cron 入口须能读到规程（requiredSkills 全量替换模板，不列则丢失）
+      - ota_backtesting_integration_brief
+      - backtesting-trading-strategies
       - ota_openclaw_tool_narration
       - ota_market_regime_checklist
       - ota_cache_read_discipline
@@ -91,6 +96,8 @@ managedAgents:
         workspaceOnly: false
 
 jobAgentMapping:
+  pre-market-sentiment-check: etf_cron_analysis_agent
+  extreme-sentiment-monitor: etf_cron_inspection_agent
   f0d82a29-45de-4377-9570-5dda65b3f58a: etf_cron_analysis_agent
   8c548101-85b7-4c95-a458-8b0e15317d46: etf_cron_analysis_agent
   7b401fcc-1f51-4db9-b3e1-74115890a296: etf_cron_analysis_agent

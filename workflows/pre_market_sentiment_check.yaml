@@ -1,0 +1,100 @@
+name: pre_market_sentiment_check
+description: 09:10 情绪前置检查，聚合四情绪工具作为开盘前风险上下文
+
+schedule: "10 9 * * 1-5"
+timezone: "Asia/Shanghai"
+
+steps:
+  - name: check_trading_status
+    agent: data_collector_agent
+    tool: tool_check_trading_status
+    description: A股时段门禁（必选）
+    params: {}
+    continue_on_failure: true
+
+  - name: fetch_limit_up_stocks
+    agent: data_collector_agent
+    tool: tool_fetch_limit_up_stocks
+    description: 涨停生态快照（默认当日/最近交易日）
+    params: {}
+    continue_on_failure: true
+    depends_on: [check_trading_status]
+
+  - name: fetch_a_share_fund_flow
+    agent: data_collector_agent
+    tool: tool_fetch_a_share_fund_flow
+    description: A股资金流向（短窗口）
+    params:
+      query_kind: "market_history"
+      max_days: 5
+    continue_on_failure: true
+    depends_on: [check_trading_status]
+
+  - name: fetch_northbound_flow
+    agent: data_collector_agent
+    tool: tool_fetch_northbound_flow
+    description: 北向资金近 5 日态度
+    params:
+      lookback_days: 5
+    continue_on_failure: true
+    depends_on: [check_trading_status]
+
+  - name: fetch_sector_data
+    agent: data_collector_agent
+    tool: tool_fetch_sector_data
+    description: 板块结构与主线轮动
+    params:
+      sector_type: "industry"
+      period: "today"
+    continue_on_failure: true
+    depends_on: [check_trading_status]
+
+  - name: send_sentiment_precheck_notice
+    agent: notification_agent
+    tool: tool_send_dingtalk_message
+    description: 发送 09:10 情绪前置检查提示（研究级，非交易指令）
+    depends_on:
+      [
+        fetch_limit_up_stocks,
+        fetch_a_share_fund_flow,
+        fetch_northbound_flow,
+        fetch_sector_data,
+      ]
+    params:
+      title: "09:10 市场情绪前置检查"
+      message: |
+        [09:10 市场情绪前置检查]
+        本任务已完成四情绪工具采集，用于后续 09:20 开盘分析与盘中巡检的风险上下文。
+
+        涨停生态：{{fetch_limit_up_stocks.explanation}}
+        A股资金：{{fetch_a_share_fund_flow.explanation}}
+        北向资金：{{fetch_northbound_flow.data.total_net}}
+        板块结构：{{fetch_sector_data.explanation.main_line_reason}}
+
+        说明：若由 Agent 继续生成完整情绪结论，必须遵循 market-sentinel 契约，输出 overall_score / sentiment_stage / data_completeness_ratio / degraded，并显式写出 risk_counterevidence。
+      mode: "prod"
+
+structured_message: |
+  执行 09:10「情绪前置检查」。
+
+  目标：在开盘前生成一份 `report_data.sentiment_precheck`，供 09:20 `opening_analysis` 与盘中巡检复用。优先使用 `market-sentinel` 规程；若运行环境不能直接调用 Skill，则必须基于以下四工具结果按 `docs/sentiment/api_contract.md` 的 `Skill aggregate` 契约自行聚合：
+
+  - `tool_fetch_limit_up_stocks`
+  - `tool_fetch_a_share_fund_flow`
+  - `tool_fetch_northbound_flow`
+  - `tool_fetch_sector_data`
+
+  输出要求（最少）：
+  - `overall_score`
+  - `sentiment_stage`
+  - `factor_attribution`
+  - `data_completeness_ratio`
+  - `action_bias`
+  - `risk_counterevidence`
+  - `confidence_band`
+  - `degraded`
+
+  强制规则：
+  - 不给具体买卖点、仓位比例、杠杆建议。
+  - 任一工具失败时，必须保留降级说明，不得静默忽略。
+  - 若证据不足，返回 `insufficient_evidence`，并将结论收敛为防御性提示。

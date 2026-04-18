@@ -1,0 +1,82 @@
+name: extreme_sentiment_monitor
+description: 交易时段每 15 分钟扫描极端情绪，并在过热/冰点时发送结构化预警
+
+schedule: "*/15 9-15 * * 1-5"
+timezone: "Asia/Shanghai"
+
+steps:
+  - name: fetch_limit_up_stocks
+    agent: data_collector_agent
+    tool: tool_fetch_limit_up_stocks
+    description: 极端情绪监控：涨停生态
+    params: {}
+    continue_on_failure: true
+
+  - name: fetch_a_share_fund_flow
+    agent: data_collector_agent
+    tool: tool_fetch_a_share_fund_flow
+    description: 极端情绪监控：A股资金流向
+    params:
+      query_kind: "market_history"
+      max_days: 5
+    continue_on_failure: true
+
+  - name: fetch_northbound_flow
+    agent: data_collector_agent
+    tool: tool_fetch_northbound_flow
+    description: 极端情绪监控：北向资金
+    params:
+      lookback_days: 5
+    continue_on_failure: true
+
+  - name: fetch_sector_data
+    agent: data_collector_agent
+    tool: tool_fetch_sector_data
+    description: 极端情绪监控：板块结构
+    params:
+      sector_type: "industry"
+      period: "today"
+    continue_on_failure: true
+
+  - name: send_extreme_sentiment_alert
+    agent: notification_agent
+    tool: tool_send_dingtalk_message
+    description: 发送极端情绪结构化预警（研究级）
+    depends_on:
+      [
+        fetch_limit_up_stocks,
+        fetch_a_share_fund_flow,
+        fetch_northbound_flow,
+        fetch_sector_data,
+      ]
+    params:
+      title: "极端情绪监控"
+      message: |
+        [极端情绪监控]
+        本轮已完成四情绪工具采集。若 Agent 聚合后发现 overall_score >= 85、<= 20，
+        或 sentiment_stage 落入「冰点 / 退潮」，请立即生成极端情绪预警，强调风险与反证，不给交易指令。
+
+        涨停生态：{{fetch_limit_up_stocks.explanation}}
+        A股资金：{{fetch_a_share_fund_flow.explanation}}
+        北向资金：{{fetch_northbound_flow.data.total_net}}
+        板块结构：{{fetch_sector_data.explanation.main_line_reason}}
+      mode: "prod"
+
+structured_message: |
+  执行「极端情绪监控」。
+
+  必须基于以下四工具结果进行聚合判断（优先遵循 `market-sentinel` 规程）：
+  - `tool_fetch_limit_up_stocks`
+  - `tool_fetch_a_share_fund_flow`
+  - `tool_fetch_northbound_flow`
+  - `tool_fetch_sector_data`
+
+  触发条件：
+  - `overall_score >= 85`
+  - `overall_score <= 20`
+  - 或 `sentiment_stage` 为 `冰点` / `退潮`
+
+  触发后动作：
+  - 生成结构化预警，突出 `sentiment_stage`、`factor_attribution`、`risk_counterevidence`、`confidence_band`。
+  - 明确说明这是“市场环境预警”，不是直接买卖建议。
+  - 若 `degraded=true` 或 `insufficient_evidence`，则降低预警确定性，并说明缺失源。
