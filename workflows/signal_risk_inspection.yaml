@@ -13,6 +13,8 @@ structured_message_morning: |
 
   【硬约束】禁止直接手写最终群消息正文（除非走上述发送工具）。仅允许指数 000300/399006/000905 与 ETF 510300/510500/159915；禁止个股、涨停回马枪专章、长 Market Regime。禁止无关 web_search/docker 等依赖。
 
+  【宏观旁路】若时间允许，先只读调用 `tool_fetch_macro_snapshot`（china-macro-analyst 口径），将一行摘要写入 `report.macro_note`（可空）；不得替代上述硬约束标的范围。
+
   【钉钉】`docs/openclaw/dingtalk_delivery_contract.md` §巡检快报；`delivery.mode=none`；终稿末行 `INSPECTION_RUN_STATUS:`。
 
   【最终回复】成功时简短说明工具回执即可，勿重复粘贴全文模板。
@@ -24,6 +26,8 @@ structured_message_midday: |
 
   【硬约束】同 structured_message_morning。
 
+  【宏观旁路】同 structured_message_morning。
+
   【钉钉】同 structured_message_morning。
 
   【最终回复】同 structured_message_morning。
@@ -34,6 +38,8 @@ structured_message_afternoon: |
   【手工/排障】`tool_send_signal_risk_inspection(report=..., phase='afternoon', mode='prod')`；键清单见 `_REQUIRED_REPORT_KEYS`。
 
   【硬约束】同 structured_message_morning。
+
+  【宏观旁路】同 structured_message_morning。
 
   【钉钉】同 structured_message_morning。
 

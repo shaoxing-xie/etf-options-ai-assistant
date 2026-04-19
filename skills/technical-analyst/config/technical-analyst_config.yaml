@@ -1,5 +1,9 @@
 version: 1
 
+# When calling `tool_calculate_technical_indicators`, prefer an explicit list covering
+# trend + momentum + volatility buckets (see references/indicator_signal_guide.md).
+default_indicator_strategy: bundle_trend_momentum_volatility
+
 thresholds:
   rsi:
     oversold: 30

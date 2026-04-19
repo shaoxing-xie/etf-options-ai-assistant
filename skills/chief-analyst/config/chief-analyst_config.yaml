@@ -1,0 +1,9 @@
+version: 1
+orchestration:
+  ordered_skills:
+    - market-scanner
+    - technical-analyst
+    - fund-flow-analyst
+    - china-macro-analyst
+    - market-sentinel
+  require_macro_snapshot: true

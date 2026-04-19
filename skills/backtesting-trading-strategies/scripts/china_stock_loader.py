@@ -111,9 +111,11 @@ def try_load_cn_etf_ohlcv(
     quiet: bool = False,
 ) -> Tuple[Optional[pd.DataFrame], Optional[str]]:
     """
-    Fetch ETF daily bars via fetch_single_etf_historical (AkShare / mootdx / cache / …).
+    Fetch ETF daily bars.
 
-    Returns (df, source_name) or (None, None) if not applicable or on failure.
+    Preferred path: merged tool `tool_fetch_etf_data` (historical) — same stack OpenClaw
+    workflows use; preserves cache / source metadata including `as_of` when present.
+    Fallback: `fetch_single_etf_historical` for legacy callers.
     """
     code = normalize_cn_etf_code(symbol)
     if code is None:
@@ -129,14 +131,47 @@ def try_load_cn_etf_ohlcv(
             )
         return None, None
 
+    rs = str(repo)
+    if rs not in sys.path:
+        sys.path.insert(0, rs)
+
+    start_s = start.strftime("%Y-%m-%d")
+    end_s = end.strftime("%Y-%m-%d")
+
+    try:
+        from plugins.merged.fetch_etf_data import tool_fetch_etf_data
+
+        resp = tool_fetch_etf_data(
+            data_type="historical",
+            etf_code=code,
+            period="daily",
+            start_date=start_s,
+            end_date=end_s,
+        )
+        if isinstance(resp, dict) and resp.get("success") and resp.get("data"):
+            raw = pd.DataFrame(resp["data"])
+            source = str(resp.get("source") or "tool_fetch_etf_data")
+            ohlcv = _chinese_etf_df_to_ohlcv(raw)
+            if not ohlcv.empty:
+                ohlcv = ohlcv[(ohlcv.index >= pd.Timestamp(start)) & (ohlcv.index <= pd.Timestamp(end))]
+                if ohlcv.index.tz is not None:
+                    ohlcv.index = ohlcv.index.tz_localize(None)
+                _as_of = resp.get("as_of") or resp.get("date")
+                if _as_of is not None:
+                    try:
+                        ohlcv.attrs["as_of"] = _as_of  # type: ignore[attr-defined]
+                    except Exception:
+                        pass
+                return ohlcv, source
+    except Exception as e:
+        if not quiet:
+            print(f"china_stock_loader: tool_fetch_etf_data path failed: {e}", file=sys.stderr)
+
     mod = _load_fetch_historical_module(repo)
     if mod is None:
         if not quiet:
             print("china_stock_loader: failed to load fetch_historical module.", file=sys.stderr)
         return None, None
-
-    start_s = start.strftime("%Y-%m-%d")
-    end_s = end.strftime("%Y-%m-%d")
 
     try:
         raw, source = mod.fetch_single_etf_historical(

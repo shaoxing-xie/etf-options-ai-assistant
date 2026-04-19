@@ -1,0 +1,22 @@
+# Consumption policy for openclaw-data-china-stock tool payloads (quality_score, etc.)
+
+quality_score:
+  warn_below: 70
+  default_when_missing: 75
+  log_missing_as: quality_score_missing
+
+tool_trace_log_fields:
+  - tool
+  - source
+  - fallback_route
+  - elapsed_ms
+  - cache_hit
+  - quality_score
+
+signal_fusion:
+  description: >
+    Optional weights for fused_confidence narrative (0-1). Tuned per deployment.
+  weights:
+    sentiment_dispersion_penalty: 0.25
+    quality_score: 0.35
+    technical_strength: 0.40

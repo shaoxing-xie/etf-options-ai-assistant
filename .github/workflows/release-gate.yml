@@ -55,3 +55,11 @@ jobs:
       - name: Test ensure_openclaw_plugin_load_paths
         run: |
           python -m pytest tests/test_ensure_openclaw_plugin_load_paths.py -q
+
+      - name: Skills contract sniff (no akshare under skills/) + payload quality
+        run: |
+          python -m pytest tests/test_no_akshare_sniff.py tests/test_tool_payload_quality.py -q
+
+      - name: Optional runtime vs src plugin version (skip if no ~/.openclaw runtime)
+        run: |
+          python -m pytest tests/test_plugin_runtime_drift.py -q
