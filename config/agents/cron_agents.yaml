@@ -111,6 +111,12 @@ jobAgentMapping:
   factor-evolution-weekly: etf_cron_research_agent
   strategy-evolution-weekly: etf_cron_research_agent
 
+  strategy-calibration: etf_cron_research_agent
+  nightly-stock-screening: etf_cron_ops_agent
+  position-tracking: etf_cron_analysis_agent
+  weekly-selection-review: etf_cron_research_agent
+  screening-emergency-stop: etf_cron_inspection_agent
+
   3535ccab-f974-44ad-a642-c28964a89942: etf_cron_ops_agent
   quality-backstop-audit: etf_cron_ops_agent
   quality-backstop-autofix-trigger-runner: etf_cron_ops_agent
