@@ -118,3 +118,10 @@ Orchestrator 在以下情况必须停止自动修复并升级：
 - **拍 A 机器块**：只诊断时，回复末尾仍须使用 **与 orchestrator 相同的 8 个键名**（见 `evolution_invariants.yaml` → `phase_a_machine_block`），**禁止**用其它字段名替代；`EVIDENCE_REF` 须可复核（本地路径 + `https://`）。
 - **拍 B 必须有优化产出**：用户已确认实跑（或单条消息内 **【实跑确认】**）后，须有 **可验证的仓库变更 + PR**（allowed_paths 内），或 **TEAM_FAIL** 并写明环境阻塞；禁止只有「建议」无 diff（见 `phase_b_closure`）。**例外**：用户明确要求 **【仅输出方案我自改】** 时，禁止 Agent 改仓库，但须交付**结构化详案**（路径、步骤、风险），`PR_CREATED=false`（见 `manual_implementation_only`）。
 
+## 11. 情绪 Cron（`market-sentinel`）与可审计字段
+
+- **适用范围**：涉及 `pre_market_sentiment_check`、`opening_analysis`、`intraday_analysis`、`daily_market_report`、`extreme_sentiment_monitor` 等已写入情绪聚合契约的工作流；其目标是在 **不改交易主流程算法** 的前提下，为复盘与告警提供 **版本水印 + 分歧度 + 时段化缓存策略** 的可追溯信息。
+- **与本文的关系**：仍遵守上文 **§2 四段证据** 与 **§9 双轨证据** 的边界；情绪字段是 **Cron/报告输出中建议随附的机器可读摘要**（便于归因与回滚），**不**替代工具原始返回与命令行 RAW。
+- **建议随附键**（当次任务实际调用了情绪四工具并完成聚合时）：`sentiment_meta`（至少 `sentinel_version`、`weight_profile`、`generated_at`）、`sentiment_dispersion`、`cache_ttl_policy`；降级或证据不足时须显式写出 `degraded` / `insufficient_evidence` 及原因，禁止静默省略。
+- **运维与观察面**：见 `docs/openclaw/sentiment_cron_rollout.md`（上线观察指标与回滚策略）。
+
