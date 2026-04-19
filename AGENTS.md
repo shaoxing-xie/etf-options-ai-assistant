@@ -316,7 +316,7 @@ trading-copilot ──> market-quick-scan
 | `northbound-flow` | "北向资金"/"/northbound" | 外资流向监控 | 🚧 待实现数据源 |
 | `sector-rotation` | "板块轮动"/"/sector" | 热点板块识别 | 🚧 待实现数据源 |
 | `capital-flow` | "资金流向"/"/capital" | 主力散户博弈分析 | 🚧 待实现数据源 |
-| `quantitative-screening` | "量化选股"/"/quant" | 多因子排序（候选列表） | **工具已有** `tool_quantitative_screening`；规程 Skill：**`ota_quantitative_screening_brief`**（`skills/ota-quantitative-screening-brief/`）。机构级因子库 / 中性化仍为后续增强项 |
+| `quantitative-screening` | "量化选股"/"/quant" | A 股多因子筛选（插件因子引擎） | **工具** `tool_screen_equity_factors` + 收尾 `tool_finalize_screening_nightly`；规程 Skill：**`ota_equity_factor_screening_brief`**（`skills/ota-equity-factor-screening-brief/`）。旧 `tool_quantitative_screening` 已移除；详见 Skill 内迁移说明 |
 
 **Skill 文件位置（P3 仍为独立命名空间的规划草案，未提交到本仓库 `skills/`）：**
 - `skills/dragon-tiger-list/SKILL.md`
@@ -329,4 +329,4 @@ trading-copilot ──> market-quick-scan
 2. `sector-rotation` - 板块数据对ETF轮动最有价值
 3. `capital-flow` - Level2 数据增强信号准确性
 4. `dragon-tiger-list` - 游资动向提供短线参考
-5. ~~`quantitative-screening`~~ → 已用 `tool_quantitative_screening` + `ota_quantitative_screening_brief` 覆盖「助手内排序」场景；完整因子库另列里程碑
+5. ~~`quantitative-screening`~~ → 已用 **`tool_screen_equity_factors`** + **`ota_equity_factor_screening_brief`** 覆盖；旧 `tool_quantitative_screening` / `ota_quantitative_screening_brief` 仅作历史参考（deprecated）

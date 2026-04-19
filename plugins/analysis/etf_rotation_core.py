@@ -6,6 +6,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -576,6 +578,47 @@ def load_etf_daily_df(
     return None, out.get("message"), "failed"
 
 
+def _prefetch_etf_daily_frames(
+    symbols: List[str],
+    start_d: str,
+    end_d: str,
+) -> Dict[str, Tuple[Optional[pd.DataFrame], Optional[str], str]]:
+    """
+    并行加载各标的 ETF 日线（I/O 为主）。可通过环境变量关闭并行：
+    - ETF_ROTATION_LOAD_MAX_WORKERS=1：完全串行（与旧行为一致）
+    - 未设置或为空：默认 min(8, len(symbols))
+    - 其他正整数：显式上限
+    """
+    if not symbols:
+        return {}
+
+    def _one(sym: str) -> Tuple[str, Optional[pd.DataFrame], Optional[str], str]:
+        df, msg, src = load_etf_daily_df(sym, start_yyyymmdd=start_d, end_yyyymmdd=end_d)
+        return sym, df, msg, src
+
+    raw = os.environ.get("ETF_ROTATION_LOAD_MAX_WORKERS", "").strip()
+    if raw == "1":
+        out: Dict[str, Tuple[Optional[pd.DataFrame], Optional[str], str]] = {}
+        for sym in symbols:
+            _, df, msg, src = _one(sym)
+            out[sym] = (df, msg, src)
+        return out
+
+    try:
+        max_workers = int(raw) if raw.isdigit() else min(8, max(1, len(symbols)))
+    except ValueError:
+        max_workers = min(8, max(1, len(symbols)))
+    max_workers = max(1, min(max_workers, len(symbols)))
+
+    acc: Dict[str, Tuple[Optional[pd.DataFrame], Optional[str], str]] = {}
+    with ThreadPoolExecutor(max_workers=max_workers) as ex:
+        futures = {ex.submit(_one, sym): sym for sym in symbols}
+        for fut in as_completed(futures):
+            sym, df, msg, src = fut.result()
+            acc[sym] = (df, msg, src)
+    return acc
+
+
 def default_load_date_range(
     *,
     as_of_yyyymmdd: Optional[str] = None,
@@ -853,8 +896,10 @@ def run_rotation_pipeline(
     macd_f = float((config.get("alignment") or {}).get("macd_factor") or 2.0)
     fp58 = fingerprint_58_cache(config, macd_f)
 
+    prefetched = _prefetch_etf_daily_frames(symbols, start_d, end_d)
+
     for sym in symbols:
-        df, msg, src = load_etf_daily_df(sym, start_yyyymmdd=start_d, end_yyyymmdd=end_d)
+        df, msg, src = prefetched[sym]
         if df is None or df.empty:
             errors.append(f"{sym}: load failed: {msg}")
             load_health[sym] = {

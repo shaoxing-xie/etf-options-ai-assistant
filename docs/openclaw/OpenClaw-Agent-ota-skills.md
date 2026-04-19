@@ -13,7 +13,7 @@
 
 ### `etf_main`
 
-`ota_daily_session_routine`, `ota_signal_risk_inspection`, `ota_strategy_fusion_playbook`, `ota_volatility_range_brief`, `ota_technical_indicators_brief`, `ota_trend_analysis_brief`, `ota_openclaw_tool_narration`, `ota_volatility_prediction_narration`, `ota_historical_volatility_snapshot`, `ota_risk_assessment_brief`, `ota_signal_watch_narration`, `ota_notification_soul_routing`, `ota_market_regime_checklist`, `ota_etf_rotation_research`, `ota_strategy_research_loop`, `ota_quantitative_screening_brief`, `tavily`, `topic-monitor`, `qmd`
+`ota_daily_session_routine`, `ota_signal_risk_inspection`, `ota_strategy_fusion_playbook`, `ota_volatility_range_brief`, `ota_technical_indicators_brief`, `ota_trend_analysis_brief`, `ota_openclaw_tool_narration`, `ota_volatility_prediction_narration`, `ota_historical_volatility_snapshot`, `ota_risk_assessment_brief`, `ota_signal_watch_narration`, `ota_notification_soul_routing`, `ota_market_regime_checklist`, `ota_etf_rotation_research`, `ota_strategy_research_loop`, `ota_equity_factor_screening_brief`, `tavily`, `topic-monitor`, `qmd`
 
 ### `etf_data_collector_agent`
 
@@ -21,7 +21,7 @@
 
 ### `etf_analysis_agent`
 
-`ota_strategy_fusion_playbook`, `ota_volatility_range_brief`, `ota_technical_indicators_brief`, `ota_trend_analysis_brief`, `ota_openclaw_tool_narration`, `ota_volatility_prediction_narration`, `ota_historical_volatility_snapshot`, `ota_risk_assessment_brief`, `ota_signal_watch_narration`, `ota_cache_read_discipline`, `ota_market_regime_checklist`, `ota_daily_session_routine`, `ota_etf_rotation_research`, `ota_strategy_research_loop`, `ota_quantitative_screening_brief`, `tavily`, `topic-monitor`, `qmd`
+`ota_strategy_fusion_playbook`, `ota_volatility_range_brief`, `ota_technical_indicators_brief`, `ota_trend_analysis_brief`, `ota_openclaw_tool_narration`, `ota_volatility_prediction_narration`, `ota_historical_volatility_snapshot`, `ota_risk_assessment_brief`, `ota_signal_watch_narration`, `ota_cache_read_discipline`, `ota_market_regime_checklist`, `ota_daily_session_routine`, `ota_etf_rotation_research`, `ota_strategy_research_loop`, `ota_equity_factor_screening_brief`, `tavily`, `topic-monitor`, `qmd`
 
 ### `etf_notification_agent`
 
@@ -29,7 +29,7 @@
 
 ### `etf_business_core_agent`
 
-`ota_strategy_fusion_playbook`, `ota_signal_risk_inspection`, `ota_daily_session_routine`, `ota_volatility_range_brief`, `ota_technical_indicators_brief`, `ota_trend_analysis_brief`, `ota_openclaw_tool_narration`, `ota_volatility_prediction_narration`, `ota_historical_volatility_snapshot`, `ota_risk_assessment_brief`, `ota_signal_watch_narration`, `ota_market_regime_checklist`, `ota_cache_read_discipline`, `ota_etf_rotation_research`, `ota_strategy_research_loop`, `ota_quantitative_screening_brief`, `tavily`, `topic-monitor`, `qmd`
+`ota_strategy_fusion_playbook`, `ota_signal_risk_inspection`, `ota_daily_session_routine`, `ota_volatility_range_brief`, `ota_technical_indicators_brief`, `ota_trend_analysis_brief`, `ota_openclaw_tool_narration`, `ota_volatility_prediction_narration`, `ota_historical_volatility_snapshot`, `ota_risk_assessment_brief`, `ota_signal_watch_narration`, `ota_market_regime_checklist`, `ota_cache_read_discipline`, `ota_etf_rotation_research`, `ota_strategy_research_loop`, `ota_equity_factor_screening_brief`, `tavily`, `topic-monitor`, `qmd`
 
 ### `ops_agent`
 
@@ -43,7 +43,7 @@
 
 以下每个 **`name:`** 至少在 **一个** Agent 的 `skills` 中出现：
 
-`ota_cache_read_discipline`, `ota_chart_console_pro`, `ota_ci_autofix_runbook`, `ota_cmec_collaboration`, `ota_cn_market_data_discipline`, `ota_daily_session_routine`, `ota_etf_rotation_research`, `ota_evolution_execution_contract`, `ota_historical_volatility_snapshot`, `ota_llm_model_routing`, `ota_market_regime_checklist`, `ota_notification_soul_routing`, `ota_openclaw_tool_narration`, `ota_openclaw_token_discipline`, `ota_quantitative_screening_brief`, `ota_risk_assessment_brief`, `ota_signal_risk_inspection`, `ota_signal_watch_narration`, `ota_strategy_fusion_playbook`, `ota_strategy_research_loop`, `ota_technical_indicators_brief`, `ota_trend_analysis_brief`, `ota_volatility_prediction_narration`, `ota_volatility_range_brief`
+`ota_cache_read_discipline`, `ota_chart_console_pro`, `ota_ci_autofix_runbook`, `ota_cmec_collaboration`, `ota_cn_market_data_discipline`, `ota_daily_session_routine`, `ota_etf_rotation_research`, `ota_evolution_execution_contract`, `ota_historical_volatility_snapshot`, `ota_llm_model_routing`, `ota_market_regime_checklist`, `ota_notification_soul_routing`, `ota_openclaw_tool_narration`, `ota_openclaw_token_discipline`, `ota_equity_factor_screening_brief`, `ota_risk_assessment_brief`, `ota_signal_risk_inspection`, `ota_signal_watch_narration`, `ota_strategy_fusion_playbook`, `ota_strategy_research_loop`, `ota_technical_indicators_brief`, `ota_trend_analysis_brief`, `ota_volatility_prediction_narration`, `ota_volatility_range_brief`
 
 ## 修改后
 

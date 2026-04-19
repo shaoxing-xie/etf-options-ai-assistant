@@ -211,7 +211,9 @@ default_args_for_tool() {
     tool_generate_trend_following_signal) echo '{"etf_symbol":"510300","index_code":"000300"}' ;;
     tool_check_stop_loss_take_profit) echo '{"action":"check","symbol":"510300"}' ;;
     tool_record_signal_effect) echo "{\"signal_id\":\"TEST_${today}\",\"signal_type\":\"buy\",\"etf_symbol\":\"510300\",\"signal_strength\":0.6,\"strategy\":\"trend_following\",\"entry_price\":4.0,\"status\":\"pending\"}" ;;
-    tool_quantitative_screening) echo '{"candidates":"600000,000001,300750","lookback_days":20,"top_k":5}' ;;
+    tool_screen_equity_factors) echo '{"universe":"custom","custom_symbols":"600000","top_n":3,"max_universe_size":3,"factors":["reversal_5d"]}' ;;
+    tool_finalize_screening_nightly) echo '{"screening_result":{"success":true,"data":[{"symbol":"600000","score":0.5,"factors":{}}],"quality_score":0.9,"degraded":false,"config_hash":"test","elapsed_ms":1,"plugin_version":"test"}}' ;;
+    tool_set_screening_emergency_pause) echo '{"active":false,"reason":"test"}' ;;
 
     # 数据采集
     tool_fetch_index_opening) echo '{"index_code":"000300","mode":"test"}' ;;

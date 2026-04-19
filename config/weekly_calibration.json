@@ -1,0 +1,6 @@
+{
+  "version": 1,
+  "last_updated": null,
+  "regime": "oscillation",
+  "notes": "由 strategy_calibration 工作流或 Agent 写入；nightly_stock_screening 读取 pause 门闸。"
+}

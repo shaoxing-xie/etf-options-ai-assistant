@@ -1,0 +1,20 @@
+name: weekly_selection_review
+description: 周度选股复盘（提示 IC/分层与权重审计）
+
+schedule: "0 18 * * 5"
+timezone: "Asia/Shanghai"
+
+steps:
+  - name: send_weekly_review_prompt
+    agent: notification_agent
+    tool: tool_send_dingtalk_message
+    description: 复盘提示（研究级）
+    params:
+      title: "周度选股复盘"
+      message: |
+        [weekly_selection_review]
+        请对照 `data/screening/` 与观察池变动，完成分层表现或 IC 摘要；任何 `config/screening_weights.yaml` 调整须留 Git 记录与 config_hash。
+      mode: "prod"
+
+structured_message: |
+  周五复盘：汇总夜盘 screening 日志、检查 pause 触发次数、提出因子权重调整建议（文档化，不自作主张改生产配置）。

@@ -22,6 +22,30 @@ def _dedupe_str_list(raw: Any) -> List[str]:
     return out
 
 
+def _merge_rotation_etf_codes_into(base: List[str]) -> List[str]:
+    """
+    将 `rotation_config.yaml` + `symbols.json` 解析出的轮动池 ETF 并入采集清单，
+    使 morning_daily / close_minute 的长窗日 K 覆盖轮动读盘路径，减少冷补采。
+    """
+    try:
+        from analysis.etf_rotation_core import resolve_etf_pool
+        from src.rotation_config_loader import load_rotation_config
+
+        rcfg = load_rotation_config(None)
+        rot = resolve_etf_pool(None, rcfg)
+    except Exception:
+        return base
+    if not rot:
+        return base
+    seen = set(base)
+    out = list(base)
+    for s in rot:
+        if s not in seen:
+            seen.add(s)
+            out.append(s)
+    return out
+
+
 def get_data_cache_universe(config: Optional[Dict[str, Any]] = None) -> Dict[str, List[str]]:
     """
     Returns:
@@ -36,8 +60,11 @@ def get_data_cache_universe(config: Optional[Dict[str, Any]] = None) -> Dict[str
     if not isinstance(dc, dict):
         dc = {}
 
+    etf_codes = _dedupe_str_list(dc.get("etf_codes"))
+    etf_codes = _merge_rotation_etf_codes_into(etf_codes)
+
     return {
         "index_codes": _dedupe_str_list(dc.get("index_codes")),
-        "etf_codes": _dedupe_str_list(dc.get("etf_codes")),
+        "etf_codes": etf_codes,
         "stock_codes": _dedupe_str_list(dc.get("stock_codes")),
     }

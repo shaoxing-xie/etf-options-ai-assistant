@@ -64,7 +64,7 @@ managedAgents:
       - ota_etf_rotation_research
       - ota_strategy_research_loop
       - ota_strategy_fusion_playbook
-      - ota_quantitative_screening_brief
+      - ota_equity_factor_screening_brief
       # 与 workflows/backtesting_research_on_demand 对齐：cron 入口须能读到规程（requiredSkills 全量替换模板，不列则丢失）
       - ota_backtesting_integration_brief
       - backtesting-trading-strategies

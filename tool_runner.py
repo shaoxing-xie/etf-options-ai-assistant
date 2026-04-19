@@ -360,6 +360,10 @@ TOOL_MAP: Dict[str, ToolSpec] = {
         module_path="notification.run_before_open_analysis",
         function_name="tool_run_before_open_analysis_and_send",
     ),
+    "tool_run_data_cache_job": ToolSpec(
+        module_path="data_collection.run_data_cache_job",
+        function_name="tool_run_data_cache_job",
+    ),
     "tool_send_analysis_report": ToolSpec(
         module_path="notification.send_analysis_report",
         function_name="tool_send_analysis_report",
@@ -384,9 +388,17 @@ TOOL_MAP: Dict[str, ToolSpec] = {
         module_path="risk.portfolio_risk_snapshot",
         function_name="tool_portfolio_risk_snapshot",
     ),
-    "tool_quantitative_screening": ToolSpec(
-        module_path="analysis.quantitative_screening",
-        function_name="tool_quantitative_screening",
+    "tool_screen_equity_factors": ToolSpec(
+        module_path="plugins.analysis.equity_factor_screening",
+        function_name="tool_screen_equity_factors",
+    ),
+    "tool_finalize_screening_nightly": ToolSpec(
+        module_path="src.screening_ops",
+        function_name="tool_finalize_screening_nightly",
+    ),
+    "tool_set_screening_emergency_pause": ToolSpec(
+        module_path="src.screening_ops",
+        function_name="tool_set_screening_emergency_pause",
     ),
     "tool_sector_heat_score": ToolSpec(
         module_path="data_collection.limit_up.sector_heat",

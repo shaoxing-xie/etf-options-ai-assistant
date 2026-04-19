@@ -1,0 +1,42 @@
+name: position_tracking
+description: 盘中观察池跟踪（轻量行情快照；与极端情绪 cron 错峰）
+
+schedule: "7,22,37,52 9-15 * * 1-5"
+timezone: "Asia/Shanghai"
+
+steps:
+  - name: check_trading_status
+    agent: data_collector_agent
+    tool: tool_check_trading_status
+    params: {}
+    continue_on_failure: true
+
+  - name: batch_watchlist_spot
+    agent: data_collector_agent
+    tool: tool_batch_fetch
+    description: 对观察池批量拉取（需在 args 中列出 items；默认占位用指数现货）
+    depends_on: [check_trading_status]
+    params:
+      max_concurrent: 4
+      items:
+        - id: idx300
+          tool: tool_fetch_market_data
+          args:
+            asset_type: "index"
+            asset_code: "000300"
+            view: "realtime"
+    continue_on_failure: true
+
+  - name: notify_tracking_stub
+    agent: notification_agent
+    tool: tool_send_dingtalk_message
+    depends_on: [batch_watchlist_spot]
+    params:
+      title: "观察池跟踪（占位）"
+      message: |
+        [position_tracking]
+        当前 YAML 使用指数现货占位演示 `tool_batch_fetch` 并发路径。生产请将 `items` 换成由 `data/watchlist/default.json` 展开的 `tool_fetch_market_data` 股票 realtime 列表（每标的一条），并控制 ≤50 条。
+      mode: "prod"
+
+structured_message: |
+  读取 `data/watchlist/default.json` 的 symbols，构造 `tool_batch_fetch` items；失败项写入 errors 列表并告警。

@@ -12,3 +12,5 @@ def test_send_etf_rotation_research_report_in_manifest() -> None:
     ids = {t.get("id") for t in (manifest.get("tools") or []) if isinstance(t, dict)}
     assert "tool_send_etf_rotation_research_report" in ids
     assert "tool_etf_rotation_research" in ids
+    assert "tool_screen_equity_factors" in ids
+    assert "tool_quantitative_screening" not in ids

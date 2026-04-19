@@ -1,5 +1,5 @@
 {
-  "_comment": "各 Agent 的 skills 数组片段：与 SKILL.md frontmatter 中 name（下划线）一致。合并到 ~/.openclaw/openclaw.json → agents.list[].skills 或对应 Agent 条目后重启 Gateway。第三方技能名以本机已安装为准（如 tavily / topic-monitor / qmd）。全 agent 建议挂载 ota_agent_model_probe（CLI probe_agent_models 探活）。etf_main / etf_business_core_agent 与 etf_analysis_agent 对齐挂载 ota_etf_rotation_research、ota_strategy_research_loop、ota_quantitative_screening_brief；**ota_backtesting_integration_brief** 规定钉钉/日常回测默认单条 exec 跑 backtesting-trading-strategies（勿先串 tool_fetch+指标），改后须 sync_repo_skills_to_openclaw + 重载 Gateway。",
+  "_comment": "各 Agent 的 skills 数组片段：与 SKILL.md frontmatter 中 name（下划线）一致。合并到 ~/.openclaw/openclaw.json → agents.list[].skills 或对应 Agent 条目后重启 Gateway。第三方技能名以本机已安装为准（如 tavily / topic-monitor / qmd）。全 agent 建议挂载 ota_agent_model_probe（CLI probe_agent_models 探活）。etf_main / etf_business_core_agent 与 etf_analysis_agent 对齐挂载 ota_etf_rotation_research、ota_strategy_research_loop、ota_equity_factor_screening_brief；**ota_backtesting_integration_brief** 规定钉钉/日常回测默认单条 exec 跑 backtesting-trading-strategies（勿先串 tool_fetch+指标），改后须 sync_repo_skills_to_openclaw + 重载 Gateway。",
   "byAgentId": {
     "etf_main": {
       "skills": [
@@ -17,7 +17,7 @@
         "ota_market_regime_checklist",
         "ota_etf_rotation_research",
         "ota_strategy_research_loop",
-        "ota_quantitative_screening_brief",
+        "ota_equity_factor_screening_brief",
         "ota_backtesting_integration_brief",
         "backtesting-trading-strategies",
         "ota_technical_indicators_brief",
@@ -49,7 +49,7 @@
         "ota_daily_session_routine",
         "ota_etf_rotation_research",
         "ota_strategy_research_loop",
-        "ota_quantitative_screening_brief",
+        "ota_equity_factor_screening_brief",
         "ota_backtesting_integration_brief",
         "backtesting-trading-strategies",
         "ota_technical_indicators_brief",
@@ -90,7 +90,7 @@
         "ota_cache_read_discipline",
         "ota_etf_rotation_research",
         "ota_strategy_research_loop",
-        "ota_quantitative_screening_brief",
+        "ota_equity_factor_screening_brief",
         "ota_backtesting_integration_brief",
         "backtesting-trading-strategies",
         "ota_technical_indicators_brief",

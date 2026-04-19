@@ -51,7 +51,9 @@ agent:
     - tool_detect_market_regime
     - tool_etf_rotation_research
     - tool_strategy_research
-    - tool_quantitative_screening
+    - tool_screen_equity_factors
+    - tool_finalize_screening_nightly
+    - tool_set_screening_emergency_pause
     
     # ETF趋势跟踪
     - tool_check_etf_index_consistency

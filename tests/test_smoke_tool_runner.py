@@ -66,22 +66,36 @@ def test_tool_strategy_research_smoke() -> None:
     assert "success" in out
 
 
-def test_tool_quantitative_screening_valuation_smoke() -> None:
-    """量化选股：缓存不足时也应返回结构化结果。"""
+def test_tool_run_data_cache_job_smoke() -> None:
+    """notify=False 避免强依赖飞书；仍可能访问数据源。"""
     out = _run_tool(
-        "tool_quantitative_screening",
-        {"candidates": "510300,510500", "lookback_days": 20, "universe": "etf", "top_k": 2},
+        "tool_run_data_cache_job",
+        {"job": "intraday_minute", "throttle_stock": True, "notify": False},
     )
     assert isinstance(out, dict)
-    assert out.get("status") in {"success", "error"}
-    if out.get("status") == "success":
-        scores = out.get("scores", [])
-        assert len(scores) >= 1
-        for item in scores:
-            assert "symbol" in item
-            assert "factors" in item
-            assert "valuation" in item["factors"]
-            assert "raw" in item["factors"]["valuation"]
-            # ETF 未请求财务，raw 应为 999
-            assert item["factors"]["valuation"]["raw"] == 999.0
+    assert "success" in out
+    assert "collection_success" in out
+
+
+def test_tool_screen_equity_factors_smoke() -> None:
+    """多因子选股单入口：小样本亦须返回结构化 envelope。"""
+    out = _run_tool(
+        "tool_screen_equity_factors",
+        {
+            "universe": "custom",
+            "custom_symbols": "600000",
+            "top_n": 1,
+            "max_universe_size": 1,
+            "factors": ["reversal_5d"],
+            "max_concurrent_fetch": 1,
+        },
+    )
+    assert isinstance(out, dict)
+    assert "success" in out
+    assert "elapsed_ms" in out
+    assert "plugin_version" in out
+    if out.get("success"):
+        assert "quality_score" in out
+        assert "config_hash" in out
+        assert isinstance(out.get("data"), list)
 

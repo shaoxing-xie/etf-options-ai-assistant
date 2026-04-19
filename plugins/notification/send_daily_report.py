@@ -13,11 +13,18 @@ from __future__ import annotations
 from typing import Any, Dict, Optional, List, Tuple, Mapping
 import json
 import logging
+import os
 import re
+import time
 from datetime import datetime
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
+
+
+def _daily_report_timing_enabled() -> bool:
+    """环境变量 DAILY_REPORT_TIMING=1 时启用分段耗时（供压测/排障，默认关闭）。"""
+    return os.environ.get("DAILY_REPORT_TIMING", "").strip().lower() in ("1", "true", "yes")
 
 
 def _to_pretty_text(data: Any) -> str:
@@ -1958,7 +1965,11 @@ def _format_tail_session_report(
     return title, _dingtalk_trim("\n".join(lines).strip())
 
 
-def _format_daily_report(report_data: Dict[str, Any], report_date: Optional[str]) -> Tuple[str, str]:
+def _format_daily_report(
+    report_data: Dict[str, Any],
+    report_date: Optional[str],
+    _timing_out: Optional[Dict[str, float]] = None,
+) -> Tuple[str, str]:
     rt = _detect_report_type(report_data)
 
     analysis: Dict[str, Any] = {}
@@ -2024,6 +2035,7 @@ def _format_daily_report(report_data: Dict[str, Any], report_date: Optional[str]
     llm_text = _extract_llm_summary(report_data)
     if not llm_text:
         # 复用 Prompt_config.yaml：用相同 analysis_type 生成摘要
+        _t_llm0 = time.perf_counter() if _timing_out is not None else None
         try:
             from src.config_loader import load_system_config
             from src.llm_enhancer import enhance_with_llm
@@ -2056,6 +2068,11 @@ def _format_daily_report(report_data: Dict[str, Any], report_date: Optional[str]
             llm_text, _ = enhance_with_llm(payload, analysis_type=analysis_type, config=cfg)
         except Exception:
             llm_text = ""
+        finally:
+            if _timing_out is not None and _t_llm0 is not None:
+                _timing_out["format_llm_enhance_s"] = time.perf_counter() - _t_llm0
+    elif _timing_out is not None:
+        _timing_out["format_llm_enhance_s"] = 0.0
 
     if rt == "limitup_after_close_enhanced":
         return _format_limitup_after_close_enhanced(
@@ -2735,7 +2752,14 @@ def tool_send_daily_report(
             分析类长文默认 ``split_markdown_sections=True``（与每日市场分析报告一致，按 ##/### 节合并分条）；
             仅当显式传入 ``split_markdown_sections=False`` 时关闭。
     """
+    timing_sink = kwargs.pop("_timing_sink", None)
+    if not isinstance(timing_sink, dict):
+        timing_sink = None
+    elif not _daily_report_timing_enabled():
+        timing_sink = None
+
     payload = report_data
+    _t_norm0 = time.perf_counter() if timing_sink is not None else None
     try:
         rt = _detect_report_type(report_data)
         if rt == "daily_market":
@@ -2748,12 +2772,22 @@ def tool_send_daily_report(
                 payload["daily_report_gate"] = {**gate, "missing_fields": missing, "degraded": degraded}
     except Exception:
         payload = report_data
+    if timing_sink is not None and _t_norm0 is not None:
+        timing_sink["send_normalize_s"] = time.perf_counter() - _t_norm0
 
-    title, structured_message = _format_daily_report(report_data=payload, report_date=report_date)
+    fmt_timing: Optional[Dict[str, float]] = {} if timing_sink is not None else None
+    _t_fmt0 = time.perf_counter() if timing_sink is not None else None
+    title, structured_message = _format_daily_report(
+        report_data=payload, report_date=report_date, _timing_out=fmt_timing
+    )
+    if timing_sink is not None and _t_fmt0 is not None:
+        timing_sink["send_format_total_s"] = time.perf_counter() - _t_fmt0
+        if fmt_timing:
+            timing_sink.update(fmt_timing)
 
     if str(mode).lower() != "prod":
         report_type = _detect_report_type(report_data)
-        return {
+        out = {
             "success": True,
             "skipped": True,
             "message": f"dry-run: {title}",
@@ -2764,6 +2798,9 @@ def tool_send_daily_report(
                 "preview": structured_message[:2000],
             },
         }
+        if timing_sink:
+            out["data"]["timing_phases_s"] = dict(timing_sink)
+        return out
 
     # 发送：复用钉钉自定义机器人发送工具（它会根据 secret 进行 SEC 加签）
     from .send_dingtalk_message import tool_send_dingtalk_message
@@ -2781,7 +2818,8 @@ def tool_send_daily_report(
     else:
         split_flag = True
 
-    return tool_send_dingtalk_message(
+    _t_dt0 = time.perf_counter() if timing_sink is not None else None
+    dt_ret = tool_send_dingtalk_message(
         message=structured_message,
         title=title,
         webhook_url=webhook_url,
@@ -2791,6 +2829,15 @@ def tool_send_daily_report(
         split_markdown_sections=split_flag,
         max_chars_per_message=mc_opt,
     )
+    if timing_sink is not None and _t_dt0 is not None:
+        timing_sink["send_dingtalk_s"] = time.perf_counter() - _t_dt0
+    if timing_sink and isinstance(dt_ret, dict):
+        data = dt_ret.get("data")
+        if isinstance(data, dict):
+            data = {**data, "timing_phases_s": dict(timing_sink)}
+            return {**dt_ret, "data": data}
+        return {**dt_ret, "data": {"timing_phases_s": dict(timing_sink)}}
+    return dt_ret
 
 
 def tool_analyze_after_close_and_send_daily_report(
@@ -2819,7 +2866,14 @@ def tool_analyze_after_close_and_send_daily_report(
         except Exception as e:
             return {"success": False, "message": f"{name} failed: {e}"}
 
+    timing_sink: Optional[Dict[str, float]] = {} if _daily_report_timing_enabled() else None
+
+    _tp0 = time.perf_counter() if timing_sink is not None else None
     ac = tool_analyze_after_close()
+    if timing_sink is not None and _tp0 is not None:
+        timing_sink["pipeline_1_analyze_after_close_s"] = time.perf_counter() - _tp0
+
+    _tp1 = time.perf_counter() if timing_sink is not None else None
     rd: Dict[str, Any] = {
         "report_type": "daily_market",
         "tool_analyze_after_close": ac,
@@ -2969,6 +3023,10 @@ def tool_analyze_after_close_and_send_daily_report(
         # 补齐失败不阻断主流程；由发送层审计行标识降级
         pass
 
+    if timing_sink is not None and _tp1 is not None:
+        timing_sink["pipeline_2_p0_autofill_network_s"] = time.perf_counter() - _tp1
+
+    _tp2 = time.perf_counter() if timing_sink is not None else None
     # 传递层兜底重试：逐项补采，避免单点 import/调用失败导致整段缺失。
     def _historical_to_realtime_like(his: Any, code_key: str) -> List[Dict[str, Any]]:
         payload = his.get("data") if isinstance(his, dict) else None
@@ -3185,6 +3243,9 @@ def tool_analyze_after_close_and_send_daily_report(
             "failure_log_path": log_path,
         }
 
+    if timing_sink is not None and _tp2 is not None:
+        timing_sink["pipeline_3_ensure_derive_normalize_gate_s"] = time.perf_counter() - _tp2
+
     send_kw: Dict[str, Any] = dict(kwargs)
     if secret is not None:
         send_kw["secret"] = secret
@@ -3194,13 +3255,26 @@ def tool_analyze_after_close_and_send_daily_report(
     if max_chars_per_message is not None:
         send_kw["max_chars_per_message"] = max_chars_per_message
 
-    return tool_send_daily_report(
+    if timing_sink is not None:
+        send_kw["_timing_sink"] = timing_sink
+
+    _tp3 = time.perf_counter() if timing_sink is not None else None
+    out = tool_send_daily_report(
         report_data=rd,
         report_date=report_date,
         webhook_url=webhook_url,
         mode=mode,
         **send_kw,
     )
+    if timing_sink is not None and _tp3 is not None:
+        timing_sink["pipeline_4_send_daily_report_total_s"] = time.perf_counter() - _tp3
+        if isinstance(out, dict):
+            d = out.get("data")
+            if isinstance(d, dict):
+                d["timing_phases_s"] = dict(timing_sink)
+            else:
+                out["data"] = {"timing_phases_s": dict(timing_sink)}
+    return out
 
 
 from plugins.notification import daily_report_normalization as _daily_norm

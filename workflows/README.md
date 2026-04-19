@@ -42,6 +42,11 @@
 | `research_checklist_evolution_on_demand.yaml` | `schedule: null`（按需） | 研究文档 / Checklist 演化工作流：只修改 docs/research/** 与研究相关 docs/openclaw/**，不改任何代码 |
 | `volatility_range_evolution_on_demand.yaml` | `schedule: null`（按需） | 宽基 ETF **预测波动区间** 优化：`tool_predict_volatility`、`tool_predict_intraday_range`、**`tool_predict_daily_volatility_range`（全日）** 与缓存同源逻辑；可结合 `prediction_records`、`volatility_ranges` 与 **网络检索** 做证据化调参与模型改进（见 `config/evolver_scope` 允许路径） |
 | `backtesting_research_on_demand.yaml` | `schedule: null`（按需） | **按需回测研究入口**：A股/ETF 场景优先走 `openclaw-data-china-stock` 采集+缓存读取+58指标，再调用 `backtesting-trading-strategies` 做回测/参数优化，输出研究级结论 |
+| `strategy_calibration.yaml` | 周一 **8:30** | **周度策略定调**：四情绪工具 + 钉钉提示；`regime`/`pause` 供夜盘 screening 门闸 |
+| `nightly_stock_screening.yaml` | 工作日 **20:00** | **夜盘选股**：`tool_screen_equity_factors`（默认 hs300）+ `tool_finalize_screening_nightly`（`data/screening/*.json`、质量门禁、观察池）；钉钉摘要；观察池见 `src/watchlist_storage.py` |
+| `screening_emergency_stop.yaml` | 按需 / 与极端情绪任务同频 | **选股熔断**：读 `extreme_sentiment_monitor` 等输出，必要时 `tool_set_screening_emergency_pause`；与 `data/screening/emergency_pause.json` 联动 |
+| `position_tracking.yaml` | 交易日 **9–15 点** 错频 | **观察池跟踪**：`tool_batch_fetch` 占位，可换为 watchlist 展开的快照 |
+| `weekly_selection_review.yaml` | 周五 **18:00** | **周度选股复盘**：钉钉提示与 IC/分层审计（研究级） |
 
 **双轨证据（上述四个 `*_evolution_on_demand`）**：须满足 `config/evolution_invariants.yaml` → **`dual_evidence`** — Builder `[RAW_OUTPUT]` 含 **`[LOCAL_EVIDENCE]`** 与 **`[EXTERNAL_REFS]`**（至少一条 `https://`），Orchestrator **`EVIDENCE_REF`** 同时锚定本地与外链；缺一脚 → **`DUAL_EVIDENCE_INCOMPLETE`**。人读摘要见 `docs/openclaw/execution_contract.md` §9。
 

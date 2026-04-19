@@ -1,3 +1,5 @@
+# etf_codes：运行时与 rotation_config 轮动池并集（见 src/data_cache_universe._merge_rotation_etf_codes_into），
+# 保证早盘/收盘日 K 采集覆盖轮动读盘。
 data_cache:
   enabled: true
   keep_days: 360

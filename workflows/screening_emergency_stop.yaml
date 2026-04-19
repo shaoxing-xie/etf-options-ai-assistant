@@ -1,0 +1,73 @@
+name: screening_emergency_stop
+description: 极端情绪下设置选股熔断标志（与 extreme_sentiment_monitor 同源四工具，结论驱动 emergency_pause）
+
+schedule: "40 19 * * 1-5"
+timezone: "Asia/Shanghai"
+
+steps:
+  - name: check_trading_status
+    agent: data_collector_agent
+    tool: tool_check_trading_status
+    params: {}
+    continue_on_failure: true
+
+  - name: fetch_limit_up_stocks
+    agent: data_collector_agent
+    tool: tool_fetch_limit_up_stocks
+    description: 涨停生态
+    params: {}
+    continue_on_failure: true
+    depends_on: [check_trading_status]
+
+  - name: fetch_a_share_fund_flow
+    agent: data_collector_agent
+    tool: tool_fetch_a_share_fund_flow
+    params:
+      query_kind: "market_history"
+      max_days: 5
+    continue_on_failure: true
+    depends_on: [check_trading_status]
+
+  - name: fetch_northbound_flow
+    agent: data_collector_agent
+    tool: tool_fetch_northbound_flow
+    params:
+      lookback_days: 5
+    continue_on_failure: true
+    depends_on: [check_trading_status]
+
+  - name: fetch_sector_data
+    agent: data_collector_agent
+    tool: tool_fetch_sector_data
+    params:
+      sector_type: "industry"
+      period: "today"
+    continue_on_failure: true
+    depends_on: [check_trading_status]
+
+  - name: set_emergency_pause_if_needed
+    agent: data_collector_agent
+    tool: tool_set_screening_emergency_pause
+    description: 默认不触发；由 Agent 按 market-sentinel 规则决定是否 active=true
+    depends_on:
+      [fetch_limit_up_stocks, fetch_a_share_fund_flow, fetch_northbound_flow, fetch_sector_data]
+    params:
+      active: false
+      reason: "placeholder — Agent 应据四工具与分歧度重设 active/reason"
+      until: ""
+
+  - name: notify_screening_gate
+    agent: notification_agent
+    tool: tool_send_dingtalk_message
+    depends_on: [set_emergency_pause_if_needed]
+    params:
+      title: "选股熔断巡检"
+      message: |
+        [screening_emergency_stop]
+        四工具已采集。若 overall_score≥85 或 ≤20，或 sentiment_stage∈冰点/高潮且 sentiment_dispersion 超阈值，应调用
+        `tool_set_screening_emergency_pause(active=true, reason=..., until=下一交易日)`；
+        否则保持 active=false。夜盘 `tool_finalize_screening_nightly` 会尊重 `data/screening/emergency_pause.json`。
+      mode: "prod"
+
+structured_message: |
+  与 `extreme_sentiment_monitor` 对齐数据源；差别在于本工作流**必须**落地 `tool_set_screening_emergency_pause` 或明确保持关闭，以便夜盘选股跳过观察池写入。

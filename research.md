@@ -78,7 +78,7 @@
   2. `tool_limit_up_daily_flow(..., write_json=true, write_report=true, send_feishu=按需)` → 板块热度、周期、龙头与次日观察。  
   3. `tool_capital_flow(symbols=龙头代码, lookback_days=3)` → flow_judgement、risk_flags；过滤出货/弱承接。  
   4. `tool_fetch_northbound_flow(date=今日, lookback_days=5)` → 北向信号，作板块/龙头加分减分项。  
-  5. （可选）`tool_quantitative_screening(candidates=..., lookback_days=20, top_k=5)`；个股 PE/PB/ROE 等用 `tool_fetch_stock_financials(symbols=...)`。  
+  5. （可选）**A 股多因子选股**用 **`tool_screen_equity_factors`**（`universe`/`custom_symbols`、`top_n`、因子 `reversal_5d`/`fund_flow_3d`/`sector_momentum_5d`）；收尾落盘与观察池用 **`tool_finalize_screening_nightly`**。旧工具 `tool_quantitative_screening` 已下线。个股 PE/PB/ROE 等仍用 `tool_fetch_stock_financials(symbols=...)`。  
 - **盘后 cron 增强前置步骤**（见第十节「涨停回马枪盘后」）：亚欧外盘、要闻、公告、`tool_overnight_calibration`、`tool_build_limitup_scenarios`、预判与 `tool_record_limitup_watch_outcome` 须在五技能前完成并将结果并入 `report_data`。**行业要闻**由 `tool_fetch_industry_news_brief` 提供规则过滤后的候选，终稿须由 Agent **精选**（见第十节「要闻」子条）。  
 - **盘后一键**：`tool_limit_up_daily_flow` 一键产出 JSON + 报告；完整五技能时在其前后按序补 1–5。  
 - **回测/参数**：用户要验证效果或参数优化时，用 `tool_backtest_limit_up_pullback`、`tool_backtest_limit_up_sensitivity`，输出区分龙头/跟风与板块周期（启动/发酵/分歧/退潮）。  
@@ -134,7 +134,7 @@
   - **资金**：`tool_fetch_northbound_flow(lookback_days=5)`（写入 `report_data.northbound` 或 `capital_flow.northbound`）。  
   - **校准与情景**：`tool_overnight_calibration`；`tool_build_limitup_scenarios`（仅填已返回字段，禁编造数值）。  
   - **回顾**：`tool_get_yesterday_prediction_review(underlying_close=可选)`；`tool_record_limitup_watch_outcome`（落盘 `data/limitup_research_records/`）。  
-  - **五技能（顺序不变）**：1) tool_dragon_tiger_list；2) tool_limit_up_daily_flow(write_json,write_report,send_feishu=false 若仅钉钉)；3) tool_capital_flow(龙头,3)；4) 北向已采；5) 可选 tool_quantitative_screening。  
+  - **五技能（顺序不变）**：1) tool_dragon_tiger_list；2) tool_limit_up_daily_flow(write_json,write_report,send_feishu=false 若仅钉钉)；3) tool_capital_flow(龙头,3)；4) 北向已采；5) 可选 **tool_screen_equity_factors**（+ 可选 **tool_finalize_screening_nightly** 落盘）。  
   - **Markdown 二级标题建议**：## 外盘与大宗 → ## 要闻与公告 → ## 资金与关键位 → ## 隔夜校准与情景 → ## 昨日预判回顾 → ## 涨停回马枪专题。输出仍须含三段式时间线+口径A/B+高密度要点与免责声明。
 - **信号+风控巡检(早/上午/下午)**：**终稿版式以仓库** `etf-options-ai-assistant/workflows/signal_risk_inspection.yaml` **为唯一依据**（宽基三表 + 钉钉 `tool_send_dingtalk_message`）；执行前仍可按 env→config→strategy_config→risk_check、510300 监控工具等拉数，但**禁止**在终稿中展开个股、涨停回马枪专章或长 Market Regime 正文（与 YAML 硬约束一致）。**涨停回马枪观察列表**（research 第七节、`data/limit_up_research`）由 **「涨停回马枪盘后」等专项 cron** 产出，本巡检不重复。不额外 message.send；delivery 由 cron 配置（通常为 none，由 Agent 工具投递）。
 

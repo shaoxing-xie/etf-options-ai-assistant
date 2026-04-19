@@ -20,3 +20,8 @@ signal_fusion:
     sentiment_dispersion_penalty: 0.25
     quality_score: 0.35
     technical_strength: 0.40
+
+# tool_screen_equity_factors → 观察池合并门禁（见 src/screening_quality_gate.py）
+screening:
+  min_quality_score: 55
+  block_watchlist_if_degraded: false

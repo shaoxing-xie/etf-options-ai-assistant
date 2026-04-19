@@ -53,7 +53,8 @@ indicator_migration:
     etf_rotation_research:
       enabled: true
       route: direct_engine
-      dual_run: true
+      # 生产已上线 primary=58；shadow legacy 双跑会整池跑两遍，墙钟约翻倍。对比/回归请用 bench 或临时开回 true。
+      dual_run: false
       rollback_enabled: true
       force_rollback_to_legacy: false
       score_engine_primary: "58"

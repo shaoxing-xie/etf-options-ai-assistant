@@ -24,7 +24,7 @@ structured_message: |
 
   【4）回顾】`tool_get_yesterday_prediction_review`（若已有510300收盘则 `underlying_close=`）；`tool_record_limitup_watch_outcome`（龙头观察落盘，见 research.md）。
 
-  【5）第七节五技能】1) `tool_dragon_tiger_list`；2) `tool_limit_up_daily_flow`，`write_json=true`，`write_report=true`，`send_feishu=false`；3) `tool_capital_flow`（龙头代码，`lookback_days=3`）；4) 可选 `tool_quantitative_screening`。
+  【5）第七节五技能】1) `tool_dragon_tiger_list`；2) `tool_limit_up_daily_flow`，`write_json=true`，`write_report=true`，`send_feishu=false`；3) `tool_capital_flow`（龙头代码，`lookback_days=3`）；4) 可选 `tool_screen_equity_factors`（A 股因子引擎，universe/custom_symbols）。
 
   【6）终稿结构】`report_data` 含 market_overview、policy_news、industry_news、announcements、key_levels、overnight_calibration、scenarios、prediction_review、limitup_record、涨停龙虎与流向等；`llm_summary` 建议二级标题顺序：## 外盘与大宗 → ## 要闻与公告 → ## 资金与关键位 → ## 隔夜校准与情景 → ## 昨日预判回顾 → ## 涨停回马枪专题。
 

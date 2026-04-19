@@ -7,7 +7,7 @@
 - **`ota`**：Option Trading Assistant（与插件 `option-trading-assistant` 对齐，避免与 Clawhub 全局 Skill 撞名）。
 - 目录名 **kebab-case**，与 `_meta.json` 中 **`slug`** 一致；`SKILL.md`  frontmatter 的 **`name`** 为下划线形式（OpenClaw 常见约定）。
 
-## 索引（自研 `ota-*` 包见下表；新增/删除子目录时请同步本表行数与 `docs/openclaw/OpenClaw-Agent-ota-skills.md` 覆盖性说明；版本标签 v0.1.0+）
+## 索引（自研 `ota-*` 包见下表，当前 **25** 行；新增/删除子目录时请同步本表行数与 `docs/openclaw/OpenClaw-Agent-ota-skills.md` 覆盖性说明；版本标签 v0.1.0+）
 
 | 目录 / slug | 场景 | 说明 |
 |-------------|------|------|
@@ -33,7 +33,8 @@
 | `ota-llm-model-routing` | E. 运维 | 模型分档与路由 |
 | `ota-cmec-collaboration` | E. 运维 | CMEC 协作 |
 | `ota-market-regime-checklist` | F. 高阶 | 市场体制与决策层短清单 |
-| `ota-quantitative-screening-brief` | C. 研究 / 主链路 | `tool_quantitative_screening`：`status` 契约、四因子默认权重、与轮动工具边界 |
+| `ota-equity-factor-screening-brief` | C. 研究 / 主链路 | `tool_screen_equity_factors` / `tool_finalize_screening_nightly`：`success` 契约、quality/degraded、申万映射与熔断；与旧 `ota-quantitative-screening-brief`（deprecated）对照 |
+| `ota-quantitative-screening-brief` | （deprecated） | 历史：`tool_quantitative_screening`；manifest 已移除，仅归档 |
 | `ota-chart-console-pro` | E. 运维 / 图表台 | TradingView 对标二期图表研究台运行规程：启动、健康检查、UI验收、常见报错与回退 |
 
 **推荐优先加载（主链路）**：`ota-strategy-fusion-playbook` → `ota-signal-risk-inspection` → `ota-daily-session-routine`。  
@@ -41,8 +42,8 @@
 涉及 **`tool_calculate_historical_volatility` / `tool_underlying_historical_snapshot`** 时建议启用 **`ota-historical-volatility-snapshot`**（与 `ota_volatility_prediction_narration` 互补）。  
 涉及 **`tool_assess_risk`**（单标的仓位/止损/波动率评估）时建议启用 **`ota-risk-assessment-brief`**（与 `ota-signal-risk-inspection` / `ota-strategy-fusion-playbook` 衔接）。  
 涉及 **`tool_analyze_after_close` / `before_open` / `opening_market`** 的 Agent 建议启用 **`ota-trend-analysis-brief`**。  
-涉及 **`tool_quantitative_screening`**（候选列表多因子排序）时建议启用 **`ota-quantitative-screening-brief`**（与 **`tool_etf_rotation_research`** + **`ota-etf-rotation-research`** 分工：前者用户指定 candidates，后者池来自配置/文件）。  
-**入口主 Agent（`etf_main`）与业务核（`etf_business_core_agent`）**若需直接回答轮动、策略研究闭环、量化筛池类问题，建议与 **`etf_analysis_agent`** 同样勾选 **`ota-etf-rotation-research`**、**`ota-strategy-research-loop`**、**`ota-quantitative-screening-brief`**，避免「能调工具但无规程 Skill」导致口径漂移。  
+涉及 **`tool_screen_equity_factors`** / **`tool_finalize_screening_nightly`**（夜盘选股与落盘）时建议启用 **`ota-equity-factor-screening-brief`**（与 **`tool_etf_rotation_research`** + **`ota-etf-rotation-research`** 分工：前者震荡模板多因子 universe，后者 ETF 池轮动）。  
+**入口主 Agent（`etf_main`）与业务核（`etf_business_core_agent`）**若需直接回答轮动、策略研究闭环、A 股筛池类问题，建议与 **`etf_analysis_agent`** 同样勾选 **`ota-etf-rotation-research`**、**`ota-strategy-research-loop`**、**`ota-equity-factor-screening-brief`**，避免「能调工具但无规程 Skill」导致口径漂移。  
 **通知 Agent** 推送中含体制/波动环境摘要时，建议勾选 **`ota-market-regime-checklist`**、**`ota-historical-volatility_snapshot`**（与 `OpenClaw-Agent-ota-skills.md` 片段一致）。
 涉及图表研究台二期（`127.0.0.1:8611`）排障/验收时，建议勾选 **`ota-chart-console-pro`**，统一处理 `HEAD 501`、`NaN JSON`、`slice is not a function` 等典型问题。
 

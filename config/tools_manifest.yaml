@@ -1140,6 +1140,25 @@ tools:
       max_chars_per_message:
         type: integer
         description: 可选；单条目标字符上限，省略读 config notification.dingtalk_max_chars_per_message。
+- id: tool_run_data_cache_job
+  label: data_cache 定时采集（单次）
+  description: 按 config.yaml 的 data_cache 节执行采集并写本地缓存（与 scripts/run_data_cache_collection.py 一致）。job=morning_daily 为长窗日 K；job=intraday_minute 为指数/ETF/股票分钟（throttle_stock=true 时股票仅在每分钟为 1 或 31 拉取）；job=close_minute 为分钟线后补写日 K。notify 省略时自动：morning_daily/close_minute 发送飞书摘要，intraday_minute 不发。
+  description_short: data_cache 采集+可选飞书
+  parameters:
+    type: object
+    properties:
+      job:
+        type: string
+        description: morning_daily | intraday_minute | close_minute
+      throttle_stock:
+        type: boolean
+        description: 仅 intraday_minute；为 true 时仅当当前分钟为 1 或 31 拉股票分钟
+        default: false
+      notify:
+        type: boolean
+        description: 是否发送飞书摘要；省略则 morning_daily/close_minute 为 true，intraday_minute 为 false
+    required:
+    - job
 - id: tool_portfolio_risk_snapshot
   label: 组合风险快照
   description: 基于真实持仓（优先）或配置权重 + ETF 日线缓存，计算历史模拟 VaR、最大/当前回撤、仓位风险标志。
@@ -1263,29 +1282,91 @@ tools:
         type: string
         description: prod|test
         default: prod
-- id: tool_quantitative_screening
-  label: 量化选股
-  description: 对候选标的做动量/波动率/流动性/估值因子打分，输出排名与 top_picks。
-  description_short: 对候选标的做动量/波动率/流动性/估值因子打分，输出排名与 top_p。
+- id: tool_screen_equity_factors
+  label: 多因子选股（因子引擎）
+  description: >-
+    A 股多因子筛选单入口：universe 支持 hs300|zz500|zz1000|a_share|custom；因子 reversal_5d、fund_flow_3d、
+    sector_momentum_5d；输出含 score、factors、quality_score、degraded、config_hash（详见插件 docs/schemas）。
+  description_short: A 股多因子选股单入口（质量分+审计哈希）。
   parameters:
     type: object
     properties:
-      candidates:
-        type: string
-        description: 候选标的，逗号分隔或数组，如 510300,510500
-      lookback_days:
-        type: number
-        description: 回溯天数
-        default: 20
       universe:
         type: string
-        description: etf|stock|null 自动判断
-      top_k:
+        description: hs300 | zz500 | zz1000 | a_share | custom
+        default: hs300
+      filters:
+        type: object
+        description: 预留硬过滤
+      factors:
+        type: array
+        items:
+          type: string
+      neutralize:
+        type: array
+        items:
+          type: string
+      top_n:
         type: number
-        description: 返回前多少名
         default: 10
+      regime_hint:
+        type: string
+        default: oscillation
+      screening_date:
+        type: string
+      custom_symbols:
+        type: string
+        description: universe=custom 时逗号分隔六码
+        default: ''
+      max_universe_size:
+        type: number
+        default: 50
+      lookback_calendar_days:
+        type: number
+        default: 40
+      max_concurrent_fetch:
+        type: number
+        default: 0
+      provider_preference:
+        type: string
+        default: auto
+- id: tool_finalize_screening_nightly
+  label: 夜盘选股收尾（落盘+门禁+观察池）
+  description: >-
+    接收 tool_screen_equity_factors 完整 JSON，写入 data/screening/YYYY-MM-DD.json；若未熔断且质量门禁通过则合并 data/watchlist。
+  description_short: screening 落盘与观察池合并。
+  parameters:
+    type: object
+    properties:
+      screening_result:
+        type: object
+        description: tool_screen_equity_factors 的完整返回
+      run_date:
+        type: string
+        description: 可选，默认上海日历日 YYYY-MM-DD
+        default: ''
+      attempt_watchlist:
+        type: boolean
+        default: true
     required:
-    - candidates
+    - screening_result
+- id: tool_set_screening_emergency_pause
+  label: 选股紧急熔断标志
+  description: 写入 data/screening/emergency_pause.json，夜盘收尾工具会跳过观察池写入。
+  description_short: screening 紧急暂停开关。
+  parameters:
+    type: object
+    properties:
+      active:
+        type: boolean
+        default: true
+      reason:
+        type: string
+        default: ''
+      until:
+        type: string
+        description: 可选 ISO 日期或日期时间，过期自动视为不暂停
+        default: ''
 - id: tool_capital_flow
   label: 资金流向
   description: 获取个股主力/散户资金流向（逗号分隔代码，可配合涨停回马枪等流程）。

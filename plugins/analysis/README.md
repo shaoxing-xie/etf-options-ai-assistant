@@ -522,7 +522,8 @@ result = tool_assess_risk(
 | [`market_regime.py`](market_regime.py) | `tool_detect_market_regime` | 基于指定 ETF 日线缓存：短中期动量、20 日波动、60 日回撤；输出 `regime` ∈ {`trending_up`, `trending_down`, `range`, `high_vol_risk`} 与置信度。 |
 | [`etf_rotation_research.py`](etf_rotation_research.py) | `tool_etf_rotation_research` | ETF 轮动研究：本地日线、动量/波动/回撤/趋势 R²/相关性加权排名与 Markdown 摘要；池来自 `etf_pool` 或 `config/rotation_config.yaml` + `symbols.json`。依赖 **[`etf_rotation_core.py`](etf_rotation_core.py)**（管线、历史、池解析，无独立 tool）。 |
 | [`etf_trend_tracking.py`](etf_trend_tracking.py) | `tool_check_etf_index_consistency`、`tool_generate_trend_following_signal` | ETF 与指数实时价比对（轻量一致性）；一致时生成简化的趋势跟随信号字段（`signal_type` / `confidence` 等）。 |
-| [`quantitative_screening.py`](quantitative_screening.py) | `tool_quantitative_screening` | 候选标的多因子打分（动量、波动率、流动性、可选估值），加权合成总分与 `ranked_list` / `top_picks`；返回体使用 **`status`**：`success` / `error`（与部分插件的 `success` 布尔字段并存）。OpenClaw 叙事与勾选：**`ota_quantitative_screening_brief`**（`skills/ota-quantitative-screening-brief/SKILL.md`）。 |
+| [`equity_factor_screening.py`](equity_factor_screening.py) | `tool_screen_equity_factors` | 主实现见同级 **`openclaw-data-china-stock`** 主仓（本文件动态加载）；震荡模板因子（如 `reversal_5d` / `fund_flow_3d` / `sector_momentum_5d`）、`success` 布尔与 quality/degraded。规程 Skill：**`ota_equity_factor_screening_brief`**（`skills/ota-equity-factor-screening-brief/SKILL.md`）。 |
+| [`quantitative_screening.py`](quantitative_screening.py) | ~~`tool_quantitative_screening`~~（已下线） | 历史四因子排序；manifest 已移除。归档叙事见 **`ota_quantitative_screening_brief`**（deprecated）。 |
 
 ### 仓位、止盈止损与策略权重（analysis 实现 + merged 门面）
 
