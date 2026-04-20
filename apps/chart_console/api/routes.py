@@ -84,6 +84,14 @@ class ApiRoutes:
             return {"success": True, "data": self.svc.workspace.list_workspaces()}, 200
         if path == "/api/workspace_templates":
             return {"success": True, "data": self.svc.workspace.list_templates()}, 200
+        if path == "/api/screening/summary":
+            return self.svc.get_screening_summary(), 200
+        if path == "/api/screening/history":
+            return self.svc.get_screening_history(), 200
+        if path == "/api/screening/by-date":
+            date_key = (query.get("date") or [""])[0]
+            payload, code = self.svc.get_screening_by_date(str(date_key))
+            return payload, code
         return {"success": False, "message": "not found"}, 404
 
     def handle_post(self, path: str, body: dict):

@@ -14,6 +14,7 @@ steps:
       message: |
         [weekly_selection_review]
         请对照 `data/screening/` 与观察池变动，完成分层表现或 IC 摘要；任何 `config/screening_weights.yaml` 调整须留 Git 记录与 config_hash。
+        结构化复盘可写入 `data/screening/weekly_review.json`（模板见 `config/templates/weekly_review.json`），供 Chart Console「震荡市选股」周度数据源展示。
       mode: "prod"
 
 structured_message: |

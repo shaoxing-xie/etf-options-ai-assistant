@@ -22,7 +22,7 @@ python3 tests/integration/run_all_workflow_tests.py
 
 ## 观察指标（上线后 1 周）
 
-- `pre_market_sentiment_check` 成功率
+- `pre_market_sentiment_check` 成功率（侧车落盘路径约定：`data/sentiment_check/YYYY-MM-DD.json`，见 `docs/sentiment/api_contract.md`）
 - `pre_market_sentiment_check` 降级率（`degraded=true`）
 - `extreme_sentiment_monitor` 触发次数 / 误报数
 - 开盘报告、盘中巡检、盘后日报中“情绪归因”字段缺失率

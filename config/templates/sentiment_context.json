@@ -1,0 +1,8 @@
+{
+  "overall_score": null,
+  "sentiment_stage": "",
+  "sentiment_dispersion": null,
+  "market_sentiment_score": null,
+  "sentiment_notes": "",
+  "note": "复制到 data/screening/sentiment_context.json（可选）；与四工具/极端情绪巡检对齐时由工作流写入。字段也可直接出现在 config/weekly_calibration.json。"
+}

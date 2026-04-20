@@ -52,7 +52,7 @@ steps:
   - name: send_sentiment_precheck_notice
     agent: notification_agent
     tool: tool_send_dingtalk_message
-    description: 发送 09:10 情绪前置检查提示（研究级，非交易指令）
+    description: 发送 09:10 情绪前置检查提示（研究级，非交易指令）。Cron 单任务若 jobs.json delivery.mode=none 且无发送工具授权，则跳过本步，仅依赖侧车 JSON。
     depends_on:
       [
         fetch_limit_up_stocks,
@@ -77,7 +77,16 @@ steps:
 structured_message: |
   执行 09:10「情绪前置检查」。
 
-  目标：在开盘前生成一份 `report_data.sentiment_precheck`，供 09:20 `opening_analysis` 与盘中巡检复用。优先使用 `market-sentinel` 规程；若运行环境不能直接调用 Skill，则必须基于以下四工具结果按 `docs/sentiment/api_contract.md` 的 `Skill aggregate` 契约自行聚合：
+  OpenClaw Cron：本任务曾用 `lightContext: false` 引发上下文膨胀与重复调工具、未执行 write/飞书；**现以 `lightContext: true` 为准**，并依赖 prompt「禁止重复调用 / 禁止 exec」保证收敛。
+
+  目标：在开盘前生成一份 `report_data.sentiment_precheck`，供 09:20 `opening_analysis` 与盘中巡检复用。侧车落盘（字段表见 `docs/sentiment/api_contract.md`）：
+
+  - 最新快照：`data/sentiment_check/YYYY-MM-DD.json`（供 UI 读取）
+  - 历史审计：`data/sentiment_check/history/YYYY-MM-DD__HHMMSS.json`（不覆盖，用于对账）
+
+  优先使用 `market-sentinel` 规程；若运行环境不能直接调用 Skill，则必须基于以下四工具结果按该文档自行聚合：
+
+  **采集纪律**：四工具各最多成功调用 1 次；`tool_fetch_limit_up_stocks` 使用默认参数，禁止为回填上下文擅自传入历史 `date` 重拉。
 
   - `tool_fetch_limit_up_stocks`
   - `tool_fetch_a_share_fund_flow`
@@ -106,3 +115,5 @@ structured_message: |
   - 不给具体买卖点、仓位比例、杠杆建议。
   - 任一工具失败时，必须保留降级说明，不得静默忽略。
   - 若证据不足，返回 `insufficient_evidence`，并将结论收敛为防御性提示。
+  - **北向**：`tool_fetch_northbound_flow` 的 `date` 为对应交易日净流；开盘前多为上一交易日，与侧车文件名日期可不一致（正常）。`factor_attribution.northbound` 须含 `data_date`（与工具 `date` 一致），文案与飞书摘要用「上一交易日」或「截至 data_date」，勿写「今日净流」除非与锚定交易日一致。`signal.description` 若与 `total_net` 展示量级冲突，以数值自洽为准并简短注释。
+  - **侧车一致性**：`factor_attribution` 须与本回合各工具 `toolResult` 对齐；禁止用 “Tool output not available due to context constraints” 或未核对插件的 `DATA_UNAVAILABLE` 占位；四工具已成功时 `data_completeness_ratio` 不得虚低。

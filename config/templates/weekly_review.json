@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "as_of": null,
+  "period_label": "",
+  "metrics": {
+    "hit_rate_5d_pct": null,
+    "avg_max_return_5d_pct": null,
+    "pause_events_count": null
+  },
+  "factor_ic": {},
+  "recommendations": [],
+  "notes": "复制本文件到 data/screening/weekly_review.json 后，由周五复盘任务或手工填写；Chart Console「周度复盘 JSON」数据源将读取该路径。"
+}

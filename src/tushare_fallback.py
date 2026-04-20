@@ -225,6 +225,76 @@ def fetch_etf_daily_tushare(
         return None
 
 
+def fetch_stock_daily_tushare(
+    symbol: str,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None
+) -> Optional[pd.DataFrame]:
+    """
+    使用 Tushare 获取 A 股个股日线数据（优先用于历史缓存采集）。
+
+    Args:
+        symbol: 股票代码（如 "600519" / "000001" / "sh600519" / "600519.SH"）
+        start_date: 开始日期 "YYYYMMDD"
+        end_date: 结束日期 "YYYYMMDD"
+
+    Returns:
+        DataFrame: 个股日线数据（与系统日线字段对齐），失败返回 None
+    """
+    pro = get_tushare_pro()
+    if pro is None:
+        return None
+
+    try:
+        code_raw = str(symbol or "").strip()
+        if not code_raw:
+            return None
+
+        exchange = ""
+        code = code_raw
+        if code_raw.upper().endswith((".SH", ".SZ", ".BJ")):
+            code, exchange = code_raw.split(".", 1)
+            exchange = exchange.upper()
+        elif code_raw.lower().startswith(("sh", "sz", "bj")) and len(code_raw) > 2:
+            exchange = code_raw[:2].upper()
+            code = code_raw[2:]
+        else:
+            exchange = "SH" if code_raw.startswith(("5", "6", "9")) else "SZ"
+
+        if not code.isdigit() or len(code) != 6:
+            logger.warning(f"无效股票代码，无法调用 Tushare daily: {symbol}")
+            return None
+
+        ts_code = f"{code}.{exchange}"
+        logger.debug(f"使用 Tushare 获取股票日线: {symbol} -> {ts_code}")
+
+        df = pro.daily(
+            ts_code=ts_code,
+            start_date=start_date or "",
+            end_date=end_date or ""
+        )
+        if df is None or df.empty:
+            logger.warning(f"Tushare daily 返回空数据: {ts_code}")
+            return None
+
+        result = pd.DataFrame({
+            '日期': pd.to_datetime(df['trade_date'], format='%Y%m%d').dt.strftime('%Y-%m-%d'),
+            '开盘': df['open'],
+            '收盘': df['close'],
+            '最高': df['high'],
+            '最低': df['low'],
+            '成交量': df['vol'],
+            '成交额': df['amount'],
+            '涨跌额': df['change'],
+            '涨跌幅': df['pct_chg']
+        })
+        logger.info(f"Tushare 获取股票日线成功: {symbol}, {len(result)} 条数据")
+        return result
+    except Exception as e:
+        logger.warning(f"Tushare daily 失败: {symbol}, 错误: {e}")
+        return None
+
+
 # ==================== 方案3：期权数据备份 ====================
 
 def fetch_option_codes_tushare(

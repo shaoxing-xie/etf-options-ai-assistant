@@ -15,7 +15,7 @@ def test_collect_tavily_api_keys_prefers_tavily_api_keys(monkeypatch) -> None:
     assert collect_tavily_api_keys() == ["alpha", "beta"]
 
 
-@patch("requests.post")
+@patch("requests.sessions.Session.post")
 @patch("plugins.utils.tavily_client.collect_tavily_api_keys")
 def test_tavily_post_search_retries_on_432(mock_keys: MagicMock, mock_post: MagicMock) -> None:
     mock_keys.return_value = ["bad", "good"]

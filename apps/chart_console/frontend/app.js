@@ -1,5 +1,5 @@
 import { jget, jpost } from "./api.js";
-import { initCharts, renderDraw, toTs } from "./charts.js";
+import { applyScreeningDayMarker, initCharts, renderDraw, toTs } from "./charts.js";
 
 function qs(id) {
   return document.getElementById(id);
@@ -8,13 +8,16 @@ function qs(id) {
 function setView(view) {
   const chart = qs("view-chart");
   const config = qs("view-config");
-  const isChart = view === "chart";
-  if (chart) chart.classList.toggle("active", isChart);
-  if (config) config.classList.toggle("active", !isChart);
+  const screening = qs("view-screening");
+  if (chart) chart.classList.toggle("active", view === "chart");
+  if (config) config.classList.toggle("active", view === "config");
+  if (screening) screening.classList.toggle("active", view === "screening");
   const tabChart = qs("tab-chart");
   const tabConfig = qs("tab-config");
-  if (tabChart) tabChart.setAttribute("aria-selected", String(isChart));
-  if (tabConfig) tabConfig.setAttribute("aria-selected", String(!isChart));
+  const tabScreening = qs("tab-screening");
+  if (tabChart) tabChart.setAttribute("aria-selected", String(view === "chart"));
+  if (tabConfig) tabConfig.setAttribute("aria-selected", String(view === "config"));
+  if (tabScreening) tabScreening.setAttribute("aria-selected", String(view === "screening"));
 }
 
 function setConfigSubview(name) {
@@ -52,7 +55,12 @@ try {
   // 图表引擎失败时，仍允许使用配置中心
   charts = null;
 }
-const state = { draw_objects: [], layer: { volume: true, macd: true, rsi: true, ma: true } };
+const state = {
+  draw_objects: [],
+  layer: { volume: true, macd: true, rsi: true, ma: true },
+  /** YYYY-MM-DD，来自震荡市选股下钻时在 K 线上标注入选日 */
+  screeningEntryDate: null,
+};
 
 function toArrayValues(value) {
   if (Array.isArray(value)) return value;
@@ -83,6 +91,56 @@ async function loadWorkspaces() {
   const resp = await jget("/api/workspaces");
   const pick = qs("wsPick");
   pick.innerHTML = (resp.data || []).map((x) => `<option>${x.name}</option>`).join("");
+}
+
+/** 首页「图形」即显示情绪摘要（侧车数据在「震荡市选股」页左栏完整展示） */
+async function loadChartSentimentBar() {
+  const el = qs("chartSentimentBar");
+  if (!el) return;
+  try {
+    const r = await jget("/api/screening/summary");
+    const snap = (r.data && r.data.sentiment_snapshot) || {};
+    const keys = Object.keys(snap).filter((k) => k !== "note");
+    el.style.display = "block";
+    if (!keys.length) {
+      el.innerHTML =
+        '<span class="warn">市场情绪摘要</span>：暂无落盘（需 <code>data/sentiment_check/*.json</code> 等）。请打开 <strong>震荡市选股</strong> 查看说明，或设置环境变量 <code>ETF_OPTIONS_ASSISTANT_ROOT</code> 指向含数据的仓库根后重启本服务。';
+      return;
+    }
+    const score = snap.overall_score != null ? String(snap.overall_score) : "—";
+    const stage = snap.sentiment_stage != null ? String(snap.sentiment_stage) : "—";
+    const pd = snap.precheck_date ? ` · 侧车 <code>${snap.precheck_date}</code>` : "";
+    el.innerHTML = `<strong>市场情绪摘要</strong>：综合得分 ${score} · 阶段 ${stage}${pd} · 完整字段见顶部 <strong>震荡市选股</strong> → 左栏「市场情绪与资金面」。`;
+  } catch (e) {
+    el.style.display = "block";
+    el.innerHTML = `市场情绪摘要加载失败：${String(e?.message || e)}`;
+  }
+}
+
+/**
+ * @param {string} symbol
+ * @param {{ screeningDate?: string, clearScreeningMarker?: boolean }} [opts]
+ */
+export async function loadChartForSymbol(symbol, opts = {}) {
+  const sel = qs("symbol");
+  if (!sel) return;
+  const sym = String(symbol || "").trim();
+  if (!sym) return;
+  if (opts.clearScreeningMarker) {
+    state.screeningEntryDate = null;
+  } else if (opts.screeningDate) {
+    state.screeningEntryDate = String(opts.screeningDate).slice(0, 10);
+  }
+  const exists = Array.from(sel.options).some((o) => o.value === sym);
+  if (!exists) {
+    const opt = document.createElement("option");
+    opt.value = sym;
+    opt.textContent = sym;
+    sel.appendChild(opt);
+  }
+  sel.value = sym;
+  setView("chart");
+  await loadData();
 }
 
 async function loadData() {
@@ -158,6 +216,7 @@ async function loadData() {
     }
   }
   renderDraw(charts.series, state.draw_objects);
+  applyScreeningDayMarker(charts.series.candle, bars, state.screeningEntryDate);
   await loadAlerts();
 }
 
@@ -172,7 +231,10 @@ async function runBacktest() {
   qs("backtestJson").textContent = JSON.stringify((resp.data || {}).metrics || resp, null, 2);
 }
 
-qs("btnLoad").onclick = loadData;
+qs("btnLoad").onclick = async () => {
+  state.screeningEntryDate = null;
+  await loadData();
+};
 qs("btnBacktest").onclick = runBacktest;
 qs("btnAddDraw").onclick = () => {
   state.draw_objects.push({
@@ -236,6 +298,7 @@ qs("btnLoadWs").onclick = async () => {
   qs("layerMacd").checked = !!state.layer.macd;
   qs("layerRsi").checked = !!state.layer.rsi;
   qs("layerMa").checked = !!state.layer.ma;
+  state.screeningEntryDate = null;
   await loadData();
 };
 qs("btnDeleteWs").onclick = async () => {
@@ -451,8 +514,10 @@ qs("btnMarketSave")?.addEventListener("click", saveMarketConfig);
 qs("btnAnalyticsLoad")?.addEventListener("click", loadAnalyticsConfig);
 qs("btnAnalyticsSave")?.addEventListener("click", saveAnalyticsConfig);
 
+export { setView };
+
 // boot
-Promise.all([loadWorkspaces()])
+Promise.all([loadWorkspaces(), loadChartSentimentBar()])
   .then(async () => {
     try {
       if (charts) await loadData();

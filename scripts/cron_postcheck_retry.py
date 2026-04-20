@@ -14,8 +14,14 @@ import json
 import re
 import subprocess
 import time
+from datetime import datetime
 from pathlib import Path
 from typing import Any
+
+try:
+    from zoneinfo import ZoneInfo
+except Exception:  # pragma: no cover
+    ZoneInfo = None  # type: ignore
 
 def _run_json(cmd: list[str]) -> dict[str, Any]:
     p = subprocess.run(cmd, capture_output=True, text=True)
@@ -269,6 +275,217 @@ def _discover_send_required_jobs(jobs_json: Path) -> dict[str, list[str]]:
     return targets
 
 
+def _is_analysis_like_job(job: dict[str, Any]) -> bool:
+    name = str(job.get("name") or "")
+    desc = str(job.get("description") or "")
+    payload = job.get("payload") or {}
+    message = str(payload.get("message") or "")
+    text = "\n".join([name, desc, message])
+
+    positive_patterns = [
+        r"分析",
+        r"行情",
+        r"实盘",
+        r"盘前",
+        r"盘后",
+        r"报告",
+        r"monitor",
+        r"analysis",
+        r"report",
+        r"inspection",
+    ]
+    if not any(re.search(p, text, flags=re.IGNORECASE) for p in positive_patterns):
+        return False
+
+    negative_patterns = [
+        r"\bguard\b",
+        r"postcheck",
+        r"retry",
+        r"health",
+        r"ops",
+        r"audit",
+        r"autofix",
+    ]
+    if any(re.search(p, text, flags=re.IGNORECASE) for p in negative_patterns):
+        return False
+    return True
+
+
+def _discover_analysis_jobs(jobs_json: Path) -> dict[str, str]:
+    if not jobs_json.exists():
+        return {}
+    data = json.loads(jobs_json.read_text(encoding="utf-8"))
+    jobs = data.get("jobs") or []
+    targets: dict[str, str] = {}
+    for job in jobs:
+        if not job.get("enabled", True):
+            continue
+        payload = job.get("payload") or {}
+        if payload.get("kind") != "agentTurn":
+            continue
+        jid = str(job.get("id") or "").strip()
+        if not jid:
+            continue
+        if _is_analysis_like_job(job):
+            targets[jid] = str(job.get("name") or jid)
+    return targets
+
+
+def _parse_int_set(token: str, *, min_v: int, max_v: int) -> set[int]:
+    out: set[int] = set()
+    token = (token or "").strip()
+    if not token:
+        return out
+    for part in token.split(","):
+        p = part.strip()
+        if not p:
+            continue
+        if "-" in p:
+            a, b = p.split("-", 1)
+            try:
+                aa, bb = int(a), int(b)
+            except Exception:
+                continue
+            if aa > bb:
+                aa, bb = bb, aa
+            for x in range(max(min_v, aa), min(max_v, bb) + 1):
+                out.add(x)
+        else:
+            try:
+                x = int(p)
+            except Exception:
+                continue
+            if min_v <= x <= max_v:
+                out.add(x)
+    return out
+
+
+def _is_single_time_field(token: str) -> bool:
+    t = (token or "").strip()
+    if not t:
+        return False
+    if any(ch in t for ch in ["*", "/", ",", "-"]):
+        return False
+    try:
+        int(t)
+        return True
+    except Exception:
+        return False
+
+
+def _is_low_frequency_single_schedule(expr: str) -> bool:
+    parts = [p for p in str(expr or "").split() if p]
+    if len(parts) != 5:
+        return False
+    minute, hour, dom, month, dow = parts
+    if not (_is_single_time_field(minute) and _is_single_time_field(hour)):
+        return False
+    # Accept common low-frequency shapes:
+    # - "20 9 * * 1-5" (daily weekdays once)
+    # - "0 18 * * 5"  (weekly once)
+    # - "0 9 15 * *"  (monthly once)
+    allowed = set(["*", "?", "L"])
+    dom_ok = dom in allowed or bool(_parse_int_set(dom, min_v=1, max_v=31))
+    month_ok = month in ("*", "?") or bool(_parse_int_set(month, min_v=1, max_v=12))
+    dow_ok = dow in ("*", "?") or bool(_parse_int_set(dow.replace("7", "0"), min_v=0, max_v=6))
+    return dom_ok and month_ok and dow_ok
+
+
+def _dow_matches(dow_expr: str, dt: datetime) -> bool:
+    e = (dow_expr or "").strip()
+    if e in ("*", "?"):
+        return True
+    # cron often uses 0/7=Sun,1=Mon...6=Sat. Python weekday(): Mon=0..Sun=6
+    py_to_cron = {0: 1, 1: 2, 2: 3, 3: 4, 4: 5, 5: 6, 6: 0}
+    cur = py_to_cron[dt.weekday()]
+    expr = e.replace("7", "0")
+    return cur in _parse_int_set(expr, min_v=0, max_v=6)
+
+
+def _dom_matches(dom_expr: str, dt: datetime) -> bool:
+    e = (dom_expr or "").strip()
+    if e in ("*", "?"):
+        return True
+    return dt.day in _parse_int_set(e, min_v=1, max_v=31)
+
+
+def _month_matches(month_expr: str, dt: datetime) -> bool:
+    e = (month_expr or "").strip()
+    if e in ("*", "?"):
+        return True
+    return dt.month in _parse_int_set(e, min_v=1, max_v=12)
+
+
+def _single_schedule_due_lag_minutes(expr: str, timezone_name: str) -> int | None:
+    parts = [p for p in str(expr or "").split() if p]
+    if len(parts) != 5:
+        return None
+    minute, hour, dom, month, dow = parts
+    tz = ZoneInfo(timezone_name) if ZoneInfo else None
+    now = datetime.now(tz=tz)
+    try:
+        hh = int(hour)
+        mm = int(minute)
+    except Exception:
+        return None
+    if not (_month_matches(month, now) and _dom_matches(dom, now) and _dow_matches(dow, now)):
+        return None
+    due_delta_minutes = (now.hour * 60 + now.minute) - (hh * 60 + mm)
+    if due_delta_minutes < 0:
+        return None
+    return due_delta_minutes
+
+
+def _discover_scheduled_single_jobs(jobs_json: Path) -> dict[str, tuple[str, str]]:
+    if not jobs_json.exists():
+        return {}
+    data = json.loads(jobs_json.read_text(encoding="utf-8"))
+    jobs = data.get("jobs") or []
+    out: dict[str, tuple[str, str]] = {}
+    for job in jobs:
+        if not job.get("enabled", True):
+            continue
+        payload = job.get("payload") or {}
+        if payload.get("kind") != "agentTurn":
+            continue
+        sched = job.get("schedule") or {}
+        if str(sched.get("kind") or "").strip().lower() != "cron":
+            continue
+        expr = str(sched.get("expr") or "").strip()
+        if not _is_low_frequency_single_schedule(expr):
+            continue
+        jid = str(job.get("id") or "").strip()
+        if not jid:
+            continue
+        jname = str(job.get("name") or jid)
+        out[jid] = (jname, expr)
+    return out
+
+
+def _day_str_from_ms(run_at_ms: int, timezone_name: str) -> str:
+    tz = ZoneInfo(timezone_name) if ZoneInfo else None
+    dt = datetime.fromtimestamp(run_at_ms / 1000.0, tz=tz)
+    return dt.strftime("%Y-%m-%d")
+
+
+def _today_str(timezone_name: str) -> str:
+    tz = ZoneInfo(timezone_name) if ZoneInfo else None
+    return datetime.now(tz=tz).strftime("%Y-%m-%d")
+
+
+def _has_executed_today(entries: list[dict[str, Any]], timezone_name: str) -> bool:
+    today = _today_str(timezone_name)
+    for e in entries:
+        if e.get("action") not in ("started", "finished"):
+            continue
+        run_at_ms = int(e.get("runAtMs", 0) or 0)
+        if run_at_ms <= 0:
+            continue
+        if _day_str_from_ms(run_at_ms, timezone_name) == today:
+            return True
+    return False
+
+
 def _process_job(
     job_id: str,
     expected_tool: str,
@@ -379,6 +596,99 @@ def _process_job_send_required(
     return "retried", f"{job_id}: RETRY_QUEUED (missing send proof in {expected_send_tools})"
 
 
+def _process_job_daily_catchup(
+    job_id: str,
+    job_name: str,
+    timezone_name: str,
+    retry_timeout_ms: int,
+    state: dict[str, Any],
+) -> tuple[str, str]:
+    runs = _run_json(["openclaw", "cron", "runs", "--id", job_id, "--limit", "200"])
+    entries = runs.get("entries") or []
+    if _has_executed_today(entries, timezone_name):
+        return "pass", f"{job_id}({job_name}): already executed today"
+
+    today = _today_str(timezone_name)
+    state_key = f"daily-catchup:{job_id}:{today}"
+    if state.get(state_key, {}).get("triggered") is True:
+        return "skip", f"{job_id}({job_name}): daily catch-up already triggered today"
+
+    retry_result = _run_json(
+        [
+            "openclaw",
+            "cron",
+            "run",
+            job_id,
+            "--expect-final",
+            "--timeout",
+            str(retry_timeout_ms),
+        ]
+    )
+    if retry_result.get("ok") is True and retry_result.get("ran") is False and retry_result.get("reason") == "already-running":
+        return "skip", f"{job_id}({job_name}): catch-up skipped because job is already running"
+
+    state[state_key] = {
+        "triggered": True,
+        "triggeredAtMs": int(time.time() * 1000),
+        "jobName": job_name,
+        "retryResult": retry_result,
+    }
+    return "retried", f"{job_id}({job_name}): DAILY_CATCHUP_TRIGGERED (no execution record today)"
+
+
+def _process_job_scheduled_single_catchup(
+    job_id: str,
+    job_name: str,
+    expr: str,
+    timezone_name: str,
+    max_age_minutes: int,
+    retry_timeout_ms: int,
+    state: dict[str, Any],
+) -> tuple[str, str]:
+    due_lag_minutes = _single_schedule_due_lag_minutes(expr, timezone_name)
+    if due_lag_minutes is None:
+        return "skip", f"{job_id}({job_name}): not due yet for schedule '{expr}'"
+    if max_age_minutes > 0 and due_lag_minutes > max_age_minutes:
+        return (
+            "skip",
+            f"{job_id}({job_name}): due but outside catch-up window "
+            f"(lag={due_lag_minutes}m > max_age={max_age_minutes}m, expr='{expr}')",
+        )
+
+    runs = _run_json(["openclaw", "cron", "runs", "--id", job_id, "--limit", "200"])
+    entries = runs.get("entries") or []
+    if _has_executed_today(entries, timezone_name):
+        return "pass", f"{job_id}({job_name}): already executed today"
+
+    today = _today_str(timezone_name)
+    state_key = f"scheduled-catchup:{job_id}:{today}"
+    if state.get(state_key, {}).get("triggered") is True:
+        return "skip", f"{job_id}({job_name}): scheduled catch-up already triggered today"
+
+    retry_result = _run_json(
+        [
+            "openclaw",
+            "cron",
+            "run",
+            job_id,
+            "--expect-final",
+            "--timeout",
+            str(retry_timeout_ms),
+        ]
+    )
+    if retry_result.get("ok") is True and retry_result.get("ran") is False and retry_result.get("reason") == "already-running":
+        return "skip", f"{job_id}({job_name}): scheduled catch-up skipped because job is already running"
+
+    state[state_key] = {
+        "triggered": True,
+        "triggeredAtMs": int(time.time() * 1000),
+        "jobName": job_name,
+        "expr": expr,
+        "retryResult": retry_result,
+    }
+    return "retried", f"{job_id}({job_name}): SCHEDULED_SINGLE_CATCHUP_TRIGGERED (expr={expr})"
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Cron tool post-check and one-shot retry.")
     parser.add_argument("--job-id", help="Cron job id to inspect and repair.")
@@ -403,6 +713,21 @@ def main() -> int:
         action="store_true",
         help="Auto-discover jobs that explicitly require at least one send tool call.",
     )
+    parser.add_argument(
+        "--auto-analysis-daily-catchup",
+        action="store_true",
+        help="Auto-discover analysis-like jobs and trigger once if no execution record exists today.",
+    )
+    parser.add_argument(
+        "--auto-scheduled-single-catchup",
+        action="store_true",
+        help="Auto-discover low-frequency single cron jobs and trigger once if today's execution is missing.",
+    )
+    parser.add_argument(
+        "--timezone",
+        default="Asia/Shanghai",
+        help="Timezone used by --auto-analysis-daily-catchup for 'today' determination.",
+    )
     parser.add_argument("--max-age-minutes", type=int, default=60, help="Ignore runs older than this.")
     parser.add_argument("--retry-timeout-ms", type=int, default=120000, help="Timeout passed to cron run.")
     parser.add_argument(
@@ -417,12 +742,20 @@ def main() -> int:
 
     discovered = _discover_single_tool_jobs(Path(args.jobs_json))
     discovered_send_required = _discover_send_required_jobs(Path(args.jobs_json))
+    discovered_analysis_jobs = _discover_analysis_jobs(Path(args.jobs_json))
+    discovered_scheduled_single_jobs = _discover_scheduled_single_jobs(Path(args.jobs_json))
     targets: dict[str, str] = {}
     targets_send_required: dict[str, list[str]] = {}
+    targets_daily_catchup: dict[str, str] = {}
+    targets_scheduled_single_catchup: dict[str, tuple[str, str]] = {}
     if args.auto_single_tool_tasks or args.auto_single_send_tasks:
         targets.update(discovered)
     if args.auto_send_required_tasks:
         targets_send_required.update(discovered_send_required)
+    if args.auto_analysis_daily_catchup:
+        targets_daily_catchup.update(discovered_analysis_jobs)
+    if args.auto_scheduled_single_catchup:
+        targets_scheduled_single_catchup.update(discovered_scheduled_single_jobs)
     if args.job_id:
         jid = args.job_id.strip()
         if jid:
@@ -432,7 +765,7 @@ def main() -> int:
                 return 1
             targets[jid] = tool
 
-    if not targets and not targets_send_required:
+    if not targets and not targets_send_required and not targets_daily_catchup and not targets_scheduled_single_catchup:
         print("SKIP: no target jobs (use --job-id/--tool-name or auto discovery flags)")
         return 0
 
@@ -458,6 +791,39 @@ def main() -> int:
         status, msg = _process_job_send_required(
             job_id=jid,
             expected_send_tools=tools,
+            max_age_minutes=args.max_age_minutes,
+            retry_timeout_ms=args.retry_timeout_ms,
+            state=state,
+        )
+        print(f"{status.upper()}: {msg}")
+        if status == "fail":
+            had_fail = True
+        elif status == "retried":
+            had_retry = True
+    for jid, jname in targets_daily_catchup.items():
+        if jid in targets or jid in targets_send_required:
+            continue
+        status, msg = _process_job_daily_catchup(
+            job_id=jid,
+            job_name=jname,
+            timezone_name=args.timezone,
+            retry_timeout_ms=args.retry_timeout_ms,
+            state=state,
+        )
+        print(f"{status.upper()}: {msg}")
+        if status == "fail":
+            had_fail = True
+        elif status == "retried":
+            had_retry = True
+    for jid, payload in targets_scheduled_single_catchup.items():
+        if jid in targets or jid in targets_send_required:
+            continue
+        jname, expr = payload
+        status, msg = _process_job_scheduled_single_catchup(
+            job_id=jid,
+            job_name=jname,
+            expr=expr,
+            timezone_name=args.timezone,
             max_age_minutes=args.max_age_minutes,
             retry_timeout_ms=args.retry_timeout_ms,
             state=state,

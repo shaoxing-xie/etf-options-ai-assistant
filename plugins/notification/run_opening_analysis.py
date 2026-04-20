@@ -319,8 +319,10 @@ def build_opening_report_data(fetch_mode: str = "production") -> Tuple[Dict[str,
 
     from plugins.data_collection.utils.check_trading_status import tool_check_trading_status
     from plugins.merged.fetch_index_data import tool_fetch_index_data
+    # NOTE: `plugins.data_collection` is a symlink to the OpenClaw runtime plugin directory (read-only).
+    # We use an assistant-side policy news fetcher to ensure TAVILY_API_KEYS multi-key rotation (incl. HTTP 432).
+    from plugins.data_access.policy_news import tool_fetch_policy_news
     from plugins.data_collection.morning_brief_fetchers import (
-        tool_fetch_policy_news,
         tool_fetch_macro_commodities,
         tool_fetch_overnight_futures_digest,
         tool_fetch_announcement_digest,

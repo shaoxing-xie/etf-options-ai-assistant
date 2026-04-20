@@ -40,6 +40,7 @@
       textarea { width: 100%; min-height: 420px; resize: vertical; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px; line-height: 1.35; }
       @media (max-width: 980px) { .config-grid { grid-template-columns: 1fr; } }
     </style>
+    <link rel="stylesheet" href="/screening.css" />
     <script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/js-yaml@4.1.0/dist/js-yaml.min.js"></script>
   </head>
@@ -50,10 +51,12 @@
         <div class="nav" role="tablist" aria-label="Views">
           <button class="tab" id="tab-chart" role="tab" aria-selected="true" data-view="chart">图形</button>
           <button class="tab" id="tab-config" role="tab" aria-selected="false" data-view="config">配置中心</button>
+          <button class="tab" id="tab-screening" role="tab" aria-selected="false" data-view="screening">震荡市选股</button>
         </div>
       </div>
 
       <section class="view active" id="view-chart" data-view="chart">
+        <div id="chartSentimentBar" class="panel small" style="display: none" aria-label="市场情绪摘要"></div>
         <div class="bar" id="chartBar">
         <select id="symbol"><option>510300</option><option>510500</option><option>510050</option></select>
         <select id="tf"><option value="5">5m</option><option value="15">15m</option><option value="30" selected>30m</option><option value="60">1h</option><option value="None">1d</option></select>
@@ -136,7 +139,49 @@
           <div id="analyticsCards" class="config-grid"></div>
         </div>
       </section>
+
+      <section class="view" id="view-screening" data-view="screening">
+        <div id="screeningBanner" class="screening-banner" style="display: none"></div>
+        <div class="bar screening-toolbar">
+          <button type="button" id="btnScreeningRefresh">刷新</button>
+          <span id="screeningStatus" class="small"></span>
+        </div>
+        <p id="screeningPhaseHint" class="small screening-phase-hint" aria-label="页面说明"></p>
+        <div id="screeningRunSnapshot" class="screening-run-snapshot" aria-label="策略运行摘要"></div>
+        <div class="screening-grid">
+          <aside class="screening-col" id="screeningLeft"></aside>
+          <main class="screening-col screening-main">
+            <h4 class="screening-h4">观察池与候选证券（因子归因）</h4>
+            <div id="screeningWatchlist" class="small"></div>
+            <div class="screening-table-wrap">
+              <table id="screeningTable">
+                <thead><tr id="screeningThead"></tr></thead>
+                <tbody id="screeningTbody"></tbody>
+              </table>
+            </div>
+            <pre id="screeningFactorDetail" class="small screening-pre screening-factor-detail" style="display: none"></pre>
+            <p class="small screening-footnote">
+              本页仅供研究与风控对照，不构成投资建议或下单指令；实盘请在券商端决策并自担风险。若持仓数据未接入，相关展示仅为占位。
+              点击<strong>代码</strong>可切换到「图形」查看 K 线；点击<strong>因子明细</strong>可展开该行得分拆解。
+            </p>
+          </main>
+          <aside class="screening-col">
+            <h4 class="screening-h4">按日审计</h4>
+            <label class="small">选择审计日期</label>
+            <select id="screeningDatePick"></select>
+            <div id="screeningAudit" class="small screening-audit"></div>
+            <label class="small" for="screeningMetricsSource">效果指标来源</label>
+            <select id="screeningMetricsSource" aria-label="效果指标来源">
+              <option value="screening">夜盘审计汇总</option>
+              <option value="weekly_review">周度复盘（若已落盘）</option>
+            </select>
+            <h4 class="screening-h4">汇总与复盘</h4>
+            <pre id="screeningAggregate" class="small screening-pre"></pre>
+          </aside>
+        </div>
+      </section>
     </div>
     <script type="module" src="/app.js"></script>
+    <script type="module" src="/screening.js"></script>
   </body>
 </html>

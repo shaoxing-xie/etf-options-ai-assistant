@@ -2890,8 +2890,10 @@ def tool_analyze_after_close_and_send_daily_report(
     # P0 自动补齐：避免日报退化为“有模板无内容”
     try:
         from plugins.data_collection.limit_up.sector_heat import tool_sector_heat_score
+        # NOTE: `plugins.data_collection` is a symlink to the OpenClaw runtime plugin directory (read-only).
+        # Use assistant-side policy news fetcher to ensure TAVILY_API_KEYS multi-key rotation (incl. HTTP 432).
+        from plugins.data_access.policy_news import tool_fetch_policy_news
         from plugins.data_collection.morning_brief_fetchers import (
-            tool_fetch_policy_news,
             tool_fetch_industry_news_brief,
             tool_fetch_announcement_digest,
         )
@@ -3134,8 +3136,10 @@ def tool_analyze_after_close_and_send_daily_report(
 
         # 信息面（逐项补齐）
         try:
+            # NOTE: `plugins.data_collection` is a symlink to the OpenClaw runtime plugin directory (read-only).
+            # Use assistant-side policy news fetcher to ensure TAVILY_API_KEYS multi-key rotation (incl. HTTP 432).
+            from plugins.data_access.policy_news import tool_fetch_policy_news
             from plugins.data_collection.morning_brief_fetchers import (
-                tool_fetch_policy_news,
                 tool_fetch_industry_news_brief,
                 tool_fetch_announcement_digest,
             )

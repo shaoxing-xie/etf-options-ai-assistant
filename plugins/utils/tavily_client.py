@@ -144,13 +144,21 @@ def tavily_post_search(
     except ImportError:
         return {"success": False, "message": "requests_not_installed", "data": None, "http_status": None}
 
+    # Cron / sandbox environments may inject proxy env vars that break outbound HTTPS tunneling.
+    # Tavily is a direct HTTPS API; disable env proxy inheritance for deterministic behavior.
+    sess = requests.Session()
+    try:
+        sess.trust_env = False
+    except Exception:
+        pass
+
     last_status: Optional[int] = None
     last_msg = ""
     for key in keys:
         body = dict(body_without_api_key)
         body["api_key"] = key
         try:
-            resp = requests.post("https://api.tavily.com/search", json=body, timeout=timeout)
+            resp = sess.post("https://api.tavily.com/search", json=body, timeout=timeout)
         except Exception as e:
             last_msg = str(e)
             last_status = None

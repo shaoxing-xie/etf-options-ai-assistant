@@ -1385,6 +1385,11 @@
             "description": "production|test（指数/ETF 等采集门禁）",
             "default": "production"
           },
+          "report_variant": {
+            "type": "string",
+            "description": "legacy|realtime（legacy=盘前行情分析报告；realtime=开盘实盘行情报告）",
+            "default": "legacy"
+          },
           "webhook_url": {
             "type": "string",
             "description": "可选：自定义机器人 webhook（包含 access_token）"

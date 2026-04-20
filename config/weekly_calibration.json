@@ -1,6 +1,6 @@
 {
-  "version": 1,
+  "version": "1.0",
   "last_updated": null,
   "regime": "oscillation",
-  "notes": "由 strategy_calibration 工作流或 Agent 写入；nightly_stock_screening 读取 pause 门闸。"
+  "notes": "由 OpenClaw 定时任务 strategy-calibration（workflows/strategy_calibration.yaml）执行后写入；请勿在本仓库手工冒充生产定调。Chart Console 仅只读展示。"
 }

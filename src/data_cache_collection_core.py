@@ -60,41 +60,118 @@ def run_data_cache_collection(
         from plugins.data_collection.index.fetch_historical import tool_fetch_index_historical
         from plugins.data_collection.etf.fetch_historical import tool_fetch_etf_historical
         from plugins.data_collection.stock.fetch_historical import tool_fetch_stock_historical
+        from src.data_cache import (
+            save_etf_daily_cache,
+            save_index_daily_cache,
+            save_stock_daily_cache,
+        )
+        from src.tushare_fallback import (
+            fetch_etf_daily_tushare,
+            fetch_index_daily_tushare,
+            fetch_stock_daily_tushare,
+        )
 
         start, end = rotation_aligned_daily_window_calendar_days()
+        start_ymd = start.replace("-", "")
+        end_ymd = end.replace("-", "")
+        cfg = load_system_config(use_cache=True)
+
+        def _prefer_tushare_daily(
+            codes: List[str],
+            fetch_func: Any,
+            save_func: Any,
+            kind_label: str,
+        ) -> Tuple[List[str], List[str]]:
+            ts_ok: List[str] = []
+            ts_failed: List[str] = []
+            for code in codes:
+                try:
+                    df = fetch_func(code, start_ymd, end_ymd)
+                    if df is not None and not df.empty:
+                        save_func(code, df, config=cfg)
+                        ts_ok.append(code)
+                    else:
+                        ts_failed.append(code)
+                except Exception:
+                    ts_failed.append(code)
+            if ts_ok:
+                summary["steps"].append(
+                    {
+                        "tool": f"{kind_label}_historical_tushare",
+                        "success": True,
+                        "message": f"tushare_preferred_ok={len(ts_ok)} fallback_needed={len(ts_failed)}",
+                        "codes_tushare_ok": ts_ok,
+                        "codes_fallback": ts_failed,
+                    }
+                )
+            return ts_ok, ts_failed
+
         if u["index_codes"]:
-            r = tool_fetch_index_historical(
-                index_code=",".join(u["index_codes"]),
-                period="daily",
-                start_date=start,
-                end_date=end,
-                use_cache=True,
+            _, idx_fallback = _prefer_tushare_daily(
+                u["index_codes"],
+                fetch_index_daily_tushare,
+                save_index_daily_cache,
+                "index",
             )
-            summary["steps"].append(
-                {"tool": "index_historical", "success": r.get("success"), "message": r.get("message")}
-            )
+            if idx_fallback:
+                r = tool_fetch_index_historical(
+                    index_code=",".join(idx_fallback),
+                    period="daily",
+                    start_date=start,
+                    end_date=end,
+                    use_cache=True,
+                )
+                summary["steps"].append(
+                    {
+                        "tool": "index_historical_fallback",
+                        "success": r.get("success"),
+                        "message": r.get("message"),
+                    }
+                )
         if u["etf_codes"]:
-            r = tool_fetch_etf_historical(
-                etf_code=",".join(u["etf_codes"]),
-                period="daily",
-                start_date=start,
-                end_date=end,
-                use_cache=True,
+            _, etf_fallback = _prefer_tushare_daily(
+                u["etf_codes"],
+                fetch_etf_daily_tushare,
+                save_etf_daily_cache,
+                "etf",
             )
-            summary["steps"].append(
-                {"tool": "etf_historical", "success": r.get("success"), "message": r.get("message")}
-            )
+            if etf_fallback:
+                r = tool_fetch_etf_historical(
+                    etf_code=",".join(etf_fallback),
+                    period="daily",
+                    start_date=start,
+                    end_date=end,
+                    use_cache=True,
+                )
+                summary["steps"].append(
+                    {
+                        "tool": "etf_historical_fallback",
+                        "success": r.get("success"),
+                        "message": r.get("message"),
+                    }
+                )
         if u["stock_codes"]:
-            r = tool_fetch_stock_historical(
-                stock_code=",".join(u["stock_codes"]),
-                period="daily",
-                start_date=start,
-                end_date=end,
-                use_cache=True,
+            _, stock_fallback = _prefer_tushare_daily(
+                u["stock_codes"],
+                fetch_stock_daily_tushare,
+                save_stock_daily_cache,
+                "stock",
             )
-            summary["steps"].append(
-                {"tool": "stock_historical", "success": r.get("success"), "message": r.get("message")}
-            )
+            if stock_fallback:
+                r = tool_fetch_stock_historical(
+                    stock_code=",".join(stock_fallback),
+                    period="daily",
+                    start_date=start,
+                    end_date=end,
+                    use_cache=True,
+                )
+                summary["steps"].append(
+                    {
+                        "tool": "stock_historical_fallback",
+                        "success": r.get("success"),
+                        "message": r.get("message"),
+                    }
+                )
 
     if phase == "morning_daily":
         _run_daily_historical_block()
