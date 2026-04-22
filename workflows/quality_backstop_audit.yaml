@@ -13,6 +13,8 @@ meta:
 
 structured_message: |
   执行质量兜底巡检（定时）：
+  - 先执行 `/home/xie/etf-options-ai-assistant/.venv/bin/python scripts/semantic_quality_backstop_audit.py`，
+    读取输出与 `data/meta/monitoring/semantic_quality_YYYY-MM-DD.json` 作为语义层质量证据。
   - 巡检 Cron/任务异常（最近一次执行状态、失败步骤、失败码一致性）。
   - 巡检工具运行时 BUG（按环境/参数/代码缺陷三级分流）。
   - 巡检预测准确性漂移（按既定窗口评估，超阈值触发 issue/告警建议）；核对 prediction_records 与
@@ -26,6 +28,7 @@ structured_message: |
   - AUTOFIX_ALLOWED=true|false
   - EVIDENCE_REF=<至少1个 runId/jobId/日志路径>
   - TOP_ACTIONS=<最多3条，分号分隔>
+  - DATASET_ALERTS=<dataset@trade_date:reason; ... | NONE>
 
   自动修复准入（硬约束）：
   - 仅当 TEAM_RESULT=TEAM_OK 且 RISK=LOW 且 AUTOFIX_ALLOWED=true 时，才允许进入修复动作。

@@ -21,11 +21,13 @@ class ChartApiHandler(BaseHTTPRequestHandler):
     frontend_dir = Path(__file__).resolve().parents[1] / "frontend"
     routes = ApiRoutes(ApiServices())
 
-    def _send_json(self, data: dict, status: int = 200) -> None:
+    def _send_json(self, data: dict, status: int = 200, headers: dict[str, str] | None = None) -> None:
         payload = json.dumps(sanitize(data), ensure_ascii=False).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(payload)))
+        for k, v in (headers or {}).items():
+            self.send_header(str(k), str(v))
         self.end_headers()
         self.wfile.write(payload)
 
@@ -70,8 +72,13 @@ class ChartApiHandler(BaseHTTPRequestHandler):
         path = parsed.path
         query = parse_qs(parsed.query)
         if path.startswith("/api/"):
-            payload, code = self.routes.handle_get(path, query)
-            self._send_json(payload, status=code)
+            out = self.routes.handle_get(path, query)
+            if isinstance(out, tuple) and len(out) == 3:
+                payload, code, headers = out
+            else:
+                payload, code = out
+                headers = {}
+            self._send_json(payload, status=code, headers=headers)
             return
         self._serve_static(path)
 
@@ -80,11 +87,18 @@ class ChartApiHandler(BaseHTTPRequestHandler):
         path = parsed.path
         query = parse_qs(parsed.query)
         if path.startswith("/api/"):
-            payload, code = self.routes.handle_get(path, query)
+            out = self.routes.handle_get(path, query)
+            if isinstance(out, tuple) and len(out) == 3:
+                payload, code, headers = out
+            else:
+                payload, code = out
+                headers = {}
             body = json.dumps(sanitize(payload), ensure_ascii=False).encode("utf-8")
             self.send_response(code)
             self.send_header("Content-Type", "application/json; charset=utf-8")
             self.send_header("Content-Length", str(len(body)))
+            for k, v in (headers or {}).items():
+                self.send_header(str(k), str(v))
             self.end_headers()
             return
 

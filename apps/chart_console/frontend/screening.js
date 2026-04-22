@@ -53,6 +53,17 @@ const RESEARCH_ALERT_DEFAULTS = {
   tail_recommended_count: { warn_at_or_below: 0 },
 };
 
+async function jgetWithFallback(primaryUrl, fallbackUrl) {
+  try {
+    const r = await jget(primaryUrl);
+    if (r && r.success) return r;
+    if (!fallbackUrl) return r;
+  } catch (e) {
+    if (!fallbackUrl) throw e;
+  }
+  return jget(fallbackUrl);
+}
+
 function setScreeningSubview(name) {
   const nightly = qs("screening-nightly");
   const tail = qs("screening-tail");
@@ -621,7 +632,10 @@ function renderMetricsFromCache() {
 async function loadDateArtifact(dateStr) {
   const status = qs("screeningStatus");
   try {
-    const r = await jget(`/api/semantic/screening_view?trade_date=${encodeURIComponent(dateStr)}`);
+    const r = await jgetWithFallback(
+      `/api/semantic/screening_view?trade_date=${encodeURIComponent(dateStr)}`,
+      `/api/screening/by-date?date=${encodeURIComponent(dateStr)}`,
+    );
     if (!r.success) {
       if (status) status.textContent = r.message || "加载失败";
       renderAuditFromArtifact(null);
@@ -644,7 +658,7 @@ async function loadScreening() {
   const status = qs("screeningStatus");
   if (status) status.textContent = "加载中…";
   try {
-    const r = await jget("/api/semantic/dashboard");
+    const r = await jgetWithFallback("/api/semantic/dashboard", "/api/screening/summary");
     if (!r.success || !r.data) {
       if (status) status.textContent = r.message || "加载页面摘要失败";
       return;
@@ -674,8 +688,10 @@ async function loadScreening() {
     renderWatchlist(data.watchlist || {});
     renderMetricsFromCache();
 
-    const hist = await jget("/api/tail_screening/history");
-    const dates = (hist.data || []).map((x) => x.date).filter(Boolean);
+    const hist = await jgetWithFallback("/api/semantic/trade_dates", "/api/tail_screening/history");
+    const dates = Array.isArray(hist.data)
+      ? hist.data.map((x) => (typeof x === "string" ? x : x.date)).filter(Boolean)
+      : [];
     lastDates = dates;
     const pick = qs("screeningDatePick");
     if (pick) {
@@ -857,7 +873,10 @@ function renderTailAudit(art) {
 async function loadTailByDate(dateStr) {
   const status = qs("tailScreeningStatus");
   try {
-    const r = await jget(`/api/semantic/screening_view?trade_date=${encodeURIComponent(dateStr)}`);
+    const r = await jgetWithFallback(
+      `/api/semantic/screening_view?trade_date=${encodeURIComponent(dateStr)}`,
+      `/api/tail_screening/by-date?date=${encodeURIComponent(dateStr)}`,
+    );
     if (!r.success) {
       if (status) status.textContent = r.message || "加载失败";
       _tailRecommendedToTbody("tailRecommendedTbody", []);
@@ -880,15 +899,17 @@ async function loadTailScreening() {
   const status = qs("tailScreeningStatus");
   if (status) status.textContent = "加载中…";
   try {
-    const summary = await jget("/api/semantic/dashboard");
+    const summary = await jgetWithFallback("/api/semantic/dashboard", "/api/tail_screening/summary");
     if (!summary.success) {
       if (status) status.textContent = summary.message || "加载失败";
       return;
     }
     tailCached = { latest: { recommended: (summary.data || {}).top_recommendations || [] }, latest_date: ((summary.data || {})._meta || {}).trade_date };
     renderTailSummary(tailCached);
-    const hist = await jget("/api/tail_screening/history");
-    const dates = (hist.data || []).map((x) => x.date).filter(Boolean);
+    const hist = await jgetWithFallback("/api/semantic/trade_dates", "/api/tail_screening/history");
+    const dates = Array.isArray(hist.data)
+      ? hist.data.map((x) => (typeof x === "string" ? x : x.date)).filter(Boolean)
+      : [];
     const pick = qs("tailScreeningDatePick");
     if (pick) {
       pick.innerHTML = dates
@@ -1203,11 +1224,14 @@ async function loadResearch() {
   const status = qs("researchStatus");
   if (status) status.textContent = "加载中…";
   try {
-    const dashboard = await jget("/api/semantic/dashboard");
+    const dashboard = await jgetWithFallback("/api/semantic/dashboard", "/api/screening/summary");
     const data = dashboard.data || {};
     const tradeDate = (data?._meta || {}).trade_date || "";
     const view = tradeDate
-      ? await jget(`/api/semantic/screening_view?trade_date=${encodeURIComponent(tradeDate)}`)
+      ? await jgetWithFallback(
+          `/api/semantic/screening_view?trade_date=${encodeURIComponent(tradeDate)}`,
+          `/api/screening/by-date?date=${encodeURIComponent(tradeDate)}`,
+        )
       : { data: {} };
     const viewData = view.data || {};
     const sent = data.sentiment_temperature || {};
@@ -1241,7 +1265,10 @@ async function loadResearch() {
       pick.value = tradeDate;
     }
     if (tradeDate) {
-      const timeline = await jget(`/api/semantic/timeline?trade_date=${encodeURIComponent(tradeDate)}`);
+      const timeline = await jgetWithFallback(
+        `/api/semantic/timeline?trade_date=${encodeURIComponent(tradeDate)}`,
+        "",
+      );
       const events = (timeline.data || {}).events || [];
       researchCache = { dashboard: data, view: viewData, timeline: events };
       renderResearchTimeline(events);
@@ -1293,7 +1320,7 @@ qs("btnResearchRefresh")?.addEventListener("click", () => loadResearch());
 qs("researchDatePick")?.addEventListener("change", async (e) => {
   const v = e.target?.value;
   if (!v) return;
-  const timeline = await jget(`/api/semantic/timeline?trade_date=${encodeURIComponent(v)}`);
+  const timeline = await jgetWithFallback(`/api/semantic/timeline?trade_date=${encodeURIComponent(v)}`, "");
   researchCache.timeline = (timeline.data || {}).events || [];
   renderResearchTimeline(researchCache.timeline);
   renderResearchAnomalyDrawer();

@@ -85,21 +85,21 @@ class ApiRoutes:
         if path == "/api/workspace_templates":
             return {"success": True, "data": self.svc.workspace.list_templates()}, 200
         if path == "/api/screening/summary":
-            return self.svc.get_screening_summary(), 200
+            return self.svc.get_screening_summary(), 200, {"X-Deprecated": "true", "X-Replacement": "/api/semantic/dashboard"}
         if path == "/api/screening/history":
-            return self.svc.get_screening_history(), 200
+            return self.svc.get_screening_history(), 200, {"X-Deprecated": "true", "X-Replacement": "/api/semantic/screening_candidates"}
         if path == "/api/screening/by-date":
             date_key = (query.get("date") or [""])[0]
             payload, code = self.svc.get_screening_by_date(str(date_key))
-            return payload, code
+            return payload, code, {"X-Deprecated": "true", "X-Replacement": "/api/semantic/screening_view"}
         if path == "/api/tail_screening/summary":
-            return self.svc.get_tail_screening_summary(), 200
+            return self.svc.get_tail_screening_summary(), 200, {"X-Deprecated": "true", "X-Replacement": "/api/semantic/dashboard"}
         if path == "/api/tail_screening/history":
-            return self.svc.get_tail_screening_history(), 200
+            return self.svc.get_tail_screening_history(), 200, {"X-Deprecated": "true", "X-Replacement": "/api/semantic/screening_view"}
         if path == "/api/tail_screening/by-date":
             date_key = (query.get("date") or [""])[0]
             payload, code = self.svc.get_tail_screening_by_date(str(date_key))
-            return payload, code
+            return payload, code, {"X-Deprecated": "true", "X-Replacement": "/api/semantic/screening_view"}
         if path == "/api/semantic/dashboard":
             return self.svc.get_semantic_dashboard(), 200
         if path == "/api/semantic/timeline":
@@ -110,13 +110,19 @@ class ApiRoutes:
             trade_date = (query.get("trade_date") or [""])[0]
             payload, code = self.svc.get_semantic_screening_view(str(trade_date))
             return payload, code
+        if path == "/api/semantic/screening_candidates":
+            trade_date = (query.get("trade_date") or [""])[0]
+            payload, code = self.svc.get_semantic_screening_candidates(str(trade_date))
+            return payload, code
         if path == "/api/semantic/ops_events":
             trade_date = (query.get("trade_date") or [""])[0]
-            return self.svc.get_semantic_ops_events(str(trade_date)), 200
+            return self.svc.get_semantic_ops_events(str(trade_date)), 200, {}
+        if path == "/api/semantic/trade_dates":
+            return self.svc.get_semantic_trade_dates(), 200, {}
         if path == "/api/ops/events":
             trade_date = (query.get("trade_date") or [""])[0]
-            return self.svc.get_ops_events(str(trade_date)), 200
-        return {"success": False, "message": "not found"}, 404
+            return self.svc.get_ops_events(str(trade_date)), 200, {"X-Deprecated": "true", "X-Replacement": "/api/semantic/ops_events"}
+        return {"success": False, "message": "not found"}, 404, {}
 
     def handle_post(self, path: str, body: dict):
         if path == "/api/alerts/config/save":

@@ -261,9 +261,21 @@ class ApiServices:
             return {"success": False, "message": "invalid trade_date (use YYYY-MM-DD)", "data": None}, 400
         return {"success": True, "message": "ok", "data": data}, 200
 
+    def get_semantic_screening_candidates(self, trade_date: str) -> tuple[dict[str, Any], int]:
+        try:
+            data = self._semantic.screening_candidates(trade_date)
+        except ValueError:
+            return {"success": False, "message": "invalid trade_date (use YYYY-MM-DD)", "data": None}, 400
+        return {"success": True, "message": "ok", "data": data}, 200
+
     def get_ops_events(self, trade_date: str = "") -> dict[str, Any]:
         # 兼容旧接口：内部已切到统一语义层
         return {"success": True, "message": "ok", "data": self._semantic.ops_events(trade_date)}
 
     def get_semantic_ops_events(self, trade_date: str = "") -> dict[str, Any]:
         return {"success": True, "message": "ok", "data": self._semantic.ops_events(trade_date)}
+
+    def get_semantic_trade_dates(self) -> dict[str, Any]:
+        base = ROOT / "data" / "semantic" / "screening_view"
+        dates = sorted([p.stem for p in base.glob("*.json") if p.is_file()]) if base.is_dir() else []
+        return {"success": True, "message": "ok", "data": dates}

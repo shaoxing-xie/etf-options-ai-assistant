@@ -2,12 +2,15 @@
 from __future__ import annotations
 
 import json
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-from src.data_layer import MetaEnvelope, write_contract_json
-
 ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from src.data_layer import MetaEnvelope, write_contract_json
 
 
 def main() -> int:
@@ -25,9 +28,27 @@ def main() -> int:
         print(json.dumps({"success": False, "message": "invalid sidecar json"}, ensure_ascii=False))
         return 1
     trade_date = latest.stem
-    out = ROOT / "data" / "semantic" / "dashboard_snapshot" / f"{trade_date}.json"
+    # canonical semantic dataset path for sentiment snapshot replay
+    out = ROOT / "data" / "semantic" / "sentiment_snapshot" / f"{trade_date}.json"
     write_contract_json(
         out,
+        payload=payload,
+        meta=MetaEnvelope(
+            schema_name="sentiment_snapshot_v1",
+            schema_version="1.0.0",
+            task_id="pre-market-sentiment-check",
+            run_id=datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S"),
+            data_layer="L4",
+            trade_date=trade_date,
+            quality_status="degraded" if bool(payload.get("degraded")) else "ok",
+            lineage_refs=[str(latest)],
+            source_tools=["persist_pre_market_semantic_snapshot.py"],
+        ),
+    )
+    # backward-compatible mirror for existing consumers during cutover window
+    mirror = ROOT / "data" / "semantic" / "dashboard_snapshot" / f"{trade_date}.json"
+    write_contract_json(
+        mirror,
         payload=payload,
         meta=MetaEnvelope(
             schema_name="sentiment_snapshot_v1",

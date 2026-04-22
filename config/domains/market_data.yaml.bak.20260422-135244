@@ -52,6 +52,7 @@ data_sources:
   global_index:
     hxc:
       enabled: true
+    # 全球主要指数最新快照：tool_fetch_global_index_spot（openclaw-data-china-stock fetch_global.py）
     latest:
       priority:
         - yfinance
@@ -60,8 +61,8 @@ data_sources:
       fmp:
         enabled: true
         api_keys:
-          - ${FMP_API_KEY}
-          - ${FMP_API_KEY_BACKUP}
+          - "${FMP_API_KEY}"
+          - "${FMP_API_KEY_BACKUP}"
   stock_realtime:
     priority:
       - mootdx
@@ -152,13 +153,13 @@ tushare:
 iopv_fallback:
   manual_iopv_overrides:
     '513300':
-      iopv: 2.2493
+      iopv: 2.2377
       source: manual_after_14_00
-      updated_date: '2026-04-22'
+      updated_date: '2026-04-17'
     '513880':
-      iopv: 1.8604
+      iopv: 1.8428
       source: manual_after_14_00
-      updated_date: '2026-04-22'
+      updated_date: '2026-04-17'
 wide_inspection_overnight_refs:
   sources:
     a50_futures:

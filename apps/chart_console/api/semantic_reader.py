@@ -121,7 +121,8 @@ class SemanticReader:
 
     def dashboard(self) -> dict[str, Any]:
         summary = self._screening.summary()
-        snap = summary.get("sentiment_snapshot") or {}
+        trade_date_hint = str(summary.get("latest_screening_date") or "").strip()
+        snap = self._read_sentiment_snapshot(trade_date_hint) or (summary.get("sentiment_snapshot") or {})
         wc = summary.get("weekly_calibration") or {}
         tail_latest = (self._tail.summary() or {}).get("latest") or {}
         recs = list((tail_latest.get("recommended") or [])[:5])
@@ -190,6 +191,30 @@ class SemanticReader:
             },
         }
         return payload
+
+    def _read_semantic_snapshot(self, dataset: str, trade_date: str) -> dict[str, Any] | None:
+        if not validate_screening_date_key(trade_date):
+            return None
+        path = self.root / "data" / "semantic" / dataset / f"{trade_date}.json"
+        obj = _read_json(path)
+        if not isinstance(obj, dict):
+            return None
+        data = obj.get("data") if isinstance(obj.get("data"), dict) else None
+        meta = obj.get("_meta") if isinstance(obj.get("_meta"), dict) else None
+        if not isinstance(data, dict):
+            return None
+        merged = dict(data)
+        if isinstance(meta, dict):
+            merged["_meta"] = meta
+        return merged
+
+    def _read_sentiment_snapshot(self, trade_date: str) -> dict[str, Any] | None:
+        snap = self._read_semantic_snapshot("sentiment_snapshot", trade_date)
+        if isinstance(snap, dict):
+            return snap
+        # backward compatibility path during cutover
+        old = self._read_semantic_snapshot("dashboard_snapshot", trade_date)
+        return old if isinstance(old, dict) else None
 
     def timeline(self, trade_date: str) -> dict[str, Any]:
         if not validate_screening_date_key(trade_date):
@@ -278,9 +303,43 @@ class SemanticReader:
             },
         }
 
-    def screening_view(self, trade_date: str) -> dict[str, Any]:
+    def screening_candidates(self, trade_date: str) -> dict[str, Any]:
         if not validate_screening_date_key(trade_date):
             raise ValueError("invalid trade_date")
+        snap = self._read_semantic_snapshot("screening_candidates", trade_date)
+        if isinstance(snap, dict):
+            return snap
+        nightly = self._screening.read_artifact_by_date(trade_date) or {}
+        screening = nightly.get("screening") if isinstance(nightly.get("screening"), dict) else {}
+        return {
+            "run_date": trade_date,
+            "candidates": screening.get("data") if isinstance(screening.get("data"), list) else [],
+            "summary": {
+                "quality_score": screening.get("quality_score"),
+                "degraded": screening.get("degraded"),
+                "universe": screening.get("universe"),
+            },
+            "artifact_ref": str(self.root / "data" / "screening" / f"{trade_date}.json"),
+            "_meta": {
+                "schema_name": "screening_candidates_v1",
+                "schema_version": "1.0.0",
+                "task_id": "nightly-stock-screening",
+                "run_id": "",
+                "data_layer": "L4",
+                "generated_at": "",
+                "trade_date": trade_date,
+                "quality_status": "degraded" if bool(screening.get("degraded")) else "ok",
+                "lineage_refs": [str(self.root / "data" / "screening" / f"{trade_date}.json")],
+            },
+        }
+
+    def screening_view(self, trade_date: str, *, prefer_snapshot: bool = True) -> dict[str, Any]:
+        if not validate_screening_date_key(trade_date):
+            raise ValueError("invalid trade_date")
+        if prefer_snapshot:
+            snap = self._read_semantic_snapshot("screening_view", trade_date)
+            if isinstance(snap, dict):
+                return snap
         nightly = self._screening.read_artifact_by_date(trade_date) or {}
         tail = self._tail.read_by_date(trade_date) or self._tail.read_latest() or {}
         watch = self._screening.read_watchlist()
@@ -384,8 +443,16 @@ class SemanticReader:
             "_meta": {
                 "schema_name": "screening_view_v1",
                 "schema_version": "1.0.0",
+                "task_id": "intraday-tail-screening",
+                "run_id": "",
+                "data_layer": "L4",
                 "generated_at": "",
                 "trade_date": trade_date,
+                "quality_status": "degraded" if any(str(x.get("status")) in {"stale", "missing"} for x in task_execution_monitor) else "ok",
+                "lineage_refs": [
+                    str(self.root / "data" / "screening" / f"{trade_date}.json"),
+                    str(self.root / "data" / "tail_screening" / f"{trade_date}.json"),
+                ],
             },
         }
 

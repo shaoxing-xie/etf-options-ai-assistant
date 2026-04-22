@@ -93,3 +93,40 @@ def test_semantic_ops_events_prefers_snapshot(tmp_path: Path) -> None:
     reader = SemanticReader(root)
     payload = reader.ops_events("2026-04-22")
     assert payload["execution_audit_events"][0]["task_id"] == "snap"
+
+
+def test_semantic_screening_view_prefers_snapshot(tmp_path: Path) -> None:
+    root = tmp_path
+    d = root / "data" / "semantic" / "screening_view"
+    d.mkdir(parents=True)
+    snap = {
+        "_meta": {"schema_name": "screening_view_v1", "trade_date": "2026-04-22"},
+        "data": {
+            "candidates": {"nightly": [{"symbol": "000001"}], "tail": []},
+            "task_execution_monitor": [],
+            "watchlist_state": {},
+            "performance_context": {},
+            "effect_stats": {},
+            "sector_rotation_heatmap": [],
+            "tail_paradigm_pools": {},
+            "alert_thresholds": {},
+        },
+    }
+    (d / "2026-04-22.json").write_text(json.dumps(snap), encoding="utf-8")
+    reader = SemanticReader(root)
+    payload = reader.screening_view("2026-04-22")
+    assert payload["candidates"]["nightly"][0]["symbol"] == "000001"
+
+
+def test_semantic_screening_candidates_prefers_snapshot(tmp_path: Path) -> None:
+    root = tmp_path
+    d = root / "data" / "semantic" / "screening_candidates"
+    d.mkdir(parents=True)
+    snap = {
+        "_meta": {"schema_name": "screening_candidates_v1", "trade_date": "2026-04-22"},
+        "data": {"run_date": "2026-04-22", "candidates": [{"symbol": "000001"}], "summary": {}, "artifact_ref": "x"},
+    }
+    (d / "2026-04-22.json").write_text(json.dumps(snap), encoding="utf-8")
+    reader = SemanticReader(root)
+    payload = reader.screening_candidates("2026-04-22")
+    assert payload["candidates"][0]["symbol"] == "000001"
