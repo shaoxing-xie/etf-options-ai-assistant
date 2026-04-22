@@ -1852,13 +1852,27 @@ def _format_tail_session_report(
         index_label = index_symbol or "指数"
     non_trading = bool(report_data.get("non_trading_calendar_day"))
     trade_date = str(report_data.get("trade_date") or report_data.get("date") or "").strip()
-    subtitle = "## 📊 14:40 尾盘多角度建议报告" if not non_trading else "## 📊 尾盘多角度建议（非交易日复盘口径）"
+    monitor_ctx = report_data.get("monitor_context") if isinstance(report_data.get("monitor_context"), dict) else {}
+    monitor_label = str(monitor_ctx.get("monitor_label") or "").strip()
+    subtitle = "## 📊 交易时段多角度建议报告" if not non_trading else "## 📊 多角度建议（非交易日复盘口径）"
+    if monitor_label:
+        subtitle = f"{subtitle}（{monitor_label}）"
     lines: List[str] = [title, "", subtitle, f"**分析时间：** {now}"]
     if non_trading and trade_date:
         lines.append(f"**数据日期：** {trade_date}（最近交易日）")
     lines.append("")
 
-    lines.append("### 一、尾盘快照")
+    monitor_ctx = report_data.get("monitor_context") if isinstance(report_data.get("monitor_context"), dict) else {}
+    signal_board = analysis.get("signal_board") if isinstance(analysis.get("signal_board"), dict) else {}
+    risk_gate = analysis.get("risk_gate") if isinstance(analysis.get("risk_gate"), dict) else {}
+    range_prediction = analysis.get("range_prediction") if isinstance(analysis.get("range_prediction"), dict) else {}
+    monitor_projection = analysis.get("monitor_projection") if isinstance(analysis.get("monitor_projection"), dict) else {}
+
+    lines.append("### 一、时点快照")
+    if monitor_ctx:
+        lines.append(
+            f"- 监控点：{monitor_ctx.get('monitor_point') or 'N/A'}（{monitor_ctx.get('monitor_label') or 'N/A'}） / 覆盖窗口：{monitor_ctx.get('target_window') or 'N/A'}"
+        )
     lines.append(
         f"- {etf_code or 'N/A'} 现价 {_fmt_num(snap.get('latest_price'), 3) or 'N/A'} / IOPV {_fmt_num(snap.get('iopv'), 3) or 'N/A'} / 溢价率 {_fmt_pct(snap.get('premium_pct')) or 'N/A'}"
     )
@@ -1876,7 +1890,40 @@ def _format_tail_session_report(
         lines.append(f"- 成交额（代理流动性）：{amt/1e8:.2f} 亿元")
     lines.append("")
 
-    lines.append("### 二、周期与技术状态")
+    lines.append("### 二、本时点模板焦点")
+    focus = monitor_ctx.get("template_focus") if isinstance(monitor_ctx.get("template_focus"), list) else []
+    if focus:
+        for item in focus[:4]:
+            lines.append(f"- {item}")
+    else:
+        lines.append("- 区间预测与风险门槛联动")
+    lines.append("")
+
+    lines.append("### 三、区间预测（操作参考主轴）")
+    core = range_prediction.get("core_range") if isinstance(range_prediction.get("core_range"), list) else None
+    safe = range_prediction.get("safe_range") if isinstance(range_prediction.get("safe_range"), list) else None
+    if core and len(core) == 2:
+        lines.append(f"- 核心参考区间：[{_fmt_num(core[0], 4)}, {_fmt_num(core[1], 4)}]（宽度 {range_prediction.get('core_width_pct', 'N/A')}%）")
+    if safe and len(safe) == 2:
+        lines.append(f"- 安全缓冲区间：[{_fmt_num(safe[0], 4)}, {_fmt_num(safe[1], 4)}]（宽度 {range_prediction.get('safe_width_pct', 'N/A')}%）")
+    lines.append(f"- 区间置信度：{_fmt_num(signal_board.get('confidence'), 2) or 'N/A'}")
+    lines.append("")
+
+    lines.append("### 四、时点专项预测")
+    proj_label = str(monitor_projection.get("projection_label") or "分时区间预测")
+    lines.append(f"- 预测对象：{proj_label}")
+    key_levels = monitor_projection.get("key_levels") if isinstance(monitor_projection.get("key_levels"), list) else []
+    if key_levels:
+        for kv in key_levels[:4]:
+            if isinstance(kv, dict):
+                lines.append(f"- {kv.get('name')}: {_fmt_num(kv.get('value'), 4) or 'N/A'}")
+    if monitor_projection.get("safe_low") is not None and monitor_projection.get("safe_high") is not None:
+        lines.append(
+            f"- 缓冲边界：[{_fmt_num(monitor_projection.get('safe_low'), 4)}, {_fmt_num(monitor_projection.get('safe_high'), 4)}]"
+        )
+    lines.append("")
+
+    lines.append("### 五、周期与技术状态")
     lines.append(
         f"- 指数（参考）：{index_label} 收盘 {(_fmt_num(analysis.get('index_close'), 2) or 'N/A')}，日涨跌 {_fmt_pct(analysis.get('index_day_ret_pct')) or 'N/A'}"
     )
@@ -1903,7 +1950,21 @@ def _format_tail_session_report(
     )
     lines.append("")
 
-    lines.append("### 三、分层建议（不合成单一结论）")
+    lines.append("### 六、SignalBoard / RiskGate")
+    lines.append(
+        f"- SignalBoard：方向分 {_fmt_num(signal_board.get('direction_score'), 2) or 'N/A'}，强度分 {_fmt_num(signal_board.get('strength_score'), 2) or 'N/A'}，期货状态 {signal_board.get('futures_status') or 'N/A'}"
+    )
+    lines.append(
+        f"- RiskGate：流动性(成交额) {(_fmt_num((_safe_float(risk_gate.get('liquidity_amount')) or 0.0)/1e8, 2) + '亿') if risk_gate.get('liquidity_amount') is not None else 'N/A'}，汇率风险倍率 {_fmt_num(risk_gate.get('fx_risk_multiplier'), 2) or 'N/A'}，质量 {risk_gate.get('quality_status') or 'N/A'}"
+    )
+    if risk_gate.get("action_state"):
+        lines.append(f"- 动作矩阵状态：{risk_gate.get('action_state')}")
+    hits = risk_gate.get("gates_triggered") if isinstance(risk_gate.get("gates_triggered"), list) else []
+    if hits:
+        lines.append(f"- 门槛触发：{', '.join(str(x) for x in hits)}")
+    lines.append("")
+
+    lines.append("### 七、分层建议（不合成单一结论）")
     layer_outputs = analysis.get("layer_outputs") if isinstance(analysis.get("layer_outputs"), list) else []
     for it in layer_outputs:
         if not isinstance(it, dict):
@@ -1922,7 +1983,7 @@ def _format_tail_session_report(
         lines.append(f"- **指标结论：** {analysis.get('indicator_opinion').strip()}")
     lines.append("")
 
-    lines.append("### 四、用户可选路径")
+    lines.append("### 八、用户可选路径")
     options = analysis.get("decision_options") if isinstance(analysis.get("decision_options"), dict) else {}
     l1 = _tail_option_line("保守", options.get("conservative"))
     l2 = _tail_option_line("中性", options.get("neutral"))
@@ -1947,7 +2008,7 @@ def _format_tail_session_report(
         lines.append(f"  - 风控约束（门槛）: {r_txt}")
     lines.append("")
 
-    lines.append("### 五、风险提示与执行摩擦")
+    lines.append("### 九、风险提示与执行摩擦")
     notices = analysis.get("risk_notices") if isinstance(analysis.get("risk_notices"), list) else []
     if notices:
         for n in notices[:8]:
@@ -1958,7 +2019,7 @@ def _format_tail_session_report(
         lines.append("- 尾盘成交额偏低，存在滑点与成交冲击，建议被动挂单或缩小单次交易量。")
     lines.append("")
 
-    lines.append("### 六、用户决策声明")
+    lines.append("### 十、用户决策声明")
     lines.append(f"- {analysis.get('user_decision_note') or '本系统仅提供多视角信息，不替代你的最终交易决策。'}")
     lines.append("---")
     lines.append(f"*分析完成时间：{now}*")
@@ -2016,11 +2077,11 @@ def _format_daily_report(
         snap = report_data.get("tail_session_snapshot") if isinstance(report_data.get("tail_session_snapshot"), dict) else {}
         etf_code = str(snap.get("etf_code") or "").strip()
         if etf_code == "513300":
-            title = "纳斯达克ETF华夏尾盘监控报告"
-            subtitle = "## 📊 纳斯达克ETF华夏尾盘监控报告"
+            title = "纳斯达克ETF华夏监控报告"
+            subtitle = "## 📊 纳斯达克ETF华夏监控报告"
         else:
-            title = "日经225ETF尾盘监控报告"
-            subtitle = "## 📊 日经225ETF尾盘监控报告"
+            title = "日经225ETF监控报告"
+            subtitle = "## 📊 日经225ETF监控报告"
     elif rt == "etf_rotation_research":
         title = "ETF 轮动研究报告"
         subtitle = "## 📊 ETF 轮动研究报告"

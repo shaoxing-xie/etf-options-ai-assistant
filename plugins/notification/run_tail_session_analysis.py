@@ -23,6 +23,26 @@ except ImportError:  # pragma: no cover
 
 logger = logging.getLogger(__name__)
 
+MONITOR_WINDOWS: Dict[str, Dict[str, str]] = {
+    "M1": {"label": "M1 开盘预测", "window": "09:35-10:30"},
+    "M2": {"label": "M2 开盘确认", "window": "09:45-10:30"},
+    "M3": {"label": "M3 早盘收官预判", "window": "10:15-10:30"},
+    "M4": {"label": "M4 早盘复盘", "window": "10:45-12:30"},
+    "M5": {"label": "M5 午盘确认", "window": "13:15-14:30"},
+    "M6": {"label": "M6 午后跟踪", "window": "13:45-14:30"},
+    "M7": {"label": "M7 收盘定调", "window": "14:30-次日开盘"},
+}
+
+MONITOR_TEMPLATE_FOCUS: Dict[str, List[str]] = {
+    "M1": ["今日全天波动区间", "开盘后支撑/压力", "早盘振幅识别"],
+    "M2": ["早盘剩余区间", "开盘确认偏差", "T+0首个窗口"],
+    "M3": ["收官前15分钟结构", "午盘开盘区间", "收官量能特征"],
+    "M4": ["早盘复盘结论", "午盘完整区间", "下午关键阈值"],
+    "M5": ["下午剩余区间", "午盘确认", "T+0持仓管理"],
+    "M6": ["尾盘前区间", "动量衰减/延续", "尾盘平仓窗口"],
+    "M7": ["次日开盘区间", "隔夜持仓建议", "当日预测复盘"],
+}
+
 
 def _now_sh() -> datetime:
     if pytz is None:
@@ -70,6 +90,133 @@ def _safe_float(v: Any) -> Optional[float]:
         return float(v)
     except Exception:
         return None
+
+
+def _resolve_monitor_context(monitor_point: str, monitor_bundle: Optional[str]) -> Dict[str, Any]:
+    mp = str(monitor_point or "M7").strip().upper()
+    if mp not in MONITOR_WINDOWS:
+        mp = "M7"
+    covered: List[str] = [mp]
+    if isinstance(monitor_bundle, str) and monitor_bundle.strip():
+        bundle = monitor_bundle.strip().upper()
+        if bundle == "PROCESS":
+            now = _now_sh()
+            hhmm = now.strftime("%H:%M")
+            # 按时间区间做粗粒度判断，不依赖精确分钟触发
+            if "09:00" <= hhmm < "09:30":
+                mp = "M1"
+            elif "09:30" <= hhmm < "10:00":
+                mp = "M2"
+            elif "10:00" <= hhmm < "10:30":
+                mp = "M3"
+            elif "10:30" <= hhmm < "11:30":
+                mp = "M4"
+            elif "13:00" <= hhmm < "13:30":
+                mp = "M5"
+            elif "13:30" <= hhmm < "14:30":
+                mp = "M6"
+            covered = ["M1", "M2", "M3", "M4", "M5", "M6"]
+        else:
+            parts = [x.strip().upper() for x in monitor_bundle.split("_") if x.strip()]
+            covered = [x for x in parts if x in MONITOR_WINDOWS] or [mp]
+    return {
+        "monitor_point": mp,
+        "monitor_bundle": monitor_bundle,
+        "covered_points": covered,
+        "monitor_label": MONITOR_WINDOWS[mp]["label"],
+        "target_window": MONITOR_WINDOWS[mp]["window"],
+        "template_focus": MONITOR_TEMPLATE_FOCUS.get(mp, []),
+    }
+
+
+def _predict_intraday_bands(
+    latest_price: Optional[float],
+    closes: List[float],
+    cfg: Dict[str, Any],
+) -> Dict[str, Any]:
+    defaults = cfg.get("range_defaults") if isinstance(cfg.get("range_defaults"), dict) else {}
+    core_mult = float(defaults.get("band_core_multiplier", 0.8))
+    safe_mult = float(defaults.get("band_safe_multiplier", 1.2))
+    min_band_pct = float(defaults.get("min_band_pct", 0.35))
+    max_band_pct = float(defaults.get("max_band_pct", 2.2))
+    if latest_price is None or latest_price <= 0:
+        return {
+            "core_range": None,
+            "safe_range": None,
+            "band_pct": None,
+            "confidence": 0.0,
+            "degraded_reason": "latest_price_unavailable",
+        }
+    vols: List[float] = []
+    if len(closes) >= 10:
+        for i in range(max(1, len(closes) - 20), len(closes)):
+            p0 = closes[i - 1]
+            p1 = closes[i]
+            if p0:
+                vols.append(abs((p1 - p0) / p0) * 100.0)
+    vol_pct = (sum(vols) / len(vols)) if vols else 0.45
+    band_pct = max(min_band_pct, min(max_band_pct, vol_pct * 1.35))
+    half_core = latest_price * (band_pct / 100.0) * core_mult
+    half_safe = latest_price * (band_pct / 100.0) * safe_mult
+    core_low = max(0.0, latest_price - half_core)
+    core_high = latest_price + half_core
+    safe_low = max(0.0, latest_price - half_safe)
+    safe_high = latest_price + half_safe
+    confidence = 0.78 if len(vols) >= 8 else 0.62
+    return {
+        "core_range": [round(core_low, 4), round(core_high, 4)],
+        "safe_range": [round(safe_low, 4), round(safe_high, 4)],
+        "band_pct": round(band_pct, 4),
+        "core_width_pct": round(((core_high - core_low) / latest_price) * 100.0, 4),
+        "safe_width_pct": round(((safe_high - safe_low) / latest_price) * 100.0, 4),
+        "confidence": confidence,
+    }
+
+
+def _classify_action_state(gate_hits: List[str], confidence: float) -> str:
+    if not gate_hits and confidence >= 0.72:
+        return "GO"
+    if confidence >= 0.6:
+        return "GO_LIGHT"
+    if gate_hits:
+        return "WAIT"
+    return "EXIT_REDUCE"
+
+
+def _build_monitor_projection(
+    monitor_point: str,
+    latest_price: Optional[float],
+    range_pred: Dict[str, Any],
+) -> Dict[str, Any]:
+    core = range_pred.get("core_range") if isinstance(range_pred.get("core_range"), list) else None
+    safe = range_pred.get("safe_range") if isinstance(range_pred.get("safe_range"), list) else None
+    if latest_price is None or latest_price <= 0 or not core or len(core) != 2:
+        return {"projection_label": "分时区间预测", "key_levels": []}
+
+    low, high = float(core[0]), float(core[1])
+    center = (low + high) / 2.0
+    span = max(high - low, 0.0)
+    mp = str(monitor_point or "M7").upper()
+
+    mapping: Dict[str, Tuple[str, List[Tuple[str, float]]]] = {
+        "M1": ("今日全天区间", [("day_low", low), ("day_high", high), ("day_center", center)]),
+        "M2": ("早盘剩余区间", [("morning_low", low), ("morning_high", high), ("morning_close_ref", center)]),
+        "M3": ("午盘开盘区间", [("afternoon_open_low", low), ("afternoon_open_high", high), ("key_mid", center)]),
+        "M4": ("午盘完整区间", [("afternoon_low", low), ("afternoon_high", high), ("afternoon_center", center)]),
+        "M5": ("下午剩余区间", [("pm_low", low), ("pm_high", high), ("close_ref", center)]),
+        "M6": ("尾盘前区间", [("tail_low", low), ("tail_high", high), ("tail_center", center)]),
+        "M7": ("次日开盘区间", [("next_open_low", center - span * 0.35), ("next_open_high", center + span * 0.35), ("next_open_ref", center)]),
+    }
+    label, rows = mapping.get(mp, ("分时区间预测", [("range_low", low), ("range_high", high), ("range_center", center)]))
+    key_levels = [{"name": k, "value": round(v, 4)} for k, v in rows]
+    out: Dict[str, Any] = {
+        "projection_label": label,
+        "key_levels": key_levels,
+    }
+    if safe and len(safe) == 2:
+        out["safe_low"] = round(float(safe[0]), 4)
+        out["safe_high"] = round(float(safe[1]), 4)
+    return out
 
 
 def _safe_step(
@@ -411,6 +558,8 @@ def _build_risk_notices(payload: Dict[str, Any], cfg: Dict[str, Any]) -> List[st
 def build_tail_session_report_data(
     fetch_mode: str = "production",
     market_profile: str = "nikkei_513880",
+    monitor_point: str = "M7",
+    monitor_bundle: Optional[str] = None,
 ) -> Tuple[Dict[str, Any], List[Dict[str, str]]]:
     errors: List[Dict[str, str]] = []
     cfg = _load_tail_cfg()
@@ -432,9 +581,11 @@ def build_tail_session_report_data(
 
     safe = open_safe_step if callable(open_safe_step) else _safe_step
 
+    monitor_ctx = _resolve_monitor_context(monitor_point, monitor_bundle)
     rd: Dict[str, Any] = {
         "report_type": "tail_session",
         "runner_version": "tail_session_analysis_v1",
+        "monitor_context": monitor_ctx,
     }
     now = _now_sh()
     rd["date"] = now.strftime("%Y-%m-%d")
@@ -621,8 +772,9 @@ def build_tail_session_report_data(
 
     manager_notice = bool((cfg.get("risk_notice_state") or {}).get("manager_premium_notice", False))
     layer_cycle = _layer_cycle(ma25_dev, rsi14, close, ma25)
-    layer_timing = _layer_timing(streak, premium_pct, rsi14, ma25_dev, cfg)
-    layer_risk = _layer_risk(premium_pct, amount, manager_notice, cfg)
+    # 513880 六时点方案下，溢价不作为核心门槛，这里保留入参兼容但传 None。
+    layer_timing = _layer_timing(streak, None, rsi14, ma25_dev, cfg)
+    layer_risk = _layer_risk(None, amount, manager_notice, cfg)
     if iopv_source in ("estimated", "unavailable"):
         gate_hits = list(layer_risk.get("gate_hits") or [])
         gate_tag = "iopv_estimated_only" if iopv_source == "estimated" else "iopv_unavailable"
@@ -675,6 +827,32 @@ def build_tail_session_report_data(
         "premium_est": (iopv_est_pack or {}).get("premium_est"),
         "est_confidence": (iopv_est_pack or {}).get("est_confidence"),
     }
+    range_pred = _predict_intraday_bands(latest_price, closes, cfg)
+    monitor_projection = _build_monitor_projection(str(monitor_ctx.get("monitor_point") or "M7"), latest_price, range_pred)
+    signal_board = {
+        "direction_score": round((index_day_ret_pct or 0.0), 4),
+        "strength_score": round(abs(index_day_ret_pct or 0.0) + abs(streak or 0) * 0.2, 4),
+        "confidence": range_pred.get("confidence", 0.0),
+        "futures_status": "unknown",
+        "monitor_point": monitor_ctx.get("monitor_point"),
+        "target_window": monitor_ctx.get("target_window"),
+        "predicted_band": range_pred.get("core_range"),
+        "predicted_band_width_pct": range_pred.get("core_width_pct"),
+    }
+    action_state = _classify_action_state(layer_risk.get("gate_hits") or [], float(range_pred.get("confidence") or 0.0))
+    risk_gate = {
+        "liquidity_amount": amount,
+        "fx_risk_multiplier": 1.0,
+        "gates_triggered": layer_risk.get("gate_hits") or [],
+        "quality_status": "ok" if len(closes) >= 10 else "degraded",
+        "action_state": action_state,
+    }
+    action_paths = {
+        "conservative": decision_options.get("conservative"),
+        "neutral": decision_options.get("neutral"),
+        "aggressive": decision_options.get("aggressive"),
+    }
+
     rd["analysis"] = {
         "index_symbol": index_symbol,
         "index_close": index_close,
@@ -690,6 +868,38 @@ def build_tail_session_report_data(
         "user_decision_note": "本系统仅提供多视角信息，不替代你的最终交易决策。",
         "risk_notices": risk_notices,
         "manager_premium_notice": manager_notice,
+        "signal_board": signal_board,
+        "risk_gate": risk_gate,
+        "action_paths": action_paths,
+        "range_prediction": range_pred,
+        "monitor_projection": monitor_projection,
+        "monitor_context": monitor_ctx,
+    }
+    run_id = f"nikkei-{now.strftime('%Y%m%d-%H%M%S')}-{monitor_ctx.get('monitor_point')}"
+    rd["_meta"] = {
+        "schema_name": "nikkei_513880_monitor_event",
+        "schema_version": "1.0.0",
+        "task_id": f"etf-nikkei-{monitor_ctx.get('monitor_point', 'M7').lower()}-513880",
+        "run_id": run_id,
+        "data_layer": "L3",
+        "generated_at": rd["generated_at"],
+        "trade_date": rd["trade_date"],
+        "source_tools": [
+            "tool_fetch_etf_data",
+            "tool_fetch_global_index_hist_sina",
+            "tool_fetch_index_data",
+        ],
+        "lineage_refs": [f"monitor_point:{monitor_ctx.get('monitor_point')}"],
+        "quality_status": risk_gate.get("quality_status", "ok"),
+    }
+    rd["semantic_view"] = {
+        "dataset": "nikkei_513880_intraday_dashboard_view",
+        "monitor_point": monitor_ctx.get("monitor_point"),
+        "target_window": monitor_ctx.get("target_window"),
+        "core_range": range_pred.get("core_range"),
+        "safe_range": range_pred.get("safe_range"),
+        "projection_label": monitor_projection.get("projection_label"),
+        "action_paths": action_paths,
     }
     td_reasons = layer_timing.get("reasons") if isinstance(layer_timing.get("reasons"), list) else []
     if "过热/连续上涨" in td_reasons:
@@ -709,6 +919,8 @@ def tool_run_tail_session_analysis_and_send(
     mode: str = "prod",
     fetch_mode: str = "production",
     market_profile: str = "nikkei_513880",
+    monitor_point: str = "M7",
+    monitor_bundle: Optional[str] = None,
     webhook_url: Optional[str] = None,
     secret: Optional[str] = None,
     keyword: Optional[str] = None,
@@ -717,7 +929,12 @@ def tool_run_tail_session_analysis_and_send(
 ) -> Dict[str, Any]:
     from plugins.notification.send_analysis_report import tool_send_analysis_report
 
-    report_data, _ = build_tail_session_report_data(fetch_mode=fetch_mode, market_profile=market_profile)
+    report_data, _ = build_tail_session_report_data(
+        fetch_mode=fetch_mode,
+        market_profile=market_profile,
+        monitor_point=monitor_point,
+        monitor_bundle=monitor_bundle,
+    )
     out = tool_send_analysis_report(
         report_data=report_data,
         mode=mode,

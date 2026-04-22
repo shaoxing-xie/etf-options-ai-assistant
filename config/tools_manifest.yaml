@@ -1097,6 +1097,13 @@ tools:
         type: string
         description: nikkei_513880|nasdaq_513300（策略画像）
         default: nikkei_513880
+      monitor_point:
+        type: string
+        description: 监控点编码（M1..M6）
+        default: M6
+      monitor_bundle:
+        type: string
+        description: 可选；合并监控点（例如 M1_M2 或 M4_M5_M6）
       webhook_url:
         type: string
         description: 可选：自定义机器人 webhook（包含 access_token）

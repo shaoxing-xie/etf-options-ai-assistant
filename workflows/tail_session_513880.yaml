@@ -1,14 +1,15 @@
 name: tail_session_513880
-description: 日经225ETF(513880)交易日14:40尾盘监控与多角度建议
+description: 日经225ETF(513880)交易时段多时点区间监控与多角度建议（M1-M6）
 
-schedule: "40 14 * * 1-5"
+schedule: "15 9 * * 1-5"
 timezone: "Asia/Shanghai"
 
 structured_message: |
   【Cron 单次调用】
-  调用一次 `tool_run_tail_session_analysis_and_send(mode='prod', fetch_mode='production')`。
+  调用一次 `tool_run_tail_session_analysis_and_send(mode='prod', fetch_mode='production', market_profile='nikkei_513880', monitor_point='Mx')`。
 
   约束：
   - 输出 `report_type=tail_session`
+  - 报告以区间预测为主，输出核心参考区间与安全缓冲区间
   - 报告只提供多角度建议与可选路径，不提供唯一交易结论
   - 最终决策由用户自行作出

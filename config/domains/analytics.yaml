@@ -254,6 +254,13 @@ nikkei_tail_session:
   etf_code: '513880'
   index_symbol: ^N225
   decision_mode: user_final_decision
+  futures_enabled: true
+  range_defaults:
+    band_core_multiplier: 0.8
+    band_safe_multiplier: 1.2
+    min_band_pct: 0.35
+    max_band_pct: 2.2
+    breakout_confirm_minutes: 3
   technical_thresholds:
     ma25_dev_overheat: 5
     rsi_overbought: 70
@@ -262,36 +269,6 @@ nikkei_tail_session:
     up_days: 5
     down_days: 3
   gate_rules:
-    premium_hard_stop:
-      enabled: true
-      trigger:
-        premium_pct_gte: 5
-    premium_extreme_exit_bias:
-      enabled: true
-      trigger:
-        premium_pct_gte: 10
-    manager_notice_gate:
-      enabled: true
-      trigger:
-        manager_premium_notice: true
-        premium_pct_gte: 3
-    degraded_data_gate:
-      enabled: true
-      trigger:
-        data_quality_in:
-          - partial
-          - stale
-          - degraded
-    overnight_shock_gate:
-      enabled: true
-      trigger:
-        overnight_risk_level_in:
-          - high
-          - extreme
-    high_volatility_gate:
-      enabled: true
-      trigger:
-        atr_percentile_gte: 80
     liquidity_guard_gate:
       enabled: true
       trigger:
@@ -321,18 +298,11 @@ nikkei_tail_session:
   risk_notice_state:
     manager_premium_notice: false
   risk_notice_rules:
-    premium_notice:
+    narrow_band_notice:
       when:
-        premium_pct_gte: 3
-      message: 当前溢价偏高，需警惕价格向IOPV回归带来的被动回撤。
-    extreme_premium_notice:
-      when:
-        premium_pct_gte: 10
-      message: 当前属于极端溢价区间，不宜将上涨直接等同于安全盈利。
-    discount_notice:
-      when:
-        premium_pct_lt: 0
-      message: 当前处于折价区间，具备一定安全垫，但仍需结合周期层与风险层判断。
+        data_quality_in:
+          - fresh
+      message: 当前区间较窄，适合在区间内执行低吸高抛，避免追涨追跌。
     overbought_notice:
       when:
         rsi14_gte: 70

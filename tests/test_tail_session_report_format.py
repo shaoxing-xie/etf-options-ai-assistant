@@ -33,12 +33,41 @@ def test_tail_session_report_sections() -> None:
             },
             "risk_notices": ["当前溢价偏高，需警惕价格向IOPV回归带来的被动回撤。"],
             "user_decision_note": "本系统仅提供多视角信息，不替代你的最终交易决策。",
+            "signal_board": {
+                "direction_score": 2.1,
+                "strength_score": 2.8,
+                "confidence": 0.78,
+                "futures_status": "unknown",
+            },
+            "risk_gate": {"quality_status": "ok", "gates_triggered": ["liquidity_guard_gate"]},
+            "range_prediction": {
+                "core_range": [1.21, 1.25],
+                "safe_range": [1.20, 1.26],
+                "core_width_pct": 3.2,
+                "safe_width_pct": 4.1,
+            },
+            "monitor_projection": {
+                "projection_label": "午盘开盘区间",
+                "key_levels": [
+                    {"name": "afternoon_open_low", "value": 1.2123},
+                    {"name": "afternoon_open_high", "value": 1.2478},
+                ],
+            },
+        },
+        "monitor_context": {
+            "monitor_point": "M3",
+            "monitor_label": "M3 早盘收官",
+            "target_window": "10:30-11:30",
+            "template_focus": ["收官前15分钟结构", "午盘开盘区间"],
         },
     }
     _, body = _format_daily_report(report_data=rd, report_date=None)
-    assert "### 一、尾盘快照" in body
-    assert "### 三、分层建议（不合成单一结论）" in body
-    assert "### 四、用户可选路径" in body
-    assert "### 五、风险提示与执行摩擦" in body
-    assert "### 六、用户决策声明" in body
+    assert "### 一、时点快照" in body
+    assert "### 二、本时点模板焦点" in body
+    assert "### 三、区间预测（操作参考主轴）" in body
+    assert "### 四、时点专项预测" in body
+    assert "### 七、分层建议（不合成单一结论）" in body
+    assert "### 八、用户可选路径" in body
+    assert "### 九、风险提示与执行摩擦" in body
+    assert "### 十、用户决策声明" in body
     assert "IOPV来源：realtime" in body
