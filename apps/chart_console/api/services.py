@@ -59,6 +59,9 @@ class ApiServices:
         val = obj.get(key, default)
         return bool(val)
 
+    def _prefer_new(self) -> bool:
+        return self._feature_flag("prefer_new", self._feature_flag("semantic_read_enabled", False))
+
     def cache_get(self, key: str, ttl_sec: int) -> Any | None:
         hit = self._cache.get(key)
         if not hit:
@@ -208,7 +211,7 @@ class ApiServices:
             return {"success": False, "message": f"save analytics.yaml failed: {e}"}
 
     def get_screening_summary(self) -> dict[str, Any]:
-        if self._feature_flag("semantic_read_enabled", False):
+        if self._prefer_new():
             return {"success": True, "message": "ok", "data": self._semantic.dashboard()}
         return {"success": True, "message": "ok", "data": self._screening.summary()}
 
@@ -218,7 +221,7 @@ class ApiServices:
     def get_screening_by_date(self, date_key: str) -> tuple[dict[str, Any], int]:
         if not validate_screening_date_key((date_key or "").strip()):
             return {"success": False, "message": "invalid date (use YYYY-MM-DD)", "data": None}, 400
-        if self._feature_flag("semantic_read_enabled", False):
+        if self._prefer_new():
             return self.get_semantic_screening_view(date_key)
         art = self._screening.read_artifact_by_date(date_key.strip())
         if art is None:
@@ -226,7 +229,7 @@ class ApiServices:
         return {"success": True, "message": "ok", "data": art}, 200
 
     def get_tail_screening_summary(self) -> dict[str, Any]:
-        if self._feature_flag("semantic_read_enabled", False):
+        if self._prefer_new():
             return {"success": True, "message": "ok", "data": {"latest": {"recommended": self._semantic.dashboard().get("top_recommendations") or []}}}
         return {"success": True, "message": "ok", "data": self._tail_screening.summary()}
 
@@ -237,7 +240,7 @@ class ApiServices:
         date_key = (date_key or "").strip()
         if not validate_screening_date_key(date_key):
             return {"success": False, "message": "invalid date (use YYYY-MM-DD)", "data": None}, 400
-        if self._feature_flag("semantic_read_enabled", False):
+        if self._prefer_new():
             return self.get_semantic_screening_view(date_key)
         art = self._tail_screening.read_by_date(date_key)
         if art is None:
@@ -293,6 +296,14 @@ class ApiServices:
 
     def get_semantic_strategy_attribution(self, trade_date: str = "") -> dict[str, Any]:
         data = self._semantic.strategy_attribution(trade_date)
+        return {"success": True, "message": "ok", "data": data}
+
+    def get_semantic_orchestration_timeline(self, trade_date: str = "") -> dict[str, Any]:
+        data = self._semantic.orchestration_timeline(trade_date)
+        return {"success": True, "message": "ok", "data": data}
+
+    def get_semantic_task_dependency_health(self, trade_date: str = "") -> dict[str, Any]:
+        data = self._semantic.task_dependency_health(trade_date)
         return {"success": True, "message": "ok", "data": data}
 
     def record_fallback_event(self, primary_url: str, fallback_url: str, reason: str = "") -> dict[str, Any]:

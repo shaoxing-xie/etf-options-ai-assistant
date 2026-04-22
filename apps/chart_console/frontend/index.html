@@ -464,6 +464,7 @@
         <div class="subnav" role="tablist" aria-label="Ops tabs">
           <button class="subtab" id="subtab-ops-exec" role="tab" aria-selected="true" data-subview="exec">执行审计事件</button>
           <button class="subtab" id="subtab-ops-collect" role="tab" aria-selected="false" data-subview="collect">采集质量事件</button>
+          <button class="subtab" id="subtab-ops-health" role="tab" aria-selected="false" data-subview="health">任务健康总览</button>
         </div>
         <div class="bar screening-toolbar">
           <button type="button" id="btnOpsRefresh">刷新</button>
@@ -486,6 +487,14 @@
             <table>
               <thead><tr><th>任务ID</th><th>名称</th><th>cron</th><th>状态</th><th>质量</th><th>连续错误</th><th>工具</th></tr></thead>
               <tbody id="opsCollectTbody"></tbody>
+            </table>
+          </div>
+        </div>
+        <div class="research-view" id="ops-health-view" data-subview="health">
+          <div class="screening-table-wrap">
+            <table>
+              <thead><tr><th>任务ID</th><th>名称</th><th>调度</th><th>状态</th><th>质量</th><th>连续错误</th><th>错误摘要</th><th>修复建议</th><th>日志定位</th></tr></thead>
+              <tbody id="opsHealthTbody"></tbody>
             </table>
           </div>
         </div>

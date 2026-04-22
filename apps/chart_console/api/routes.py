@@ -140,6 +140,12 @@ class ApiRoutes:
         if path == "/api/semantic/strategy_attribution":
             trade_date = (query.get("trade_date") or [""])[0]
             return self.svc.get_semantic_strategy_attribution(str(trade_date)), 200, {}
+        if path == "/api/semantic/orchestration_timeline":
+            trade_date = (query.get("trade_date") or [""])[0]
+            return self.svc.get_semantic_orchestration_timeline(str(trade_date)), 200, {}
+        if path == "/api/semantic/task_dependency_health":
+            trade_date = (query.get("trade_date") or [""])[0]
+            return self.svc.get_semantic_task_dependency_health(str(trade_date)), 200, {}
         if path == "/api/ops/events":
             trade_date = (query.get("trade_date") or [""])[0]
             return self.svc.get_ops_events(str(trade_date)), 200, {"X-Deprecated": "true", "X-Replacement": "/api/semantic/ops_events"}

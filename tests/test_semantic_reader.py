@@ -78,6 +78,8 @@ def test_semantic_ops_events_view(monkeypatch, tmp_path: Path) -> None:
     assert payload["_meta"]["schema_name"] == "ops_events_view_v1"
     assert len(payload["execution_audit_events"]) == 1
     assert len(payload["collection_quality_events"]) == 1
+    assert len(payload["task_health_events"]) == 2
+    assert any(x.get("quality_status") == "degraded" for x in payload["task_health_events"])
     assert payload["collection_quality_events"][0]["quality_status"] == "degraded"
 
 
@@ -208,3 +210,36 @@ def test_research_metrics_and_diagnostics(tmp_path: Path) -> None:
     attribution = reader.strategy_attribution("2026-04-22")
     assert attribution["_meta"]["schema_name"] == "strategy_attribution_v1"
     assert "by_task_stage" in attribution["attribution"]
+
+
+def test_orchestration_timeline_and_health(tmp_path: Path) -> None:
+    root = tmp_path
+    events_dir = root / "data" / "decisions" / "orchestration" / "events"
+    events_dir.mkdir(parents=True)
+    event_row = {
+        "_meta": {"task_id": "nightly-stock-screening", "run_id": "r1", "quality_status": "ok"},
+        "data": {
+            "event_id": "nightly-stock-screening.r1.succeeded",
+            "event_time": "2026-04-22T20:00:00Z",
+            "task_id": "nightly-stock-screening",
+            "run_id": "r1",
+            "from_state": "running",
+            "to_state": "succeeded",
+            "reason": "completed",
+            "trigger_source": "cron",
+            "idempotency_key": "nightly-stock-screening:2026-04-22:daily",
+        },
+    }
+    (events_dir / "2026-04-22.jsonl").write_text(json.dumps(event_row) + "\n", encoding="utf-8")
+    (root / "data" / "semantic" / "screening_view").mkdir(parents=True)
+    (root / "data" / "semantic" / "screening_view" / "2026-04-22.json").write_text(
+        json.dumps({"_meta": {"schema_name": "screening_view_v1"}, "data": {"task_execution_monitor": []}}),
+        encoding="utf-8",
+    )
+    reader = SemanticReader(root)
+    timeline = reader.orchestration_timeline("2026-04-22")
+    assert timeline["_meta"]["schema_name"] == "orchestration_timeline_v1"
+    assert timeline["stats"]["succeeded_count"] == 1
+    health = reader.task_dependency_health("2026-04-22")
+    assert health["_meta"]["schema_name"] == "task_dependency_health_v1"
+    assert "satisfaction_rate" in health["health_metrics"]

@@ -16,6 +16,12 @@ class _Svc:
     def get_semantic_strategy_attribution(self, trade_date: str):
         return {"success": True, "data": {"trade_date": trade_date}}
 
+    def get_semantic_orchestration_timeline(self, trade_date: str):
+        return {"success": True, "data": {"trade_date": trade_date, "events": []}}
+
+    def get_semantic_task_dependency_health(self, trade_date: str):
+        return {"success": True, "data": {"trade_date": trade_date, "health_metrics": {}}}
+
     def record_fallback_event(self, primary_url: str, fallback_url: str, reason: str):
         return {"success": True, "data": {"primary_url": primary_url, "fallback_url": fallback_url, "reason": reason}}
 
@@ -36,6 +42,14 @@ def test_routes_semantic_analysis_endpoints() -> None:
     assert payload["data"]["period"] == "week"
 
     payload, code, _ = routes.handle_get("/api/semantic/strategy_attribution", {"trade_date": ["2026-04-22"]})
+    assert code == 200
+    assert payload["data"]["trade_date"] == "2026-04-22"
+
+    payload, code, _ = routes.handle_get("/api/semantic/orchestration_timeline", {"trade_date": ["2026-04-22"]})
+    assert code == 200
+    assert payload["data"]["trade_date"] == "2026-04-22"
+
+    payload, code, _ = routes.handle_get("/api/semantic/task_dependency_health", {"trade_date": ["2026-04-22"]})
     assert code == 200
     assert payload["data"]["trade_date"] == "2026-04-22"
 

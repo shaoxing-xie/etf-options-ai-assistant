@@ -19,15 +19,20 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
 from src.data_layer import MetaEnvelope, append_contract_jsonl, write_contract_json
 from src.feature_flags import legacy_write_allowed
+from src.orchestration.dependency_engine import DependencyEngine
+from src.orchestration.task_state_manager import TaskStateManager
 
 try:
     import yaml  # type: ignore
 except ImportError:
     yaml = None  # type: ignore
 
-ROOT = Path(__file__).resolve().parents[1]
 CONFIG_PATH = ROOT / "config" / "tail_screening_scoring.yaml"
 
 TOOL_TIMEOUT_STOCK_RANK = int((os.environ.get("TAIL_SCREENING_TIMEOUT_STOCK_RANK_SEC") or "90").strip() or "90")
@@ -2216,6 +2221,42 @@ def main() -> int:
     if str(ROOT) not in sys.path:
         sys.path.insert(0, str(ROOT))
 
+    run_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
+    trade_date = _today_shanghai()
+    depends_on = ["pre-market-sentiment-check", "extreme-sentiment-monitor", "nightly-stock-screening"]
+    session_type = str(os.environ.get("ORCH_SESSION_TYPE") or "").strip().lower()
+    is_manual_session = session_type == "manual"
+    trigger_source = str((os.environ.get("ORCH_TRIGGER_SOURCE") or "cron")).strip().lower()
+    manager = TaskStateManager(
+        root=ROOT,
+        task_id="intraday-tail-screening",
+        trade_date=trade_date,
+        run_id=run_id,
+        trigger_source=trigger_source,
+        trigger_window="intraday-30m",
+    )
+    claimed, claim_reason = manager.claim_execution(depends_on=depends_on)
+    if not claimed:
+        print(json.dumps({"success": True, "message": claim_reason, "trade_date": trade_date}, ensure_ascii=False))
+        return 0
+
+    if not is_manual_session:
+        wait = manager.wait_for_dependencies(depends_on, timeout_seconds=60, poll_seconds=1.0)
+        if not wait.satisfied:
+            manager.finish(to_state="skipped", reason=wait.reason, depends_on=depends_on, condition_met=False)
+            print(json.dumps({"success": True, "message": wait.reason, "missing": wait.missing}, ensure_ascii=False))
+            return 0
+
+        cond_eval = DependencyEngine().evaluate(
+            _load_orchestration_context(),
+            ["is_trading_day", "emergency_pause_active", "sentiment_dispersion_low"],
+        )
+        if not cond_eval.passed:
+            reason = f"condition_not_met:{','.join(cond_eval.failed_conditions)}"
+            manager.finish(to_state="skipped", reason=reason, depends_on=depends_on, condition_met=False)
+            print(json.dumps({"success": True, "message": reason, "details": cond_eval.details}, ensure_ascii=False))
+            return 0
+
     abnormal: list[str] = []
     try:
         result = run_tail_screening(max_candidates=max(10, min(args.max_candidates, 100)), notify_mode=args.notify_mode)
@@ -2227,6 +2268,7 @@ def main() -> int:
             mode=args.notify_mode,
         )
         print(json.dumps({"success": False, "error": str(e), "abnormal_notify": alert}, ensure_ascii=False, indent=2))
+        manager.finish(to_state="failed", reason=f"run_failed:{type(e).__name__}", depends_on=depends_on, condition_met=True)
         return 1
 
     notify_resp = {"success": True, "message": "not requested"}
@@ -2268,7 +2310,27 @@ def main() -> int:
             indent=2,
         )
     )
+    manager.finish(
+        to_state="succeeded",
+        reason="completed",
+        depends_on=depends_on,
+        condition_met=True,
+    )
     return 0
+
+
+def _load_orchestration_context() -> dict[str, Any]:
+    context: dict[str, Any] = {"is_trading_day": True}
+    pause = _read_json(ROOT / "data" / "screening" / "emergency_pause.json") or {}
+    context["emergency_pause_active"] = bool(pause.get("active"))
+    sent_dir = ROOT / "data" / "sentiment_check"
+    if sent_dir.is_dir():
+        latest = sorted([p for p in sent_dir.glob("*.json") if p.is_file()])
+        if latest:
+            snap = _read_json(latest[-1]) or {}
+            context["sentiment_dispersion"] = snap.get("sentiment_dispersion")
+            context["sentiment_dispersion_threshold"] = 0.7
+    return context
 
 
 if __name__ == "__main__":

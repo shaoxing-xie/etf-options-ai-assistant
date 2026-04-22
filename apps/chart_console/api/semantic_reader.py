@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -504,6 +505,56 @@ class SemanticReader:
             return merged
         return data
 
+    def _ops_runs_dir(self) -> Path:
+        return Path("/home/xie/.openclaw/cron/runs")
+
+    def _schedule_label(self, schedule: dict[str, Any]) -> str:
+        if not isinstance(schedule, dict):
+            return ""
+        kind = str(schedule.get("kind") or "")
+        if kind == "cron":
+            expr = str(schedule.get("expr") or "")
+            tz = str(schedule.get("tz") or "")
+            return f"{expr} ({tz})".strip()
+        if kind == "every":
+            try:
+                ms = int(schedule.get("everyMs") or 0)
+            except Exception:
+                ms = 0
+            if ms > 0:
+                minutes = max(1, ms // 60000)
+                return f"every {minutes}m"
+        return kind
+
+    def _last_finished_run(self, job_id: str) -> dict[str, Any]:
+        p = self._ops_runs_dir() / f"{job_id}.jsonl"
+        rows = _read_jsonl(p)
+        for row in reversed(rows):
+            if str(row.get("action") or "") == "finished":
+                return row
+        return {}
+
+    def _repair_hint(self, error: str) -> str:
+        e = (error or "").strip()
+        if not e:
+            return "无"
+        hint_map: list[tuple[str, str]] = [
+            (r"Channel is required when multiple channels are configured", "补充 delivery.channel 或改为 delivery.mode=none"),
+            (r"requires target <chatId\|user:openId\|chat:chatId>", "为 Feishu 发送配置 chatId/openId；或移除 announce 投递"),
+            (r"ERROR_NO_DELIVERY_TOOL_CALL", "调整任务提示词，避免将通知失败设为硬失败"),
+            (r"No such file or directory", "修正脚本绝对路径，先在目标目录确认文件存在"),
+            (r"can't open file", "修正 Python 脚本路径，并使用绝对解释器路径"),
+            (r"Request failed with status code 400", "检查消息长度/格式与目标参数，缩短摘要并重试"),
+            (r"401|unauthorized|鉴权", "检查 .env 中密钥是否生效并确认 provider 权限"),
+        ]
+        lower = e.lower()
+        for pat, hint in hint_map:
+            if re.search(pat, e, flags=re.I):
+                return hint
+        if "timeout" in lower:
+            return "提升 timeoutSeconds 或拆分任务步骤，先确认最慢环节"
+        return "查看 runs/*.jsonl 的 lastError 与 summary，按错误关键词修复"
+
     def ops_events(self, trade_date: str = "") -> dict[str, Any]:
         """Batch2 扩展：统一数据层 L4 的执行审计/采集质量事件视图。"""
         td = trade_date.strip() if isinstance(trade_date, str) else ""
@@ -514,6 +565,7 @@ class SemanticReader:
         jobs, lineage = self._ops_jobs_source()
         execution: list[dict[str, Any]] = []
         collection: list[dict[str, Any]] = []
+        task_health: list[dict[str, Any]] = []
         for job in jobs:
             payload = job.get("payload") if isinstance(job.get("payload"), dict) else {}
             tools = payload.get("toolsAllow") if isinstance(payload.get("toolsAllow"), list) else []
@@ -525,7 +577,7 @@ class SemanticReader:
                 "task_id": str(job.get("id") or ""),
                 "name": str(job.get("name") or ""),
                 "enabled": bool(job.get("enabled")),
-                "schedule": ((job.get("schedule") or {}).get("expr") if isinstance(job.get("schedule"), dict) else None),
+                "schedule": self._schedule_label(job.get("schedule") if isinstance(job.get("schedule"), dict) else {}),
                 "last_run_status": status,
                 "last_run_at_ms": state.get("lastRunAtMs"),
                 "next_run_at_ms": state.get("nextRunAtMs"),
@@ -534,13 +586,39 @@ class SemanticReader:
                 "quality_status": quality_status,
                 "lineage_refs": [lineage],
             }
+            last_finished = self._last_finished_run(str(job.get("id") or ""))
+            run_status = str(last_finished.get("status") or status or "")
+            run_error = str(last_finished.get("error") or state.get("lastError") or "")
+            health_quality = "degraded" if run_status == "error" or (isinstance(consecutive, int) and consecutive > 0) else "ok"
+            task_health.append(
+                {
+                    "task_id": str(job.get("id") or ""),
+                    "name": str(job.get("name") or ""),
+                    "enabled": bool(job.get("enabled")),
+                    "schedule": self._schedule_label(job.get("schedule") if isinstance(job.get("schedule"), dict) else {}),
+                    "last_run_status": run_status,
+                    "quality_status": health_quality,
+                    "consecutive_errors": consecutive,
+                    "last_run_at_ms": last_finished.get("ts") or state.get("lastRunAtMs"),
+                    "next_run_at_ms": state.get("nextRunAtMs"),
+                    "duration_ms": last_finished.get("durationMs") or state.get("lastDurationMs"),
+                    "error": run_error,
+                    "repair_hint": self._repair_hint(run_error),
+                    "run_log_path": str(self._ops_runs_dir() / f"{str(job.get('id') or '')}.jsonl"),
+                    "last_error_at_ms": (last_finished.get("ts") if run_status == "error" else None),
+                    "tools_allow": tools,
+                    "lineage_refs": [lineage, str(self._ops_runs_dir() / f"{str(job.get('id') or '')}.jsonl")],
+                }
+            )
             if any(t == "tool_run_data_cache_job" for t in tools):
                 collection.append(row)
             else:
                 execution.append(row)
+        task_health.sort(key=lambda x: str(x.get("task_id") or ""))
         return {
             "execution_audit_events": execution,
             "collection_quality_events": collection,
+            "task_health_events": task_health,
             "_meta": {
                 "schema_name": "ops_events_view_v1",
                 "schema_version": "1.0.0",
@@ -772,5 +850,125 @@ class SemanticReader:
                 "trade_date": td,
                 "quality_status": "ok",
                 "lineage_refs": [f"data/semantic/screening_view/{td}.json"],
+            },
+        }
+
+    def orchestration_timeline(self, trade_date: str = "") -> dict[str, Any]:
+        td = self._resolve_trade_date(trade_date)
+        rows = _read_jsonl(self.root / "data" / "decisions" / "orchestration" / "events" / f"{td}.jsonl")
+        events: list[dict[str, Any]] = []
+        for row in rows:
+            meta = row.get("_meta") if isinstance(row.get("_meta"), dict) else {}
+            data = row.get("data") if isinstance(row.get("data"), dict) else {}
+            if not data:
+                continue
+            events.append(
+                {
+                    "event_id": data.get("event_id"),
+                    "event_time": data.get("event_time"),
+                    "task_id": data.get("task_id") or meta.get("task_id"),
+                    "run_id": data.get("run_id") or meta.get("run_id"),
+                    "from_state": data.get("from_state"),
+                    "to_state": data.get("to_state"),
+                    "reason": data.get("reason"),
+                    "trigger_source": data.get("trigger_source"),
+                    "idempotency_key": data.get("idempotency_key"),
+                    "quality_status": meta.get("quality_status"),
+                }
+            )
+        stats = {
+            "total_events": len(events),
+            "succeeded_count": sum(1 for e in events if e.get("to_state") == "succeeded"),
+            "failed_count": sum(1 for e in events if e.get("to_state") == "failed"),
+            "skipped_count": sum(1 for e in events if e.get("to_state") == "skipped"),
+            "dependency_trigger_count": sum(1 for e in events if e.get("trigger_source") == "dependency"),
+            "cron_trigger_count": sum(1 for e in events if e.get("trigger_source") == "cron"),
+        }
+        return {
+            "trade_date": td,
+            "events": events,
+            "stats": stats,
+            "_meta": {
+                "schema_name": "orchestration_timeline_v1",
+                "schema_version": "1.0.0",
+                "task_id": "orchestration-timeline-aggregation",
+                "run_id": "",
+                "data_layer": "L4",
+                "generated_at": datetime.now(timezone.utc).isoformat(),
+                "trade_date": td,
+                "quality_status": "ok",
+                "lineage_refs": [f"data/decisions/orchestration/events/{td}.jsonl"],
+            },
+        }
+
+    def task_dependency_health(self, trade_date: str = "") -> dict[str, Any]:
+        td = self._resolve_trade_date(trade_date)
+        timeline = self.orchestration_timeline(td)
+        events = timeline.get("events") if isinstance(timeline.get("events"), list) else []
+        latest_by_task: dict[str, dict[str, Any]] = {}
+        for event in events:
+            if not isinstance(event, dict):
+                continue
+            task_id = str(event.get("task_id") or "")
+            if not task_id:
+                continue
+            latest_by_task[task_id] = event
+        unhealthy_tasks: list[dict[str, Any]] = []
+        timeout_count = 0
+        skip_count = 0
+        for task_id, event in latest_by_task.items():
+            reason = str(event.get("reason") or "")
+            to_state = str(event.get("to_state") or "")
+            if to_state == "skipped":
+                skip_count += 1
+            if "dependency_timeout" in reason:
+                timeout_count += 1
+            if to_state in {"failed", "skipped"}:
+                unhealthy_tasks.append(
+                    {
+                        "task_id": task_id,
+                        "state": to_state,
+                        "reason": reason,
+                        "trigger_source": event.get("trigger_source"),
+                    }
+                )
+        total_tasks = max(1, len(latest_by_task))
+        satisfied_count = total_tasks - len(unhealthy_tasks)
+        return {
+            "trade_date": td,
+            "dependency_graph": {
+                "pre-market-sentiment-check": [],
+                "strategy-calibration": ["pre-market-sentiment-check"],
+                "extreme-sentiment-monitor": ["pre-market-sentiment-check"],
+                "nightly-stock-screening": [
+                    "pre-market-sentiment-check",
+                    "strategy-calibration",
+                    "extreme-sentiment-monitor",
+                ],
+                "intraday-tail-screening": [
+                    "pre-market-sentiment-check",
+                    "extreme-sentiment-monitor",
+                    "nightly-stock-screening",
+                ],
+                "position-tracking": ["nightly-stock-screening"],
+                "weekly-selection-review": ["nightly-stock-screening", "intraday-tail-screening", "position-tracking"],
+            },
+            "health_metrics": {
+                "satisfaction_rate": round(float(satisfied_count) / float(total_tasks), 4),
+                "timeout_count": timeout_count,
+                "skip_count": skip_count,
+                "avg_wait_seconds": None,
+            },
+            "unhealthy_tasks": unhealthy_tasks,
+            "_meta": {
+                "schema_name": "task_dependency_health_v1",
+                "schema_version": "1.0.0",
+                "task_id": "task-dependency-health-aggregation",
+                "run_id": "",
+                "data_layer": "L4",
+                "generated_at": datetime.now(timezone.utc).isoformat(),
+                "trade_date": td,
+                "quality_status": "ok" if not unhealthy_tasks else "degraded",
+                "lineage_refs": [f"data/decisions/orchestration/events/{td}.jsonl"],
             },
         }

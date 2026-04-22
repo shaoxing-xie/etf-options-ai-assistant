@@ -82,6 +82,7 @@ SEND_FAIL=0
 SEND_UNKNOWN=0
 HARD_FAIL_ON_MISSING_SEND="1"
 PREFLIGHT_CHECK="${PREFLIGHT_CHECK:-1}"
+MANUAL_ORCH_SESSION_TYPE="${MANUAL_ORCH_SESSION_TYPE:-manual}"
 
 usage() {
   cat <<'EOF'
@@ -105,6 +106,7 @@ usage() {
 
 环境变量:
   JOBS_JSON=<path>           等价于 --jobs
+  MANUAL_ORCH_SESSION_TYPE   cron 手工触发时注入的 ORCH_SESSION_TYPE（默认: manual）
 
 示例:
   # 工具冒烟（不发真实通知）
@@ -322,6 +324,7 @@ run_job_cron() {
   local agent_id="${5:-}"
   # 来自 jobs.json payload.timeoutSeconds（秒），用于延长 --wait-finished 上限
   local job_timeout_sec="${6:-}"
+  local payload_message="${7:-}"
 
   echo "=== JOB $job_id (cron run) ===" | tee -a "$LOG"
   echo "name: $job_name" | tee -a "$LOG"
@@ -348,6 +351,18 @@ run_job_cron() {
       echo "INFO: cron run --timeout bumped to ${effective_cron_ms}ms (job payload.timeoutSeconds=${job_timeout_sec}s)" | tee -a "$LOG"
     fi
   fi
+  # 手工脚本触发（scripts/test_cron_tools.sh）需要“强制启动执行”，即使同一窗口已经 already_executed。
+  # 约定：当 filter 形态是精确 job_id（^<id>$）且该任务走 orchestration_entrypoint 时，注入 ORCH_SESSION_TYPE=manual
+  # 从而使其 idempotency_key 带 session_type 后缀，不被 cron 口径的 already_executed 拦住。
+  if [[ -n "$payload_message" && "$payload_message" == *"scripts/orchestration_entrypoint.py"* ]]; then
+    if [[ "$FILTER_REGEX" == "^${job_id}$" ]]; then
+      export ORCH_SESSION_TYPE="$MANUAL_ORCH_SESSION_TYPE"
+      echo "INFO: manual cron trigger detected (filter=^${job_id}$); set ORCH_SESSION_TYPE=$ORCH_SESSION_TYPE" | tee -a "$LOG"
+    else
+      unset ORCH_SESSION_TYPE || true
+    fi
+  fi
+
   local cmd=(openclaw cron run "$job_id" --timeout "$effective_cron_ms")
   if [[ "$EXPECT_FINAL" == "1" ]]; then
     cmd+=(--expect-final)
@@ -967,6 +982,7 @@ for j in obj.get("jobs", []):
         "agentId": j.get("agentId") or "",
         "timeoutSeconds": payload.get("timeoutSeconds"),
         "tools": tools,
+        "message": msg,
     }
     print(json.dumps(out, ensure_ascii=False))
 PY
@@ -988,9 +1004,10 @@ while IFS= read -r job_line; do
   tools_csv="$(echo "$job_line" | jq -r '.tools | join(",")')"
   agent_id="$(echo "$job_line" | jq -r '.agentId // ""')"
   job_timeout_sec="$(echo "$job_line" | jq -r 'if (.timeoutSeconds | type) == "number" then .timeoutSeconds | floor else empty end')"
+  payload_message="$(echo "$job_line" | jq -r '.message // ""')"
 
   if [[ "$MODE" == "cron" ]]; then
-    run_job_cron "$job_id" "$job_name" "$enabled" "$tools_csv" "$agent_id" "$job_timeout_sec"
+    run_job_cron "$job_id" "$job_name" "$enabled" "$tools_csv" "$agent_id" "$job_timeout_sec" "$payload_message"
   else
     run_job_tools "$job_id" "$job_name" "$enabled" "$tools_csv"
   fi

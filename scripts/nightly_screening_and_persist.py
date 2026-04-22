@@ -11,17 +11,21 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Set
 
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
 from src.data_layer import MetaEnvelope, write_contract_json
 from src.feature_flags import legacy_write_allowed
-
-ROOT = Path(__file__).resolve().parents[1]
-
+from src.orchestration.dependency_engine import DependencyEngine
+from src.orchestration.task_state_manager import TaskStateManager
 
 def _run_tool(name: str, args: dict) -> dict:
     exe = sys.executable
@@ -207,6 +211,48 @@ def main() -> int:
     if str(ROOT) not in sys.path:
         sys.path.insert(0, str(ROOT))
 
+    run_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
+    trade_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    depends_on = ["pre-market-sentiment-check", "strategy-calibration", "extreme-sentiment-monitor"]
+    session_type = str(os.environ.get("ORCH_SESSION_TYPE") or "").strip().lower()
+    is_manual_session = session_type == "manual"
+    trigger_source = str((os.environ.get("ORCH_TRIGGER_SOURCE") or "cron")).strip().lower()  # type: ignore[name-defined]
+    manager = TaskStateManager(
+        root=ROOT,
+        task_id="nightly-stock-screening",
+        trade_date=trade_date,
+        run_id=run_id,
+        trigger_source=trigger_source,
+        trigger_window="daily",
+    )
+    claimed, claim_reason = manager.claim_execution(depends_on=depends_on)
+    if not claimed:
+        print(json.dumps({"success": True, "message": claim_reason, "trade_date": trade_date}, ensure_ascii=False))
+        return 0
+
+    if not is_manual_session:
+        wait = manager.wait_for_dependencies(depends_on, timeout_seconds=90, poll_seconds=1.0)
+        if not wait.satisfied:
+            manager.finish(to_state="skipped", reason=wait.reason, depends_on=depends_on, condition_met=False)
+            print(json.dumps({"success": True, "message": wait.reason, "missing": wait.missing}, ensure_ascii=False))
+            return 0
+
+        context = _load_orchestration_context()
+        cond_eval = DependencyEngine().evaluate(
+            context,
+            [
+                "is_trading_day",
+                "position_ceiling_positive",
+                "sentiment_stage_not_extreme",
+                "emergency_pause_active",
+            ],
+        )
+        if not cond_eval.passed:
+            reason = f"condition_not_met:{','.join(cond_eval.failed_conditions)}"
+            manager.finish(to_state="skipped", reason=reason, depends_on=depends_on, condition_met=False)
+            print(json.dumps({"success": True, "message": reason, "details": cond_eval.details}, ensure_ascii=False))
+            return 0
+
     screen: Dict[str, Any] = {}
     fin: Dict[str, Any] = {}
     try:
@@ -240,6 +286,7 @@ def main() -> int:
             f"[nightly-stock-screening] 执行异常（{when} UTC）",
             [f"exception={type(e).__name__}: {e}"],
         )
+        manager.finish(to_state="failed", reason=f"run_failed:{type(e).__name__}", depends_on=depends_on, condition_met=True)
         print(json.dumps({"screen": False, "finalize": {"success": False, "message": str(e)}, "abnormal_notify": fei}, ensure_ascii=False, indent=2))
         return 1
 
@@ -260,7 +307,29 @@ def main() -> int:
             indent=2,
         )
     )
-    return 0 if fin.get("success") and screen.get("success") else 1
+    ok = bool(fin.get("success")) and bool(screen.get("success"))
+    manager.finish(
+        to_state="succeeded" if ok else "failed",
+        reason="completed" if ok else "screen_or_finalize_failed",
+        depends_on=depends_on,
+        condition_met=True,
+    )
+    return 0 if ok else 1
+
+
+def _load_orchestration_context() -> Dict[str, Any]:
+    context: Dict[str, Any] = {"is_trading_day": True, "position_ceiling": 1.0}
+    cal = _read_artifact(str(ROOT / "config" / "weekly_calibration.json"))
+    if isinstance(cal, dict):
+        context["position_ceiling"] = cal.get("position_ceiling", 1.0)
+    sentiment_files = sorted((ROOT / "data" / "sentiment_check").glob("*.json"))
+    if sentiment_files:
+        snap = _read_artifact(str(sentiment_files[-1]))
+        context["sentiment_stage"] = snap.get("sentiment_stage")
+        context["sentiment_dispersion"] = snap.get("sentiment_dispersion")
+    pause = _read_artifact(str(ROOT / "data" / "screening" / "emergency_pause.json"))
+    context["emergency_pause_active"] = bool(pause.get("active")) if isinstance(pause, dict) else False
+    return context
 
 
 def _persist_new_data_layer(*, screen: Dict[str, Any], fin: Dict[str, Any], artifact: Dict[str, Any]) -> None:

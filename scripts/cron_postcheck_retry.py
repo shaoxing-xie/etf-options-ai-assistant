@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import subprocess
 import time
@@ -157,6 +158,23 @@ def _save_state(path: Path, data: dict[str, Any]) -> None:
     path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+def _send_feishu_alert(repo_root: Path, *, title: str, message: str) -> tuple[bool, str]:
+    runner = repo_root / "tool_runner.py"
+    py = repo_root / ".venv" / "bin" / "python"
+    if not py.exists() or not runner.exists():
+        return False, "missing python/tool_runner"
+    cmd = [
+        str(py),
+        str(runner),
+        "tool_send_feishu_message",
+        json.dumps({"title": title, "message": message}, ensure_ascii=False),
+    ]
+    p = subprocess.run(cmd, capture_output=True, text=True, cwd=str(repo_root))
+    ok = p.returncode == 0
+    tail = (p.stdout or p.stderr or "").strip()[-500:]
+    return ok, tail
+
+
 def _extract_tools_from_message(message: str) -> list[str]:
     if not message:
         return []
@@ -223,6 +241,18 @@ def _extract_required_send_tools(message: str) -> list[str]:
             seen.add(t)
             dedup.append(t)
     return dedup
+
+
+def _parse_csv_items(text: str) -> list[str]:
+    out: list[str] = []
+    seen: set[str] = set()
+    for item in str(text or "").split(","):
+        v = item.strip()
+        if not v or v in seen:
+            continue
+        seen.add(v)
+        out.append(v)
+    return out
 
 
 def _discover_single_tool_jobs(jobs_json: Path) -> dict[str, str]:
@@ -486,6 +516,45 @@ def _has_executed_today(entries: list[dict[str, Any]], timezone_name: str) -> bo
     return False
 
 
+def _orch_has_terminal_succeeded_today(
+    *,
+    repo_root: Path,
+    task_id: str,
+    trade_date: str,
+    trigger_window: str,
+) -> bool:
+    """
+    Check L3 orchestration facts (append-only events) instead of cron-run entries.
+
+    We consider "succeeded" as the only terminal success for the idempotency key.
+    Skipped/failed do NOT satisfy the dependency chain.
+    """
+    events_file = repo_root / "data" / "decisions" / "orchestration" / "events" / f"{trade_date}.jsonl"
+    if not events_file.is_file():
+        return False
+    idempotency_key = f"{task_id}:{trade_date}:{trigger_window}"
+    try:
+        with events_file.open("r", encoding="utf-8", errors="ignore") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    row = json.loads(line)
+                except Exception:
+                    continue
+                data = row.get("data") or {}
+                if data.get("task_id") != task_id:
+                    continue
+                if data.get("idempotency_key") != idempotency_key:
+                    continue
+                if data.get("to_state") == "succeeded":
+                    return True
+    except Exception:
+        return False
+    return False
+
+
 def _process_job(
     job_id: str,
     expected_tool: str,
@@ -689,6 +758,226 @@ def _process_job_scheduled_single_catchup(
     return "retried", f"{job_id}({job_name}): SCHEDULED_SINGLE_CATCHUP_TRIGGERED (expr={expr})"
 
 
+ORCHESTRATION_DEPENDENCY_RUNNERS: dict[str, dict[str, Any]] = {
+    "pre-market-sentiment-check": {
+        "depends_on": [],
+        "trigger_window": "daily",
+        "conditions": ["is_trading_day"],
+        "command": "/home/xie/etf-options-ai-assistant/.venv/bin/python scripts/pre_market_sentiment_check_and_persist.py",
+    },
+    "strategy-calibration": {
+        "depends_on": ["pre-market-sentiment-check"],
+        "trigger_window": "weekly",
+        "conditions": ["is_trading_day"],
+        "command": "/home/xie/etf-options-ai-assistant/.venv/bin/python scripts/strategy_calibration_and_persist.py",
+    },
+    "extreme-sentiment-monitor": {
+        "depends_on": ["pre-market-sentiment-check"],
+        "trigger_window": "intraday-15m",
+        "conditions": ["is_trading_day"],
+        "command": "/home/xie/etf-options-ai-assistant/.venv/bin/python scripts/extreme_sentiment_monitor_and_persist.py",
+    },
+    "nightly-stock-screening": {
+        "depends_on": ["pre-market-sentiment-check", "strategy-calibration", "extreme-sentiment-monitor"],
+        "trigger_window": "daily",
+        "conditions": ["is_trading_day", "position_ceiling_positive", "sentiment_stage_not_extreme", "emergency_pause_active"],
+        "command": "/bin/bash -lc \"set -euo pipefail; /home/xie/etf-options-ai-assistant/.venv/bin/python scripts/nightly_screening_and_persist.py; /home/xie/etf-options-ai-assistant/.venv/bin/python scripts/persist_screening_semantic_snapshot.py\"",
+    },
+    "intraday-tail-screening": {
+        "depends_on": ["pre-market-sentiment-check", "extreme-sentiment-monitor", "nightly-stock-screening"],
+        "trigger_window": "intraday-30m",
+        "conditions": ["is_trading_day", "emergency_pause_active", "sentiment_dispersion_low"],
+        "command": "/bin/bash -lc \"set -euo pipefail; timeout 1500s /home/xie/etf-options-ai-assistant/.venv/bin/python scripts/intraday_tail_screening_and_persist.py --max-candidates 50; /home/xie/etf-options-ai-assistant/.venv/bin/python scripts/persist_screening_view_snapshot.py\"",
+    },
+    "position-tracking": {
+        "depends_on": ["nightly-stock-screening"],
+        "trigger_window": "intraday-30m",
+        "conditions": ["is_trading_day"],
+        "command": "/home/xie/etf-options-ai-assistant/.venv/bin/python scripts/position_tracking_and_persist.py",
+    },
+    "weekly-selection-review": {
+        "depends_on": ["nightly-stock-screening", "intraday-tail-screening", "position-tracking"],
+        "trigger_window": "weekly",
+        "conditions": ["is_trading_day"],
+        "command": "/home/xie/etf-options-ai-assistant/.venv/bin/python scripts/weekly_selection_review_and_persist.py",
+    },
+}
+
+
+def _run_dependency_entrypoint(job_id: str, cfg: dict[str, Any], timeout_ms: int) -> tuple[bool, str]:
+    timeout_sec = max(60, int(timeout_ms / 1000))
+    depends_on = ",".join(cfg.get("depends_on") or [])
+    conditions = ",".join(cfg.get("conditions") or [])
+    command = str(cfg.get("command") or "").strip()
+    cmd = (
+        "set -euo pipefail; "
+        "set -a; source /home/xie/.openclaw/.env || true; set +a; "
+        "cd /home/xie/etf-options-ai-assistant; "
+        "ORCH_TRIGGER_SOURCE=dependency "
+        "/home/xie/etf-options-ai-assistant/.venv/bin/python scripts/orchestration_entrypoint.py "
+        f"--task-id {job_id} "
+        "--trigger-source dependency "
+        f"--trigger-window {cfg.get('trigger_window') or 'daily'} "
+        f"--depends-on \"{depends_on}\" "
+        f"--conditions \"{conditions}\" "
+        f"--timeout-seconds {min(300, timeout_sec)} "
+        f"--command '{command}'"
+    )
+    p = subprocess.run(
+        ["/bin/bash", "-lc", cmd],
+        capture_output=True,
+        text=True,
+        env=dict(os.environ),
+    )
+    out = (p.stdout or "").strip()
+    err = (p.stderr or "").strip()
+    msg = out if out else err
+    return p.returncode == 0, msg[-800:]
+
+
+def _process_job_dependency_catchup(
+    job_id: str,
+    timezone_name: str,
+    retry_timeout_ms: int,
+    state: dict[str, Any],
+    max_attempts: int,
+) -> tuple[str, str]:
+    cfg = ORCHESTRATION_DEPENDENCY_RUNNERS.get(job_id)
+    if not cfg:
+        return "skip", f"{job_id}: no dependency runner config"
+    repo_root = Path("/home/xie/etf-options-ai-assistant")
+    trade_date = _today_str(timezone_name)
+    trigger_window = str(cfg.get("trigger_window") or "daily")
+    if _orch_has_terminal_succeeded_today(
+        repo_root=repo_root,
+        task_id=job_id,
+        trade_date=trade_date,
+        trigger_window=trigger_window,
+    ):
+        return "pass", f"{job_id}: already succeeded today (orchestration events)"
+    runs = _run_json(["openclaw", "cron", "runs", "--id", job_id, "--limit", "200"])
+    entries = runs.get("entries") or []
+    if _has_executed_today(entries, timezone_name):
+        # Note: cron-run can be 'ok' even when orchestration skipped; treat cron-run as weak signal.
+        # If orchestration did not succeed, we still allow ONE dependency catch-up trigger per day.
+        pass
+    deps = cfg.get("depends_on") or []
+    for dep in deps:
+        dep_cfg = ORCHESTRATION_DEPENDENCY_RUNNERS.get(dep) or {}
+        dep_window = str(dep_cfg.get("trigger_window") or "daily")
+        if not _orch_has_terminal_succeeded_today(
+            repo_root=repo_root,
+            task_id=dep,
+            trade_date=trade_date,
+            trigger_window=dep_window,
+        ):
+            return "skip", f"{job_id}: upstream not ready ({dep})"
+    state_key = f"dependency-catchup:{job_id}:{trade_date}"
+    attempt_rec = state.get(state_key) if isinstance(state.get(state_key), dict) else {}
+    attempts = int((attempt_rec or {}).get("attempts") or 0)
+    if attempts >= max(1, max_attempts):
+        return "skip", f"{job_id}: dependency catch-up attempts exhausted ({attempts}/{max_attempts})"
+    ok, msg = _run_dependency_entrypoint(job_id, cfg, retry_timeout_ms)
+    state[state_key] = {
+        "triggered": True,
+        "attempts": attempts + 1,
+        "triggeredAtMs": int(time.time() * 1000),
+        "ok": ok,
+        "message_tail": msg,
+    }
+    if ok:
+        return "retried", f"{job_id}: DEPENDENCY_CATCHUP_TRIGGERED (attempt {attempts + 1}/{max_attempts})"
+    return "fail", f"{job_id}: dependency catch-up failed ({msg})"
+
+
+ORCHESTRATION_ARTIFACT_GUARDS: dict[str, list[str]] = {
+    # Critical outputs that must move forward when cron run claims success.
+    "pre-market-sentiment-check": [
+        "/home/xie/etf-options-ai-assistant/data/sentiment_check/{trade_date}.json",
+        "/home/xie/etf-options-ai-assistant/data/semantic/sentiment_snapshot/{trade_date}.json",
+    ],
+    "strategy-calibration": [
+        "/home/xie/etf-options-ai-assistant/data/decisions/signals/strategy_calibration_{trade_date}.json",
+    ],
+    "extreme-sentiment-monitor": [
+        "/home/xie/etf-options-ai-assistant/data/decisions/risk/gate_events/extreme_sentiment_{trade_date}.json",
+    ],
+    "nightly-stock-screening": [
+        "/home/xie/etf-options-ai-assistant/data/screening/{trade_date}.json",
+        "/home/xie/etf-options-ai-assistant/data/decisions/recommendations/nightly_{trade_date}.json",
+    ],
+    "intraday-tail-screening": [
+        "/home/xie/etf-options-ai-assistant/data/tail_screening/{trade_date}.json",
+        "/home/xie/etf-options-ai-assistant/data/semantic/screening_view/{trade_date}.json",
+    ],
+    "position-tracking": [
+        "/home/xie/etf-options-ai-assistant/data/decisions/watchlist/history/{trade_date}.json",
+    ],
+    "weekly-selection-review": [
+        "/home/xie/etf-options-ai-assistant/data/screening/weekly_review.json",
+    ],
+}
+
+
+def _process_orchestration_artifact_guard(
+    *,
+    job_id: str,
+    trade_date: str,
+    timezone_name: str,
+    max_age_minutes: int,
+    state: dict[str, Any],
+) -> tuple[str, str]:
+    paths_tpl = ORCHESTRATION_ARTIFACT_GUARDS.get(job_id) or []
+    if not paths_tpl:
+        return "skip", f"{job_id}: no artifact guard config"
+    runs = _run_json(["openclaw", "cron", "runs", "--id", job_id, "--limit", "20"])
+    entries = runs.get("entries") or []
+    latest = _latest_finished(entries)
+    if not latest:
+        return "skip", f"{job_id}: no finished entry for artifact guard"
+    if str(latest.get("status") or "").lower() != "ok":
+        return "skip", f"{job_id}: latest status is not ok"
+    run_at_ms = int(latest.get("runAtMs", 0) or 0)
+    age_ms = int(time.time() * 1000) - run_at_ms
+    if age_ms > max_age_minutes * 60 * 1000:
+        return "skip", f"{job_id}: latest finished run too old for artifact guard"
+
+    stale: list[str] = []
+    for tpl in paths_tpl:
+        p = Path(tpl.format(trade_date=trade_date))
+        if not p.exists():
+            stale.append(f"missing:{p}")
+            continue
+        mtime_ms = int(p.stat().st_mtime * 1000)
+        if mtime_ms < run_at_ms:
+            stale.append(f"stale:{p}")
+    if not stale:
+        return "pass", f"{job_id}: artifact freshness ok"
+
+    state_key = f"artifact-guard-alert:{job_id}:{trade_date}:{run_at_ms}"
+    if state.get(state_key, {}).get("alerted") is True:
+        return "fail", f"{job_id}: artifact stale and already alerted ({','.join(stale)})"
+
+    repo_root = Path("/home/xie/etf-options-ai-assistant")
+    title = f"[artifact-guard] {job_id} cron=ok but artifact stale"
+    msg = (
+        f"job_id={job_id}\ntrade_date={trade_date}\nrunAtMs={run_at_ms}\n"
+        f"timezone={timezone_name}\nissues={';'.join(stale)}\n"
+        "action=manual rerun or inspect session logs"
+    )
+    sent_ok, sent_tail = _send_feishu_alert(repo_root, title=title, message=msg)
+    state[state_key] = {
+        "alerted": True,
+        "alertedAtMs": int(time.time() * 1000),
+        "issues": stale,
+        "feishu_ok": sent_ok,
+        "feishu_tail": sent_tail,
+    }
+    if sent_ok:
+        return "fail", f"{job_id}: artifact stale alert sent ({','.join(stale)})"
+    return "fail", f"{job_id}: artifact stale alert failed ({','.join(stale)})"
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Cron tool post-check and one-shot retry.")
     parser.add_argument("--job-id", help="Cron job id to inspect and repair.")
@@ -724,6 +1013,30 @@ def main() -> int:
         help="Auto-discover low-frequency single cron jobs and trigger once if today's execution is missing.",
     )
     parser.add_argument(
+        "--auto-orchestration-dependency-catchup",
+        action="store_true",
+        help="Use existing guard runner to trigger dependency-source orchestration for first DAG batch when upstream is ready.",
+    )
+    parser.add_argument(
+        "--auto-orchestration-artifact-guard",
+        action="store_true",
+        help="Check critical orchestration artifacts freshness; alert when cron is ok but artifacts are stale/missing.",
+    )
+    parser.add_argument(
+        "--dependency-catchup-max-attempts",
+        type=int,
+        default=3,
+        help="Per-task max retry attempts per day for dependency catch-up mode.",
+    )
+    parser.add_argument(
+        "--dependency-catchup-tasks",
+        default="",
+        help=(
+            "Comma-separated task ids for dependency catch-up allowlist. "
+            "When empty, all configured dependency tasks are eligible."
+        ),
+    )
+    parser.add_argument(
         "--timezone",
         default="Asia/Shanghai",
         help="Timezone used by --auto-analysis-daily-catchup for 'today' determination.",
@@ -748,6 +1061,8 @@ def main() -> int:
     targets_send_required: dict[str, list[str]] = {}
     targets_daily_catchup: dict[str, str] = {}
     targets_scheduled_single_catchup: dict[str, tuple[str, str]] = {}
+    targets_dependency_catchup: dict[str, dict[str, Any]] = {}
+    targets_artifact_guard: dict[str, list[str]] = {}
     if args.auto_single_tool_tasks or args.auto_single_send_tasks:
         targets.update(discovered)
     if args.auto_send_required_tasks:
@@ -756,6 +1071,19 @@ def main() -> int:
         targets_daily_catchup.update(discovered_analysis_jobs)
     if args.auto_scheduled_single_catchup:
         targets_scheduled_single_catchup.update(discovered_scheduled_single_jobs)
+    if args.auto_orchestration_dependency_catchup:
+        allow_tasks = _parse_csv_items(args.dependency_catchup_tasks)
+        if allow_tasks:
+            for task_id in allow_tasks:
+                cfg = ORCHESTRATION_DEPENDENCY_RUNNERS.get(task_id)
+                if isinstance(cfg, dict):
+                    targets_dependency_catchup[task_id] = cfg
+                else:
+                    print(f"SKIP: unknown dependency catch-up task '{task_id}'")
+        else:
+            targets_dependency_catchup.update(ORCHESTRATION_DEPENDENCY_RUNNERS)
+    if args.auto_orchestration_artifact_guard:
+        targets_artifact_guard.update(ORCHESTRATION_ARTIFACT_GUARDS)
     if args.job_id:
         jid = args.job_id.strip()
         if jid:
@@ -765,7 +1093,14 @@ def main() -> int:
                 return 1
             targets[jid] = tool
 
-    if not targets and not targets_send_required and not targets_daily_catchup and not targets_scheduled_single_catchup:
+    if (
+        not targets
+        and not targets_send_required
+        and not targets_daily_catchup
+        and not targets_scheduled_single_catchup
+        and not targets_dependency_catchup
+        and not targets_artifact_guard
+    ):
         print("SKIP: no target jobs (use --job-id/--tool-name or auto discovery flags)")
         return 0
 
@@ -833,6 +1168,33 @@ def main() -> int:
             had_fail = True
         elif status == "retried":
             had_retry = True
+    for jid in targets_dependency_catchup.keys():
+        if jid in targets or jid in targets_send_required:
+            continue
+        status, msg = _process_job_dependency_catchup(
+            job_id=jid,
+            timezone_name=args.timezone,
+            retry_timeout_ms=args.retry_timeout_ms,
+            state=state,
+            max_attempts=args.dependency_catchup_max_attempts,
+        )
+        print(f"{status.upper()}: {msg}")
+        if status == "fail":
+            had_fail = True
+        elif status == "retried":
+            had_retry = True
+    trade_date = _today_str(args.timezone)
+    for jid in targets_artifact_guard.keys():
+        status, msg = _process_orchestration_artifact_guard(
+            job_id=jid,
+            trade_date=trade_date,
+            timezone_name=args.timezone,
+            max_age_minutes=args.max_age_minutes,
+            state=state,
+        )
+        print(f"{status.upper()}: {msg}")
+        if status == "fail":
+            had_fail = True
 
     _save_state(state_file, state)
     if had_fail:

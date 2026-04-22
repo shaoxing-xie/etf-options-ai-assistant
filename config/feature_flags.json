@@ -2,10 +2,9 @@
   "semantic_read_enabled": true,
   "legacy_write_enabled": true,
   "legacy_read_enabled": false,
+  "prefer_new": true,
   "legacy_write_disabled_tasks": [
     "extreme-sentiment-monitor",
-    "intraday-tail-screening",
-    "nightly-stock-screening",
     "position-tracking",
     "pre-market-sentiment-check",
     "screening-emergency-stop",
