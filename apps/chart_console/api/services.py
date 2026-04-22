@@ -13,6 +13,8 @@ from src.services.market_data_service import MarketDataService
 from src.services.workspace_service import WorkspaceService
 
 from apps.chart_console.api.screening_reader import ScreeningReader, validate_screening_date_key
+from apps.chart_console.api.semantic_reader import SemanticReader
+from apps.chart_console.api.tail_screening_reader import TailScreeningReader
 
 
 def _repo_root_for_data() -> Path:
@@ -35,6 +37,7 @@ ROOT = _repo_root_for_data()
 ALERTS_PATH = ROOT / "config" / "alerts.yaml"
 MARKET_DATA_PATH = ROOT / "config" / "domains" / "market_data.yaml"
 ANALYTICS_PATH = ROOT / "config" / "domains" / "analytics.yaml"
+FEATURE_FLAGS_PATH = ROOT / "config" / "feature_flags.json"
 
 
 class ApiServices:
@@ -45,6 +48,16 @@ class ApiServices:
         self.workspace = WorkspaceService()
         self._cache: dict[str, tuple[float, Any]] = {}
         self._screening = ScreeningReader(ROOT)
+        self._tail_screening = TailScreeningReader(ROOT)
+        self._semantic = SemanticReader(ROOT)
+
+    def _feature_flag(self, key: str, default: bool = False) -> bool:
+        try:
+            obj = json.loads(FEATURE_FLAGS_PATH.read_text(encoding="utf-8")) if FEATURE_FLAGS_PATH.is_file() else {}
+        except Exception:
+            obj = {}
+        val = obj.get(key, default)
+        return bool(val)
 
     def cache_get(self, key: str, ttl_sec: int) -> Any | None:
         hit = self._cache.get(key)
@@ -195,6 +208,8 @@ class ApiServices:
             return {"success": False, "message": f"save analytics.yaml failed: {e}"}
 
     def get_screening_summary(self) -> dict[str, Any]:
+        if self._feature_flag("semantic_read_enabled", False):
+            return {"success": True, "message": "ok", "data": self._semantic.dashboard()}
         return {"success": True, "message": "ok", "data": self._screening.summary()}
 
     def get_screening_history(self) -> dict[str, Any]:
@@ -203,7 +218,52 @@ class ApiServices:
     def get_screening_by_date(self, date_key: str) -> tuple[dict[str, Any], int]:
         if not validate_screening_date_key((date_key or "").strip()):
             return {"success": False, "message": "invalid date (use YYYY-MM-DD)", "data": None}, 400
+        if self._feature_flag("semantic_read_enabled", False):
+            return self.get_semantic_screening_view(date_key)
         art = self._screening.read_artifact_by_date(date_key.strip())
         if art is None:
             return {"success": False, "message": "not found", "data": None}, 404
         return {"success": True, "message": "ok", "data": art}, 200
+
+    def get_tail_screening_summary(self) -> dict[str, Any]:
+        if self._feature_flag("semantic_read_enabled", False):
+            return {"success": True, "message": "ok", "data": {"latest": {"recommended": self._semantic.dashboard().get("top_recommendations") or []}}}
+        return {"success": True, "message": "ok", "data": self._tail_screening.summary()}
+
+    def get_tail_screening_history(self) -> dict[str, Any]:
+        return {"success": True, "message": "ok", "data": self._tail_screening.history()}
+
+    def get_tail_screening_by_date(self, date_key: str) -> tuple[dict[str, Any], int]:
+        date_key = (date_key or "").strip()
+        if not validate_screening_date_key(date_key):
+            return {"success": False, "message": "invalid date (use YYYY-MM-DD)", "data": None}, 400
+        if self._feature_flag("semantic_read_enabled", False):
+            return self.get_semantic_screening_view(date_key)
+        art = self._tail_screening.read_by_date(date_key)
+        if art is None:
+            return {"success": False, "message": "not found", "data": None}, 404
+        return {"success": True, "message": "ok", "data": art}, 200
+
+    def get_semantic_dashboard(self) -> dict[str, Any]:
+        return {"success": True, "message": "ok", "data": self._semantic.dashboard()}
+
+    def get_semantic_timeline(self, trade_date: str) -> tuple[dict[str, Any], int]:
+        try:
+            data = self._semantic.timeline(trade_date)
+        except ValueError:
+            return {"success": False, "message": "invalid trade_date (use YYYY-MM-DD)", "data": None}, 400
+        return {"success": True, "message": "ok", "data": data}, 200
+
+    def get_semantic_screening_view(self, trade_date: str) -> tuple[dict[str, Any], int]:
+        try:
+            data = self._semantic.screening_view(trade_date)
+        except ValueError:
+            return {"success": False, "message": "invalid trade_date (use YYYY-MM-DD)", "data": None}, 400
+        return {"success": True, "message": "ok", "data": data}, 200
+
+    def get_ops_events(self, trade_date: str = "") -> dict[str, Any]:
+        # 兼容旧接口：内部已切到统一语义层
+        return {"success": True, "message": "ok", "data": self._semantic.ops_events(trade_date)}
+
+    def get_semantic_ops_events(self, trade_date: str = "") -> dict[str, Any]:
+        return {"success": True, "message": "ok", "data": self._semantic.ops_events(trade_date)}

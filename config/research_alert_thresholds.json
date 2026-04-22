@@ -1,0 +1,13 @@
+{
+  "hit_rate_5d_pct": {
+    "warn_below": 0.45,
+    "bad_below": 0.35
+  },
+  "pause_events_count": {
+    "warn_at_or_above": 2,
+    "bad_at_or_above": 4
+  },
+  "tail_recommended_count": {
+    "warn_at_or_below": 0
+  }
+}

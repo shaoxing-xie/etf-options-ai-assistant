@@ -45,6 +45,25 @@ function formatCell(v) {
 
 let lastDates = [];
 let cachedSummary = null;
+let tailCached = null;
+let researchCache = { dashboard: {}, view: {}, timeline: [] };
+const RESEARCH_ALERT_DEFAULTS = {
+  hit_rate_5d_pct: { warn_below: 0.45, bad_below: 0.35 },
+  pause_events_count: { warn_at_or_above: 2, bad_at_or_above: 4 },
+  tail_recommended_count: { warn_at_or_below: 0 },
+};
+
+function setScreeningSubview(name) {
+  const nightly = qs("screening-nightly");
+  const tail = qs("screening-tail");
+  const isNightly = name !== "tail";
+  if (nightly) nightly.classList.toggle("active", isNightly);
+  if (tail) tail.classList.toggle("active", !isNightly);
+  const t1 = qs("subtab-screening-nightly");
+  const t2 = qs("subtab-screening-tail");
+  if (t1) t1.setAttribute("aria-selected", String(isNightly));
+  if (t2) t2.setAttribute("aria-selected", String(!isNightly));
+}
 
 /** 页顶一句人话说明（对标研究台「当日摘要」） */
 const PAGE_INTRO =
@@ -602,7 +621,7 @@ function renderMetricsFromCache() {
 async function loadDateArtifact(dateStr) {
   const status = qs("screeningStatus");
   try {
-    const r = await jget(`/api/screening/by-date?date=${encodeURIComponent(dateStr)}`);
+    const r = await jget(`/api/semantic/screening_view?trade_date=${encodeURIComponent(dateStr)}`);
     if (!r.success) {
       if (status) status.textContent = r.message || "加载失败";
       renderAuditFromArtifact(null);
@@ -610,11 +629,11 @@ async function loadDateArtifact(dateStr) {
       renderRunSnapshot(null);
       return;
     }
-    const art = r.data;
-    renderAuditFromArtifact(art);
-    const rows = art && art.screening && art.screening.data;
-    renderTable(Array.isArray(rows) ? rows : []);
-    renderRunSnapshot(art);
+    const art = r.data || {};
+    const nightlyRows = (((art.candidates || {}).nightly) || []);
+    renderAuditFromArtifact(null);
+    renderTable(Array.isArray(nightlyRows) ? nightlyRows : []);
+    renderRunSnapshot(null);
     if (status) status.textContent = `已选审计日: ${dateStr}`;
   } catch (e) {
     if (status) status.textContent = String(e?.message || e);
@@ -625,12 +644,29 @@ async function loadScreening() {
   const status = qs("screeningStatus");
   if (status) status.textContent = "加载中…";
   try {
-    const r = await jget("/api/screening/summary");
+    const r = await jget("/api/semantic/dashboard");
     if (!r.success || !r.data) {
       if (status) status.textContent = r.message || "加载页面摘要失败";
       return;
     }
-    const data = r.data;
+    const data = {
+      weekly_calibration: (r.data || {}).market_state || {},
+      emergency_pause: ((r.data || {}).risk_snapshot || {}).emergency_pause || {},
+      effective_pause: {
+        blocked: !!((r.data || {}).market_state || {}).pause_status,
+        reason: ((r.data || {}).risk_snapshot || {}).latest_gate_reason || null,
+      },
+      screening_policy: {},
+      watchlist: { symbols: [] },
+      latest_screening_date: ((r.data || {})._meta || {}).trade_date || null,
+      latest_artifact: null,
+      latest_screening: null,
+      latest_screening_rows: [],
+      aggregate: {},
+      sentiment_snapshot: (r.data || {}).sentiment_temperature || {},
+      weekly_review: null,
+      run_snapshot: {},
+    };
     cachedSummary = data;
     renderPhaseHint();
     renderBanner(data);
@@ -638,7 +674,7 @@ async function loadScreening() {
     renderWatchlist(data.watchlist || {});
     renderMetricsFromCache();
 
-    const hist = await jget("/api/screening/history");
+    const hist = await jget("/api/tail_screening/history");
     const dates = (hist.data || []).map((x) => x.date).filter(Boolean);
     lastDates = dates;
     const pick = qs("screeningDatePick");
@@ -660,9 +696,9 @@ async function loadScreening() {
     if (selected) {
       await loadDateArtifact(selected);
     } else {
-      renderTable(data.latest_screening_rows || []);
-      renderAuditFromArtifact(data.latest_artifact || null);
-      renderRunSnapshot(data.latest_artifact || null);
+      renderTable([]);
+      renderAuditFromArtifact(null);
+      renderRunSnapshot(null);
       if (status) status.textContent = "暂无历史审计文件，请先完成夜盘落盘。";
     }
   } catch (e) {
@@ -670,9 +706,566 @@ async function loadScreening() {
   }
 }
 
+const TAIL_PARADIGM_TBODY = {
+  fund_flow_follow: "tailPoolFundFlowTbody",
+  tail_grab: "tailPoolTailGrabTbody",
+  oversold_bounce: "tailPoolOversoldTbody",
+  sector_rotation: "tailPoolSectorRotTbody",
+};
+
+function _tailRecommendedToTbody(tbodyId, rows) {
+  const tbody = qs(tbodyId);
+  if (!tbody) return;
+  tbody.innerHTML = "";
+  const list = Array.isArray(rows) ? rows : [];
+  const colspan = 12;
+  if (!list.length) {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `<td colspan="${colspan}">暂无数据</td>`;
+    tbody.appendChild(tr);
+    return;
+  }
+  for (const r of list) {
+    const tr = document.createElement("tr");
+    const reasons = Array.isArray(r?.reasons) ? r.reasons.join("；") : "";
+    const tags = Array.isArray(r?.source_tags) ? r.source_tags.join(", ") : "";
+    const comp = r.composite_score != null ? Number(r.composite_score).toFixed(2) : "";
+    const ord = r.display_order != null ? r.display_order : "";
+    const nb = r.northbound_align != null ? r.northbound_align : "";
+    tr.innerHTML = `<td>${esc(ord)}</td><td>${esc(r.symbol || "")}</td><td>${esc(r.name || "")}</td><td>${esc(
+      r.sector_name || "",
+    )}</td><td>${esc(comp)}</td><td>${esc(r.score != null ? r.score : "")}</td><td>${esc(tags)}</td><td>${esc(
+      nb,
+    )}</td><td>${esc(r.pct_change == null ? "" : `${Number(r.pct_change).toFixed(2)}%`)}</td><td>${esc(
+      r.volume_ratio == null ? "" : Number(r.volume_ratio).toFixed(2),
+    )}</td><td>${esc(r.stop_loss || "-3%")}</td><td>${esc(reasons)}</td>`;
+    tbody.appendChild(tr);
+  }
+}
+
+function _tailParadigmPoolToTbody(tbodyId, rows) {
+  const tbody = qs(tbodyId);
+  if (!tbody) return;
+  tbody.innerHTML = "";
+  const list = Array.isArray(rows) ? rows : [];
+  const colspan = 7;
+  if (!list.length) {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `<td colspan="${colspan}">暂无数据（上游失败或未过入池线）</td>`;
+    tbody.appendChild(tr);
+    return;
+  }
+  for (const r of list) {
+    const tr = document.createElement("tr");
+    const reasons = Array.isArray(r?.reasons) ? r.reasons.join("；") : "";
+    const ps = r.paradigm_score != null ? r.paradigm_score : "";
+    tr.innerHTML = `<td>${esc(r.symbol || "")}</td><td>${esc(r.name || "")}</td><td>${esc(
+      r.sector_name || "",
+    )}</td><td>${esc(ps)}</td><td>${esc(
+      r.pct_change == null ? "" : `${Number(r.pct_change).toFixed(2)}%`,
+    )}</td><td>${esc(r.volume_ratio == null ? "" : Number(r.volume_ratio).toFixed(2))}</td><td>${esc(reasons)}</td>`;
+    tbody.appendChild(tr);
+  }
+}
+
+function renderTailParadigmPools(art) {
+  const pools = art?.paradigm_pools || {};
+  for (const [pid, tbodyId] of Object.entries(TAIL_PARADIGM_TBODY)) {
+    _tailParadigmPoolToTbody(tbodyId, pools[pid] || []);
+  }
+}
+
+function renderTailSummary(data) {
+  const el = qs("tailScreeningSummary");
+  if (!el) return;
+  const latest = data?.latest || {};
+  const summary = latest?.summary || {};
+  const trace = latest?.tool_trace || {};
+  if (!latest || Object.keys(latest).length === 0) {
+    el.innerHTML = '<div class="screening-muted">暂无尾盘结果，请先执行尾盘任务。</div>';
+    return;
+  }
+  const noReason = summary.no_candidate_reason ? `<div class="small" style="margin-top:6px;color:#f7c88a;"><strong>空结果说明</strong>：${esc(summary.no_candidate_reason)}</div>` : "";
+  const sourceLine = trace.candidate_source ? `<div><strong>候选来源</strong>：${esc(trace.candidate_source)}</div>` : "";
+  const dqLine = summary.data_quality ? `<div><strong>数据质量</strong>：${esc(summary.data_quality)}</div>` : "";
+  const prof = summary.applied_profile || latest.applied_profile || "—";
+  const sv = latest.scoring_version || "—";
+  const cov = summary.sector_name_coverage || {};
+  const covLine =
+    cov.recommended_pct != null || cov.paradigm_pools_pct != null
+      ? `<div><strong>板块名覆盖率</strong>：推荐 ${esc(cov.recommended_pct ?? "—")}% / 候选池 ${esc(cov.paradigm_pools_pct ?? "—")}%</div>`
+      : "";
+  const pools = latest.paradigm_pools || {};
+  const poolCounts = Object.entries(TAIL_PARADIGM_TBODY)
+    .map(([pid]) => `${pid}: ${(pools[pid] || []).length}`)
+    .join("；");
+  const mr = latest.market_regime || "—";
+  const rnotes = Array.isArray(latest.regime_detection_notes) ? latest.regime_detection_notes : [];
+  const rnotesLine =
+    rnotes.length > 0
+      ? `<div class="small" style="margin-top:4px;"><strong>制度检测备注</strong>：${esc(rnotes.join("；"))}</div>`
+      : "";
+  el.innerHTML = `
+    <div><strong>运行日期</strong>：${esc(latest.run_date || "—")}</div>
+    <div><strong>运行ID</strong>：${esc(latest.run_id || "—")}</div>
+    <div><strong>生成时间</strong>：${esc(latest.generated_at || "—")}</div>
+    <div><strong>阶段</strong>：${esc(latest.stage || "—")}</div>
+    <div><strong>market_regime</strong>：${esc(mr)}</div>
+    <div><strong>参数族 applied_profile</strong>：${esc(prof)}</div>
+    <div><strong>scoring_version</strong>：${esc(sv)}</div>
+    <div><strong>推荐池条数</strong>：${esc(summary.recommended_count || 0)}（综合前5: ${esc(summary.composite_top5_count ?? "—")}；仅池第一补入: ${esc(summary.pool_first_only_count ?? "—")}）</div>
+    <div><strong>范式池非空数</strong>：${esc(summary.pools_nonempty_count ?? "—")}</div>
+    <div><strong>候选池合计条数</strong>：${esc(summary.passed_hard_conditions || 0)}</div>
+    <div class="small" style="margin-top:4px;word-break:break-all;"><strong>各池条数</strong>：${esc(poolCounts)}</div>
+    ${covLine}
+    ${dqLine}
+    ${sourceLine}
+    ${rnotesLine}
+    ${noReason}
+  `;
+}
+
+function renderTailAudit(art) {
+  const el = qs("tailScreeningAudit");
+  if (!el) return;
+  if (!art) {
+    el.textContent = "暂无该日记录。";
+    return;
+  }
+  el.textContent = JSON.stringify(
+    {
+      run_id: art.run_id,
+      run_date: art.run_date,
+      generated_at: art.generated_at,
+      stage: art.stage,
+      applied_profile: art.applied_profile,
+      market_regime: art.market_regime,
+      regime_detection_notes: art.regime_detection_notes,
+      scoring_version: art.scoring_version,
+      gate_snapshot: art.gate_snapshot || {},
+      summary: art.summary || {},
+      paradigm_pools: art.paradigm_pools || {},
+      recommended: art.recommended || [],
+      tool_trace: art.tool_trace || {},
+      skip_reason: art.skip_reason || null,
+    },
+    null,
+    2,
+  );
+}
+
+async function loadTailByDate(dateStr) {
+  const status = qs("tailScreeningStatus");
+  try {
+    const r = await jget(`/api/semantic/screening_view?trade_date=${encodeURIComponent(dateStr)}`);
+    if (!r.success) {
+      if (status) status.textContent = r.message || "加载失败";
+      _tailRecommendedToTbody("tailRecommendedTbody", []);
+      renderTailParadigmPools({});
+      renderTailAudit(null);
+      return;
+    }
+    const art = r.data || {};
+    const tailRows = (((art.candidates || {}).tail) || []);
+    _tailRecommendedToTbody("tailRecommendedTbody", tailRows);
+    renderTailParadigmPools({});
+    renderTailAudit({ recommended: tailRows });
+    if (status) status.textContent = `已选日期: ${dateStr}`;
+  } catch (e) {
+    if (status) status.textContent = String(e?.message || e);
+  }
+}
+
+async function loadTailScreening() {
+  const status = qs("tailScreeningStatus");
+  if (status) status.textContent = "加载中…";
+  try {
+    const summary = await jget("/api/semantic/dashboard");
+    if (!summary.success) {
+      if (status) status.textContent = summary.message || "加载失败";
+      return;
+    }
+    tailCached = { latest: { recommended: (summary.data || {}).top_recommendations || [] }, latest_date: ((summary.data || {})._meta || {}).trade_date };
+    renderTailSummary(tailCached);
+    const hist = await jget("/api/tail_screening/history");
+    const dates = (hist.data || []).map((x) => x.date).filter(Boolean);
+    const pick = qs("tailScreeningDatePick");
+    if (pick) {
+      pick.innerHTML = dates
+        .slice()
+        .reverse()
+        .map((d) => `<option value="${esc(d)}">${esc(d)}</option>`)
+        .join("");
+      const def = tailCached.latest_date || dates[dates.length - 1] || "";
+      if (def && Array.from(pick.options).some((o) => o.value === def)) {
+        pick.value = def;
+      } else if (pick.options.length) {
+        pick.selectedIndex = 0;
+      }
+    }
+    const selected = pick?.value || tailCached.latest_date;
+    if (selected) {
+      await loadTailByDate(selected);
+    } else {
+      const latest = tailCached.latest || {};
+      _tailRecommendedToTbody("tailRecommendedTbody", latest.recommended || []);
+      renderTailParadigmPools(latest);
+      renderTailAudit(latest);
+      if (status) status.textContent = "暂无历史文件，仅显示 latest。";
+    }
+  } catch (e) {
+    if (status) status.textContent = String(e?.message || e);
+  }
+}
+
+function renderResearchTop(rows) {
+  const tbody = qs("researchTopTbody");
+  if (!tbody) return;
+  tbody.innerHTML = "";
+  const list = Array.isArray(rows) ? rows : [];
+  if (!list.length) {
+    const tr = document.createElement("tr");
+    tr.innerHTML = "<td colspan='4'>暂无推荐</td>";
+    tbody.appendChild(tr);
+    return;
+  }
+  for (const r of list) {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `<td>${esc(r.symbol || "")}</td><td>${esc(r.name || "")}</td><td>${esc(r.score ?? r.composite_score ?? "")}</td><td>${esc((r.source_tags || []).join(","))}</td>`;
+    tbody.appendChild(tr);
+  }
+}
+
+function renderResearchKV(elId, rows) {
+  const el = qs(elId);
+  if (!el) return;
+  const list = Array.isArray(rows) ? rows : [];
+  if (!list.length) {
+    el.innerHTML = `<div class="small screening-muted">暂无数据</div>`;
+    return;
+  }
+  el.innerHTML = list
+    .map(
+      (x) =>
+        `<div class="research-kv"><div class="research-k">${esc(x.k)}</div><div class="research-v">${esc(
+          x.v == null || x.v === "" ? "—" : String(x.v),
+        )}</div></div>`,
+    )
+    .join("");
+}
+
+function renderResearchTimeline(events) {
+  const el = qs("researchTimeline");
+  if (!el) return;
+  const list = Array.isArray(events) ? events : [];
+  if (!list.length) {
+    el.innerHTML = `<div class="small screening-muted">暂无时间轴事件</div>`;
+    return;
+  }
+  el.innerHTML = list
+    .map((e) => {
+      const quality = e.quality_status === "degraded" ? "数据降级" : "正常";
+      const tone = e.quality_status === "degraded" ? "tone-warn" : "";
+      return `<div class="research-timeline-item ${tone}">
+        <div class="research-timeline-meta">${esc(e.event_time || "—")} · ${esc(e.task_id || "unknown")} · ${esc(quality)}</div>
+        <div>${esc(e.summary || "—")}</div>
+      </div>`;
+    })
+    .join("");
+}
+
+function metricTone(metricKey, v) {
+  const thresholds = (researchCache.view || {}).alert_thresholds || RESEARCH_ALERT_DEFAULTS;
+  const t = thresholds[metricKey] || {};
+  const n = Number(v);
+  if (!Number.isFinite(n)) return "";
+  if (metricKey === "hit_rate_5d_pct") {
+    if (Number.isFinite(Number(t.bad_below)) && n < Number(t.bad_below)) return "tone-bad";
+    if (Number.isFinite(Number(t.warn_below)) && n < Number(t.warn_below)) return "tone-warn";
+    return "";
+  }
+  if (metricKey === "pause_events_count") {
+    if (Number.isFinite(Number(t.bad_at_or_above)) && n >= Number(t.bad_at_or_above)) return "tone-bad";
+    if (Number.isFinite(Number(t.warn_at_or_above)) && n >= Number(t.warn_at_or_above)) return "tone-warn";
+    return "";
+  }
+  if (metricKey === "tail_recommended_count") {
+    if (Number.isFinite(Number(t.warn_at_or_below)) && n <= Number(t.warn_at_or_below)) return "tone-warn";
+  }
+  return "";
+}
+
+function renderResearchPerformanceCards(effectStats) {
+  const el = qs("researchPerformanceCards");
+  if (!el) return;
+  const s = effectStats || {};
+  const perf = (researchCache.view || {}).performance_context || {};
+  const asOf = perf.as_of || "—";
+  const pct = (v, reason) => (v == null ? `待产出（${reason || "待上游任务产出"}）` : `${(Number(v) * 100).toFixed(1)}%`);
+  const card = (k, v, tone) =>
+    `<div class="kpi-card ${tone || ""}"><div class="kpi-label">${esc(k)}</div><div class="kpi-value">${esc(v)}</div></div>`;
+  el.innerHTML = [
+    card("夜盘候选数", s.nightly_candidate_count == null ? "—" : String(s.nightly_candidate_count), ""),
+    card(
+      "尾盘推荐数",
+      s.tail_recommended_count == null ? "—" : String(s.tail_recommended_count),
+      metricTone("tail_recommended_count", s.tail_recommended_count),
+    ),
+    card("范式池非空数", s.tail_pools_nonempty_count == null ? "—" : String(s.tail_pools_nonempty_count), ""),
+    card(
+      "5日命中率",
+      pct(s.hit_rate_5d_pct, `周复盘指标缺失（weekly-selection-review，as_of=${asOf}）`),
+      metricTone("hit_rate_5d_pct", s.hit_rate_5d_pct),
+    ),
+    card(
+      "5日平均最大收益",
+      pct(s.avg_max_return_5d_pct, `周复盘指标缺失（weekly-selection-review，as_of=${asOf}）`),
+      "",
+    ),
+    card(
+      "暂停事件数",
+      s.pause_events_count == null ? "—" : String(s.pause_events_count),
+      metricTone("pause_events_count", s.pause_events_count),
+    ),
+  ].join("");
+}
+
+function renderResearchHeatmap(rows) {
+  const tbody = qs("researchHeatmapTbody");
+  if (!tbody) return;
+  tbody.innerHTML = "";
+  const list = Array.isArray(rows) ? rows : [];
+  const max = list.reduce((m, x) => Math.max(m, Number(x?.count) || 0), 0) || 1;
+  if (!list.length) {
+    const tr = document.createElement("tr");
+    tr.innerHTML = "<td colspan='3'>暂无板块热度数据</td>";
+    tbody.appendChild(tr);
+    return;
+  }
+  for (const r of list.slice(0, 12)) {
+    const c = Number(r.count) || 0;
+    const pct = Math.round((c / max) * 100);
+    const tr = document.createElement("tr");
+    tr.innerHTML = `<td>${esc(r.sector_name || "未标注")}</td><td>${esc(c)}</td><td><div class="research-heat-bar" style="width:${pct}%"></div></td>`;
+    tbody.appendChild(tr);
+  }
+}
+
+function renderTaskMonitor(rows) {
+  const tbody = qs("researchTaskMonitorTbody");
+  if (!tbody) return;
+  tbody.innerHTML = "";
+  const list = Array.isArray(rows) ? rows : [];
+  if (!list.length) {
+    const tr = document.createElement("tr");
+    tr.innerHTML = "<td colspan='4'>暂无任务监控数据</td>";
+    tbody.appendChild(tr);
+    return;
+  }
+  for (const r of list) {
+    const st = String(r.status || "unknown");
+    const signalText = r.signal == null ? "待上游产出" : String(r.signal);
+    const tr = document.createElement("tr");
+    tr.innerHTML = `<td>${esc(r.task_id || "")}</td><td><span class="research-status-pill ${esc(st)}">${esc(st)}</span></td><td>${esc(
+      r.last_run || "—",
+    )}</td><td>${esc(signalText)}</td>`;
+    tbody.appendChild(tr);
+  }
+}
+
+function renderSimpleRows(tbodyId, rows, cols, emptyText) {
+  const tbody = qs(tbodyId);
+  if (!tbody) return;
+  tbody.innerHTML = "";
+  const list = Array.isArray(rows) ? rows : [];
+  if (!list.length) {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `<td colspan="${cols.length}">${esc(emptyText || "暂无数据")}</td>`;
+    tbody.appendChild(tr);
+    return;
+  }
+  for (const r of list) {
+    const tr = document.createElement("tr");
+    tr.innerHTML = cols
+      .map((c) => {
+        const raw = typeof c.get === "function" ? c.get(r) : r?.[c.key];
+        return `<td>${esc(raw == null ? "" : String(raw))}</td>`;
+      })
+      .join("");
+    tbody.appendChild(tr);
+  }
+}
+
+function renderResearchTaskPools(viewData) {
+  const candidates = viewData?.candidates || {};
+  const nightly = Array.isArray(candidates.nightly) ? candidates.nightly : [];
+  const tailRecommended = Array.isArray(candidates.tail) ? candidates.tail : [];
+  const pools = viewData?.tail_paradigm_pools || {};
+  renderSimpleRows(
+    "researchNightlyTbody",
+    nightly.slice(0, 30),
+    [
+      { key: "symbol" },
+      { get: (r) => r.industry || "—" },
+      { get: (r) => (r.score == null ? "—" : Number(r.score).toFixed(2)) },
+    ],
+    "暂无夜盘候选",
+  );
+  renderSimpleRows(
+    "researchTailRecommendedTbody",
+    tailRecommended.slice(0, 20),
+    [
+      { key: "symbol" },
+      { key: "name" },
+      { get: (r) => r.sector_name || "—" },
+      { get: (r) => r.score ?? r.composite_score ?? "—" },
+      { get: (r) => (Array.isArray(r.source_tags) ? r.source_tags.join(",") : "") },
+    ],
+    "暂无尾盘推荐",
+  );
+  const poolCols = [
+    { key: "symbol" },
+    { key: "name" },
+    { get: (r) => r.sector_name || "—" },
+    { get: (r) => r.paradigm_score ?? "—" },
+  ];
+  renderSimpleRows("researchPoolFundFlowTbody", pools.fund_flow_follow || [], poolCols, "暂无资金流追随池");
+  renderSimpleRows("researchPoolTailGrabTbody", pools.tail_grab || [], poolCols, "暂无尾盘抢筹池");
+  renderSimpleRows("researchPoolOversoldTbody", pools.oversold_bounce || [], poolCols, "暂无超跌反弹池");
+  renderSimpleRows("researchPoolSectorRotTbody", pools.sector_rotation || [], poolCols, "暂无板块轮动池");
+}
+
+function collectResearchAnomalies() {
+  const anomalies = [];
+  const effect = researchCache.view?.effect_stats || {};
+  const thresholds = researchCache.view?.alert_thresholds || RESEARCH_ALERT_DEFAULTS;
+  const monitor = researchCache.view?.task_execution_monitor || [];
+  const risk = researchCache.dashboard?.risk_snapshot || {};
+  const events = Array.isArray(researchCache.timeline) ? researchCache.timeline : [];
+  const hitRate = Number(effect.hit_rate_5d_pct);
+  if (Number.isFinite(hitRate) && Number.isFinite(Number((thresholds.hit_rate_5d_pct || {}).warn_below)) && hitRate < Number((thresholds.hit_rate_5d_pct || {}).warn_below)) {
+    anomalies.push({ kind: "效果", detail: `5日命中率偏低: ${(Number(effect.hit_rate_5d_pct) * 100).toFixed(1)}%` });
+  }
+  const pauseCount = Number(effect.pause_events_count);
+  if (
+    Number.isFinite(pauseCount) &&
+    Number.isFinite(Number((thresholds.pause_events_count || {}).warn_at_or_above)) &&
+    pauseCount >= Number((thresholds.pause_events_count || {}).warn_at_or_above)
+  ) {
+    anomalies.push({ kind: "门闸", detail: `暂停事件偏多: ${effect.pause_events_count}` });
+  }
+  if ((risk.emergency_pause || {}).active) {
+    anomalies.push({ kind: "风控", detail: `紧急熔断已触发: ${(risk.emergency_pause || {}).reason || "未提供原因"}` });
+  }
+  for (const t of monitor) {
+    if (t.status === "stale" || t.status === "missing") {
+      anomalies.push({ kind: "任务", detail: `${t.task_id} 状态=${t.status} 最近运行=${t.last_run || "—"}` });
+    }
+  }
+  for (const e of events) {
+    if (e.quality_status === "degraded") {
+      anomalies.push({ kind: "时间轴", detail: `${e.task_id || "unknown"} 数据降级: ${e.summary || "—"}` });
+    }
+  }
+  return anomalies;
+}
+
+function renderResearchAnomalyDrawer() {
+  const listEl = qs("researchAnomalyList");
+  if (!listEl) return;
+  const anomalies = collectResearchAnomalies();
+  if (!anomalies.length) {
+    listEl.innerHTML = `<div class="screening-muted">当前未发现超过阈值的异常。</div>`;
+    return;
+  }
+  listEl.innerHTML = anomalies
+    .map((a) => `<div class="research-anomaly-item"><strong>${esc(a.kind)}</strong>：${esc(a.detail)}</div>`)
+    .join("");
+}
+
+function setResearchSubview(name) {
+  const views = Array.from(document.querySelectorAll(".research-view[data-subview]"));
+  for (const v of views) {
+    v.classList.toggle("active", v.getAttribute("data-subview") === name);
+  }
+  const t1 = qs("subtab-research-overview");
+  const t2 = qs("subtab-research-nightly");
+  const t3 = qs("subtab-research-tail");
+  if (t1) t1.setAttribute("aria-selected", String(name === "overview"));
+  if (t2) t2.setAttribute("aria-selected", String(name === "nightly"));
+  if (t3) t3.setAttribute("aria-selected", String(name === "tail"));
+
+  const drawer = qs("researchAnomalyDrawer");
+  if (drawer && name !== "overview") drawer.style.display = "none";
+}
+
+async function loadResearch() {
+  const status = qs("researchStatus");
+  if (status) status.textContent = "加载中…";
+  try {
+    const dashboard = await jget("/api/semantic/dashboard");
+    const data = dashboard.data || {};
+    const tradeDate = (data?._meta || {}).trade_date || "";
+    const view = tradeDate
+      ? await jget(`/api/semantic/screening_view?trade_date=${encodeURIComponent(tradeDate)}`)
+      : { data: {} };
+    const viewData = view.data || {};
+    const sent = data.sentiment_temperature || {};
+    const market = data.market_state || {};
+    const risk = data.risk_snapshot || {};
+    renderResearchKV("researchSentiment", [
+      { k: "综合得分", v: sent.score },
+      { k: "阶段", v: sent.stage },
+      { k: "分歧度", v: sent.dispersion },
+      { k: "行动倾向", v: sent.trend },
+      { k: "质量", v: (sent.quality_status || {}).degraded ? "degraded" : "ok" },
+    ]);
+    renderResearchKV("researchMarketState", [
+      { k: "市场状态", v: market.regime },
+      { k: "仓位上限", v: market.position_ceiling },
+      { k: "门闸", v: market.pause_status ? "触发" : "正常" },
+    ]);
+    renderResearchKV("researchRiskSnapshot", [
+      { k: "紧急熔断", v: (risk.emergency_pause || {}).active ? "是" : "否" },
+      { k: "门闸原因", v: risk.latest_gate_reason || "—" },
+      { k: "极端告警", v: risk.extreme_alert_count ?? "—" },
+    ]);
+    renderResearchPerformanceCards(viewData.effect_stats || {});
+    renderResearchHeatmap(viewData.sector_rotation_heatmap || []);
+    renderTaskMonitor(viewData.task_execution_monitor || []);
+    renderResearchTaskPools(viewData);
+    renderResearchTop(data.top_recommendations || []);
+    const pick = qs("researchDatePick");
+    if (pick && tradeDate) {
+      pick.innerHTML = `<option value="${esc(tradeDate)}">${esc(tradeDate)}</option>`;
+      pick.value = tradeDate;
+    }
+    if (tradeDate) {
+      const timeline = await jget(`/api/semantic/timeline?trade_date=${encodeURIComponent(tradeDate)}`);
+      const events = (timeline.data || {}).events || [];
+      researchCache = { dashboard: data, view: viewData, timeline: events };
+      renderResearchTimeline(events);
+      renderResearchAnomalyDrawer();
+    } else {
+      researchCache = { dashboard: data, view: viewData, timeline: [] };
+      renderResearchTimeline([]);
+      renderResearchAnomalyDrawer();
+    }
+    if (status) status.textContent = "已更新";
+  } catch (e) {
+    if (status) status.textContent = String(e?.message || e);
+  }
+}
+
 qs("tab-screening")?.addEventListener("click", () => {
   setView("screening");
+  setScreeningSubview("nightly");
   loadScreening();
+});
+qs("tab-research")?.addEventListener("click", () => {
+  setView("research");
+  setResearchSubview("overview");
+  loadResearch();
 });
 
 qs("btnScreeningRefresh")?.addEventListener("click", () => loadScreening());
@@ -683,3 +1276,39 @@ qs("screeningDatePick")?.addEventListener("change", (e) => {
 });
 
 qs("screeningMetricsSource")?.addEventListener("change", () => renderMetricsFromCache());
+qs("subtab-screening-nightly")?.addEventListener("click", () => {
+  setScreeningSubview("nightly");
+  loadScreening();
+});
+qs("subtab-screening-tail")?.addEventListener("click", () => {
+  setScreeningSubview("tail");
+  loadTailScreening();
+});
+qs("btnTailScreeningRefresh")?.addEventListener("click", () => loadTailScreening());
+qs("tailScreeningDatePick")?.addEventListener("change", (e) => {
+  const v = e.target?.value;
+  if (v) loadTailByDate(v);
+});
+qs("btnResearchRefresh")?.addEventListener("click", () => loadResearch());
+qs("researchDatePick")?.addEventListener("change", async (e) => {
+  const v = e.target?.value;
+  if (!v) return;
+  const timeline = await jget(`/api/semantic/timeline?trade_date=${encodeURIComponent(v)}`);
+  researchCache.timeline = (timeline.data || {}).events || [];
+  renderResearchTimeline(researchCache.timeline);
+  renderResearchAnomalyDrawer();
+});
+qs("subtab-research-overview")?.addEventListener("click", () => setResearchSubview("overview"));
+qs("subtab-research-nightly")?.addEventListener("click", () => setResearchSubview("nightly"));
+qs("subtab-research-tail")?.addEventListener("click", () => setResearchSubview("tail"));
+qs("btnResearchAnomalyDrawer")?.addEventListener("click", () => {
+  const el = qs("researchAnomalyDrawer");
+  if (!el) return;
+  renderResearchAnomalyDrawer();
+  el.style.display = "block";
+});
+qs("btnResearchAnomalyClose")?.addEventListener("click", () => {
+  const el = qs("researchAnomalyDrawer");
+  if (!el) return;
+  el.style.display = "none";
+});

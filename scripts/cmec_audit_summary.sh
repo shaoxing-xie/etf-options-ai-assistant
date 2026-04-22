@@ -6,13 +6,14 @@ set -euo pipefail
 
 ROOT_DIR="${1:-$HOME/etf-options-ai-assistant}"
 AUDIT="$ROOT_DIR/.handoff/cmec-audit.jsonl"
+PY_BIN="$ROOT_DIR/.venv/bin/python"
 
 if [[ ! -f "$AUDIT" ]]; then
   echo "no audit file: $AUDIT"
   exit 0
 fi
 
-python3 - "$AUDIT" <<'PY'
+"$PY_BIN" - "$AUDIT" <<'PY'
 import collections
 import json
 import sys

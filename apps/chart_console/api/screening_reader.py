@@ -7,6 +7,8 @@ import re
 from pathlib import Path
 from typing import Any
 
+from src.data_layer import MetaEnvelope, write_contract_json
+
 _DATE_KEY = re.compile(r"^(\d{4})-(\d{2})-(\d{2})$")
 
 # 与四工具/定调对齐的可选字段：weekly_calibration、data/screening/sentiment_context.json、
@@ -164,6 +166,25 @@ def build_sentiment_snapshot(
     return merged
 
 
+def persist_dashboard_snapshot(root: Path, payload: dict[str, Any], trade_date: str) -> None:
+    run_id = f"chart_console_{trade_date.replace('-', '')}"
+    write_contract_json(
+        root / "data" / "semantic" / "dashboard_snapshot" / f"{trade_date}.json",
+        payload=payload,
+        meta=MetaEnvelope(
+            schema_name="sentiment_snapshot_v1",
+            schema_version="1.0.0",
+            task_id="pre-market-sentiment-check",
+            run_id=run_id,
+            data_layer="L4",
+            trade_date=trade_date,
+            quality_status="degraded" if bool(payload.get("degraded")) else "ok",
+            lineage_refs=[str(root / "data" / "sentiment_check"), str(root / "config" / "weekly_calibration.json")],
+            source_tools=["screening_reader.build_sentiment_snapshot"],
+        ),
+    )
+
+
 def read_weekly_review_file(screening_dir: Path) -> dict[str, Any] | None:
     """周度复盘结构化结果：`data/screening/weekly_review.json`（由复盘任务或手工合并后放置）。"""
     p = screening_dir / "weekly_review.json"
@@ -182,7 +203,33 @@ def read_screening_policy_section(root: Path) -> dict[str, Any]:
         sec = doc.get("screening")
         return sec if isinstance(sec, dict) else {}
     except Exception:
-        return {}
+        # Lightweight fallback parser for environments without PyYAML.
+        text = p.read_text(encoding="utf-8")
+        out: dict[str, Any] = {}
+        in_screening = False
+        for raw in text.splitlines():
+            line = raw.rstrip()
+            if not line.strip():
+                continue
+            if line.startswith("screening:"):
+                in_screening = True
+                continue
+            if in_screening:
+                if not line.startswith("  "):
+                    break
+                seg = line.strip()
+                if ":" not in seg:
+                    continue
+                k, v = seg.split(":", 1)
+                v = v.strip()
+                if v.isdigit():
+                    out[k.strip()] = int(v)
+                else:
+                    try:
+                        out[k.strip()] = float(v)
+                    except ValueError:
+                        out[k.strip()] = v
+        return out
 
 
 class ScreeningReader:
@@ -237,9 +284,12 @@ class ScreeningReader:
         return last, art
 
     def effective_pause(self) -> dict[str, Any]:
-        from src.screening_quality_gate import screening_should_skip_due_to_pause
+        try:
+            from src.screening_quality_gate import screening_should_skip_due_to_pause
 
-        blocked, reason = screening_should_skip_due_to_pause()
+            blocked, reason = screening_should_skip_due_to_pause()
+        except Exception:
+            blocked, reason = (False, "")
         wc = self.read_weekly_calibration() or {}
         regime = str(wc.get("regime") or "").strip().lower()
         weekly_pause = regime == "pause"
@@ -320,6 +370,12 @@ class ScreeningReader:
                     latest_rows = [x for x in data if isinstance(x, dict)]
         agg = self.aggregate_recent(20)
         sentiment_snapshot = build_sentiment_snapshot(wc, self.screening_dir, self.root)
+        try:
+            td = latest_date or str(sentiment_snapshot.get("precheck_date") or "")
+            if validate_screening_date_key(td):
+                persist_dashboard_snapshot(self.root, sentiment_snapshot, td)
+        except Exception:
+            pass
         weekly_review = read_weekly_review_file(self.screening_dir)
         run_snap = self.run_snapshot(latest_art)
         return {

@@ -1,0 +1,21 @@
+name: intraday_tail_screening
+description: 14:00 尾盘选股（同日重跑覆盖 latest 与当日结果文件）
+
+schedule: "0 14 * * 1-5"
+timezone: "Asia/Shanghai"
+
+steps:
+  - name: run_tail_screening_and_persist
+    agent: data_collector_agent
+    tool: exec
+    description: 调用脚本执行门闸、打分、落盘与可选通知
+    params:
+      cwd: "/home/xie/etf-options-ai-assistant"
+      command: "PYTHONPATH=/home/xie/etf-options-ai-assistant /home/xie/etf-options-ai-assistant/.venv/bin/python scripts/intraday_tail_screening_and_persist.py --max-candidates 50 --notify"
+
+structured_message: |
+  交易日 14:00 执行尾盘选股。关键要求：
+  1) 支持同日多次重跑；
+  2) 每次重跑覆盖 `data/tail_screening/latest.json` 与 `data/tail_screening/YYYY-MM-DD.json`；
+  3) 结果 JSON 需包含 `run_id` 与 `generated_at` 以支持追溯；
+  4) 验收：`latest.json` mtime 必须前进；Cron `intraday-tail-screening` 用 stat 校验同上；结果含 `paradigm_pools`、`recommended`（含 `source_tags`、`sector_name`、`display_order`、`northbound_align`、`applied_profile`、`market_regime`、`regime_detection_notes`）；`tail_grab` 总超时或 `max_failure_ratio` 超阈则该池为空；`default_regime: auto` 时走 `tool_detect_market_regime`，失败回退 `oscillation`；`extra_gates` 启用且触发时当日 `stage=skip`。

@@ -9,15 +9,23 @@ function setView(view) {
   const chart = qs("view-chart");
   const config = qs("view-config");
   const screening = qs("view-screening");
+  const research = qs("view-research");
+  const ops = qs("view-ops");
   if (chart) chart.classList.toggle("active", view === "chart");
   if (config) config.classList.toggle("active", view === "config");
   if (screening) screening.classList.toggle("active", view === "screening");
+  if (research) research.classList.toggle("active", view === "research");
+  if (ops) ops.classList.toggle("active", view === "ops");
   const tabChart = qs("tab-chart");
   const tabConfig = qs("tab-config");
   const tabScreening = qs("tab-screening");
+  const tabResearch = qs("tab-research");
+  const tabOps = qs("tab-ops");
   if (tabChart) tabChart.setAttribute("aria-selected", String(view === "chart"));
   if (tabConfig) tabConfig.setAttribute("aria-selected", String(view === "config"));
   if (tabScreening) tabScreening.setAttribute("aria-selected", String(view === "screening"));
+  if (tabResearch) tabResearch.setAttribute("aria-selected", String(view === "research"));
+  if (tabOps) tabOps.setAttribute("aria-selected", String(view === "ops"));
 }
 
 function setConfigSubview(name) {
@@ -93,7 +101,7 @@ async function loadWorkspaces() {
   pick.innerHTML = (resp.data || []).map((x) => `<option>${x.name}</option>`).join("");
 }
 
-/** 首页「图形」即显示情绪摘要（侧车数据在「震荡市选股」页左栏完整展示） */
+/** 首页「图形」即显示情绪摘要（完整字段在「投研中心」展示） */
 async function loadChartSentimentBar() {
   const el = qs("chartSentimentBar");
   if (!el) return;
@@ -104,13 +112,13 @@ async function loadChartSentimentBar() {
     el.style.display = "block";
     if (!keys.length) {
       el.innerHTML =
-        '<span class="warn">市场情绪摘要</span>：暂无落盘（需 <code>data/sentiment_check/*.json</code> 等）。请打开 <strong>震荡市选股</strong> 查看说明，或设置环境变量 <code>ETF_OPTIONS_ASSISTANT_ROOT</code> 指向含数据的仓库根后重启本服务。';
+        '<span class="warn">市场情绪摘要</span>：暂无落盘（需 <code>data/sentiment_check/*.json</code> 等）。请打开 <strong>投研中心</strong> 查看说明，或设置环境变量 <code>ETF_OPTIONS_ASSISTANT_ROOT</code> 指向含数据的仓库根后重启本服务。';
       return;
     }
     const score = snap.overall_score != null ? String(snap.overall_score) : "—";
     const stage = snap.sentiment_stage != null ? String(snap.sentiment_stage) : "—";
     const pd = snap.precheck_date ? ` · 侧车 <code>${snap.precheck_date}</code>` : "";
-    el.innerHTML = `<strong>市场情绪摘要</strong>：综合得分 ${score} · 阶段 ${stage}${pd} · 完整字段见顶部 <strong>震荡市选股</strong> → 左栏「市场情绪与资金面」。`;
+    el.innerHTML = `<strong>市场情绪摘要</strong>：综合得分 ${score} · 阶段 ${stage}${pd} · 完整字段见顶部 <strong>投研中心</strong>。`;
   } catch (e) {
     el.style.display = "block";
     el.innerHTML = `市场情绪摘要加载失败：${String(e?.message || e)}`;

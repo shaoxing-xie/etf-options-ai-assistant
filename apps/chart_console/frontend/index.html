@@ -51,7 +51,8 @@
         <div class="nav" role="tablist" aria-label="Views">
           <button class="tab" id="tab-chart" role="tab" aria-selected="true" data-view="chart">图形</button>
           <button class="tab" id="tab-config" role="tab" aria-selected="false" data-view="config">配置中心</button>
-          <button class="tab" id="tab-screening" role="tab" aria-selected="false" data-view="screening">震荡市选股</button>
+          <button class="tab" id="tab-research" role="tab" aria-selected="false" data-view="research">投研中心</button>
+          <button class="tab" id="tab-ops" role="tab" aria-selected="false" data-view="ops">运维事件</button>
         </div>
       </div>
 
@@ -141,47 +142,325 @@
       </section>
 
       <section class="view" id="view-screening" data-view="screening">
-        <div id="screeningBanner" class="screening-banner" style="display: none"></div>
-        <div class="bar screening-toolbar">
-          <button type="button" id="btnScreeningRefresh">刷新</button>
-          <span id="screeningStatus" class="small"></span>
+        <div class="subnav" role="tablist" aria-label="Screening tabs">
+          <button class="subtab" id="subtab-screening-nightly" role="tab" aria-selected="true" data-subview="nightly">夜盘选股</button>
+          <button class="subtab" id="subtab-screening-tail" role="tab" aria-selected="false" data-subview="tail">尾盘选股</button>
         </div>
-        <p id="screeningPhaseHint" class="small screening-phase-hint" aria-label="页面说明"></p>
-        <div id="screeningRunSnapshot" class="screening-run-snapshot" aria-label="策略运行摘要"></div>
+
+        <div class="config-view active" id="screening-nightly" data-subview="nightly">
+          <div id="screeningBanner" class="screening-banner" style="display: none"></div>
+          <div class="bar screening-toolbar">
+            <button type="button" id="btnScreeningRefresh">刷新</button>
+            <span id="screeningStatus" class="small"></span>
+          </div>
+          <p id="screeningPhaseHint" class="small screening-phase-hint" aria-label="页面说明"></p>
+          <div id="screeningRunSnapshot" class="screening-run-snapshot" aria-label="策略运行摘要"></div>
+          <div class="screening-grid">
+            <aside class="screening-col" id="screeningLeft"></aside>
+            <main class="screening-col screening-main">
+              <h4 class="screening-h4">观察池与候选证券（因子归因）</h4>
+              <div id="screeningWatchlist" class="small"></div>
+              <div class="screening-table-wrap">
+                <table id="screeningTable">
+                  <thead><tr id="screeningThead"></tr></thead>
+                  <tbody id="screeningTbody"></tbody>
+                </table>
+              </div>
+              <pre id="screeningFactorDetail" class="small screening-pre screening-factor-detail" style="display: none"></pre>
+              <p class="small screening-footnote">
+                本页仅供研究与风控对照，不构成投资建议或下单指令；实盘请在券商端决策并自担风险。若持仓数据未接入，相关展示仅为占位。
+                点击<strong>代码</strong>可切换到「图形」查看 K 线；点击<strong>因子明细</strong>可展开该行得分拆解。
+              </p>
+            </main>
+            <aside class="screening-col">
+              <h4 class="screening-h4">按日审计</h4>
+              <label class="small">选择审计日期</label>
+              <select id="screeningDatePick"></select>
+              <div id="screeningAudit" class="small screening-audit"></div>
+              <label class="small" for="screeningMetricsSource">效果指标来源</label>
+              <select id="screeningMetricsSource" aria-label="效果指标来源">
+                <option value="screening">夜盘审计汇总</option>
+                <option value="weekly_review">周度复盘（若已落盘）</option>
+              </select>
+              <h4 class="screening-h4">汇总与复盘</h4>
+              <pre id="screeningAggregate" class="small screening-pre"></pre>
+            </aside>
+          </div>
+        </div>
+
+        <div class="config-view" id="screening-tail" data-subview="tail">
+          <div class="bar screening-toolbar">
+            <button type="button" id="btnTailScreeningRefresh">刷新</button>
+            <span id="tailScreeningStatus" class="small"></span>
+          </div>
+          <div class="screening-grid">
+            <aside class="screening-col">
+              <h4 class="screening-h4">尾盘运行摘要</h4>
+              <div id="tailScreeningSummary" class="small"></div>
+              <h4 class="screening-h4">按日记录</h4>
+              <label class="small">选择日期</label>
+              <select id="tailScreeningDatePick"></select>
+              <pre id="tailScreeningAudit" class="small screening-pre"></pre>
+            </aside>
+            <main class="screening-col screening-main">
+              <h4 class="screening-h4">推荐池（综合 Top5 ∪ 各范式池第一）</h4>
+              <div class="screening-table-wrap">
+                <table id="tailRecommendedTable">
+                  <thead>
+                    <tr>
+                      <th>序</th>
+                      <th>代码</th>
+                      <th>名称</th>
+                      <th>板块</th>
+                      <th>综合分</th>
+                      <th>分数</th>
+                      <th>来源</th>
+                      <th>北向</th>
+                      <th>涨跌幅</th>
+                      <th>量比</th>
+                      <th>止损</th>
+                      <th>理由</th>
+                    </tr>
+                  </thead>
+                  <tbody id="tailRecommendedTbody"></tbody>
+                </table>
+              </div>
+              <h4 class="screening-h4">范式候选池（各 ≤10）</h4>
+              <div class="screening-table-wrap" style="margin-bottom: 10px">
+                <h5 class="screening-h5 small" style="margin: 6px 0">资金流追随</h5>
+                <table class="tail-paradigm-table" data-paradigm="fund_flow_follow">
+                  <thead>
+                    <tr>
+                      <th>代码</th>
+                      <th>名称</th>
+                      <th>板块</th>
+                      <th>范式分</th>
+                      <th>涨跌幅</th>
+                      <th>量比</th>
+                      <th>理由</th>
+                    </tr>
+                  </thead>
+                  <tbody id="tailPoolFundFlowTbody"></tbody>
+                </table>
+              </div>
+              <div class="screening-table-wrap" style="margin-bottom: 10px">
+                <h5 class="screening-h5 small" style="margin: 6px 0">尾盘抢筹</h5>
+                <table class="tail-paradigm-table" data-paradigm="tail_grab">
+                  <thead>
+                    <tr>
+                      <th>代码</th>
+                      <th>名称</th>
+                      <th>板块</th>
+                      <th>范式分</th>
+                      <th>涨跌幅</th>
+                      <th>量比</th>
+                      <th>理由</th>
+                    </tr>
+                  </thead>
+                  <tbody id="tailPoolTailGrabTbody"></tbody>
+                </table>
+              </div>
+              <div class="screening-table-wrap" style="margin-bottom: 10px">
+                <h5 class="screening-h5 small" style="margin: 6px 0">超跌反弹</h5>
+                <table class="tail-paradigm-table" data-paradigm="oversold_bounce">
+                  <thead>
+                    <tr>
+                      <th>代码</th>
+                      <th>名称</th>
+                      <th>板块</th>
+                      <th>范式分</th>
+                      <th>涨跌幅</th>
+                      <th>量比</th>
+                      <th>理由</th>
+                    </tr>
+                  </thead>
+                  <tbody id="tailPoolOversoldTbody"></tbody>
+                </table>
+              </div>
+              <div class="screening-table-wrap" style="margin-bottom: 10px">
+                <h5 class="screening-h5 small" style="margin: 6px 0">板块轮动</h5>
+                <table class="tail-paradigm-table" data-paradigm="sector_rotation">
+                  <thead>
+                    <tr>
+                      <th>代码</th>
+                      <th>名称</th>
+                      <th>板块</th>
+                      <th>范式分</th>
+                      <th>涨跌幅</th>
+                      <th>量比</th>
+                      <th>理由</th>
+                    </tr>
+                  </thead>
+                  <tbody id="tailPoolSectorRotTbody"></tbody>
+                </table>
+              </div>
+              <p class="small screening-footnote">尾盘策略用于盘中研究和风控辅助，不构成投资建议。</p>
+            </main>
+          </div>
+        </div>
+      </section>
+
+      <section class="view" id="view-research" data-view="research">
+        <div class="subnav" role="tablist" aria-label="Research tabs">
+          <button class="subtab" id="subtab-research-overview" role="tab" aria-selected="true" data-subview="overview">投研总览</button>
+          <button class="subtab" id="subtab-research-nightly" role="tab" aria-selected="false" data-subview="nightly">夜盘选股</button>
+          <button class="subtab" id="subtab-research-tail" role="tab" aria-selected="false" data-subview="tail">尾盘选股</button>
+        </div>
+        <div class="bar screening-toolbar research-view active" id="research-overview-toolbar" data-subview="overview">
+          <button type="button" id="btnResearchRefresh">刷新</button>
+          <button type="button" id="btnResearchAnomalyDrawer">异常详情</button>
+          <span id="researchStatus" class="small"></span>
+        </div>
         <div class="screening-grid">
-          <aside class="screening-col" id="screeningLeft"></aside>
-          <main class="screening-col screening-main">
-            <h4 class="screening-h4">观察池与候选证券（因子归因）</h4>
-            <div id="screeningWatchlist" class="small"></div>
-            <div class="screening-table-wrap">
-              <table id="screeningTable">
-                <thead><tr id="screeningThead"></tr></thead>
-                <tbody id="screeningTbody"></tbody>
-              </table>
+          <aside class="screening-col">
+            <div class="research-view active" id="research-overview-left" data-subview="overview">
+              <h4 class="screening-h4">市场状态</h4>
+              <div id="researchMarketState" class="small"></div>
+              <h4 class="screening-h4">风险快照</h4>
+              <div id="researchRiskSnapshot" class="small"></div>
+              <h4 class="screening-h4">任务执行监控</h4>
+              <div class="screening-table-wrap">
+                <table>
+                  <thead><tr><th>任务</th><th>状态</th><th>最近运行</th><th>信号</th></tr></thead>
+                  <tbody id="researchTaskMonitorTbody"></tbody>
+                </table>
+              </div>
             </div>
-            <pre id="screeningFactorDetail" class="small screening-pre screening-factor-detail" style="display: none"></pre>
-            <p class="small screening-footnote">
-              本页仅供研究与风控对照，不构成投资建议或下单指令；实盘请在券商端决策并自担风险。若持仓数据未接入，相关展示仅为占位。
-              点击<strong>代码</strong>可切换到「图形」查看 K 线；点击<strong>因子明细</strong>可展开该行得分拆解。
-            </p>
+            <div class="research-view" id="research-nightly-left" data-subview="nightly">
+              <h4 class="screening-h4">夜盘选股说明</h4>
+              <div class="small screening-muted">展示 `nightly-stock-screening` 的候选池与因子结果（只读）。</div>
+            </div>
+            <div class="research-view" id="research-tail-left" data-subview="tail">
+              <h4 class="screening-h4">尾盘选股说明</h4>
+              <div class="small screening-muted">展示 `intraday-tail-screening` 的推荐池与四范式池（只读）。</div>
+            </div>
+          </aside>
+          <main class="screening-col screening-main">
+            <div class="research-view active" id="research-overview-main" data-subview="overview">
+              <h4 class="screening-h4">情绪温度计</h4>
+              <div id="researchSentiment" class="small"></div>
+              <h4 class="screening-h4">效果统计卡片</h4>
+              <div id="researchPerformanceCards" class="kpi-grid"></div>
+              <h4 class="screening-h4">轮动热力（按推荐板块）</h4>
+              <div class="screening-table-wrap">
+                <table>
+                  <thead><tr><th>板块</th><th>推荐数</th><th>热度</th></tr></thead>
+                  <tbody id="researchHeatmapTbody"></tbody>
+                </table>
+              </div>
+              <h4 class="screening-h4">Top 推荐</h4>
+              <div class="screening-table-wrap">
+                <table id="researchTopTable">
+                  <thead>
+                    <tr><th>代码</th><th>名称</th><th>得分</th><th>来源</th></tr>
+                  </thead>
+                  <tbody id="researchTopTbody"></tbody>
+                </table>
+              </div>
+            </div>
+            <div class="research-view" id="research-nightly-main" data-subview="nightly">
+              <h4 class="screening-h4">夜盘候选池（nightly-stock-screening）</h4>
+              <div class="screening-table-wrap">
+                <table>
+                  <thead><tr><th>代码</th><th>行业</th><th>分数</th></tr></thead>
+                  <tbody id="researchNightlyTbody"></tbody>
+                </table>
+              </div>
+            </div>
+            <div class="research-view" id="research-tail-main" data-subview="tail">
+              <h4 class="screening-h4">尾盘推荐池（intraday-tail-screening）</h4>
+              <div class="screening-table-wrap">
+                <table>
+                  <thead><tr><th>代码</th><th>名称</th><th>板块</th><th>得分</th><th>来源</th></tr></thead>
+                  <tbody id="researchTailRecommendedTbody"></tbody>
+                </table>
+              </div>
+              <h4 class="screening-h4">四范式池</h4>
+              <div class="screening-table-wrap">
+                <h5 class="screening-h5 small" style="margin: 6px 0">资金流追随</h5>
+                <table>
+                  <thead><tr><th>代码</th><th>名称</th><th>板块</th><th>范式分</th></tr></thead>
+                  <tbody id="researchPoolFundFlowTbody"></tbody>
+                </table>
+              </div>
+              <div class="screening-table-wrap">
+                <h5 class="screening-h5 small" style="margin: 6px 0">尾盘抢筹</h5>
+                <table>
+                  <thead><tr><th>代码</th><th>名称</th><th>板块</th><th>范式分</th></tr></thead>
+                  <tbody id="researchPoolTailGrabTbody"></tbody>
+                </table>
+              </div>
+              <div class="screening-table-wrap">
+                <h5 class="screening-h5 small" style="margin: 6px 0">超跌反弹</h5>
+                <table>
+                  <thead><tr><th>代码</th><th>名称</th><th>板块</th><th>范式分</th></tr></thead>
+                  <tbody id="researchPoolOversoldTbody"></tbody>
+                </table>
+              </div>
+              <div class="screening-table-wrap">
+                <h5 class="screening-h5 small" style="margin: 6px 0">板块轮动</h5>
+                <table>
+                  <thead><tr><th>代码</th><th>名称</th><th>板块</th><th>范式分</th></tr></thead>
+                  <tbody id="researchPoolSectorRotTbody"></tbody>
+                </table>
+              </div>
+            </div>
           </main>
           <aside class="screening-col">
-            <h4 class="screening-h4">按日审计</h4>
-            <label class="small">选择审计日期</label>
-            <select id="screeningDatePick"></select>
-            <div id="screeningAudit" class="small screening-audit"></div>
-            <label class="small" for="screeningMetricsSource">效果指标来源</label>
-            <select id="screeningMetricsSource" aria-label="效果指标来源">
-              <option value="screening">夜盘审计汇总</option>
-              <option value="weekly_review">周度复盘（若已落盘）</option>
-            </select>
-            <h4 class="screening-h4">汇总与复盘</h4>
-            <pre id="screeningAggregate" class="small screening-pre"></pre>
+            <div class="research-view active" id="research-overview-right" data-subview="overview">
+              <h4 class="screening-h4">时间轴</h4>
+              <label class="small">交易日</label>
+              <select id="researchDatePick"></select>
+              <div id="researchTimeline" class="small research-timeline"></div>
+            </div>
+            <div class="research-view" id="research-nightly-right" data-subview="nightly">
+              <h4 class="screening-h4">时间轴（参考）</h4>
+              <div class="small screening-muted">回到「投研总览」可查看完整事件流。</div>
+            </div>
+            <div class="research-view" id="research-tail-right" data-subview="tail">
+              <h4 class="screening-h4">时间轴（参考）</h4>
+              <div class="small screening-muted">回到「投研总览」可查看完整事件流。</div>
+            </div>
           </aside>
+        </div>
+        <div id="researchAnomalyDrawer" class="research-drawer" style="display:none;">
+          <div class="research-drawer-head">
+            <strong>异常详情</strong>
+            <button type="button" id="btnResearchAnomalyClose">关闭</button>
+          </div>
+          <div id="researchAnomalyList" class="small"></div>
+        </div>
+      </section>
+
+      <section class="view" id="view-ops" data-view="ops">
+        <div class="subnav" role="tablist" aria-label="Ops tabs">
+          <button class="subtab" id="subtab-ops-exec" role="tab" aria-selected="true" data-subview="exec">执行审计事件</button>
+          <button class="subtab" id="subtab-ops-collect" role="tab" aria-selected="false" data-subview="collect">采集质量事件</button>
+        </div>
+        <div class="bar screening-toolbar">
+          <button type="button" id="btnOpsRefresh">刷新</button>
+          <span id="opsStatus" class="small"></span>
+        </div>
+        <div class="research-view active" id="ops-exec-view" data-subview="exec">
+          <div class="screening-table-wrap">
+            <table>
+              <thead><tr><th>任务ID</th><th>名称</th><th>cron</th><th>状态</th><th>连续错误</th><th>工具</th></tr></thead>
+              <tbody id="opsExecTbody"></tbody>
+            </table>
+          </div>
+        </div>
+        <div class="research-view" id="ops-collect-view" data-subview="collect">
+          <div class="screening-table-wrap">
+            <table>
+              <thead><tr><th>任务ID</th><th>名称</th><th>cron</th><th>状态</th><th>连续错误</th><th>工具</th></tr></thead>
+              <tbody id="opsCollectTbody"></tbody>
+            </table>
+          </div>
         </div>
       </section>
     </div>
     <script type="module" src="/app.js"></script>
     <script type="module" src="/screening.js"></script>
+    <script type="module" src="/ops.js"></script>
   </body>
 </html>

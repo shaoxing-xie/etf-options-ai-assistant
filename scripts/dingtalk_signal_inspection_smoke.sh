@@ -5,6 +5,7 @@
 #   bash scripts/dingtalk_signal_inspection_smoke.sh prod    # 真发（需 ~/.openclaw/.env）
 set -eu
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+PY_BIN="${ROOT}/.venv/bin/python"
 cd "$ROOT"
 
 if [[ -f "${HOME}/.openclaw/.env" ]]; then
@@ -24,4 +25,4 @@ case "$MODE" in
 esac
 
 ARGS_FILE="${ROOT}/scripts/examples/signal_inspection_dingtalk_smoke.${MODE}.json"
-exec python3 "${ROOT}/tool_runner.py" tool_send_signal_risk_inspection "@${ARGS_FILE}"
+exec "${PY_BIN}" "${ROOT}/tool_runner.py" tool_send_signal_risk_inspection "@${ARGS_FILE}"

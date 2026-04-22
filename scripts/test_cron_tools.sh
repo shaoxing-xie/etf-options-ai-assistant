@@ -61,6 +61,7 @@
 
 # 不 set -e，跑完全部用例并汇总
 cd "$(dirname "$0")/.."
+PY_BIN="./.venv/bin/python"
 RUNNER="./.venv/bin/python tool_runner.py"
 
 JOBS_JSON="${JOBS_JSON:-$HOME/.openclaw/cron/jobs.json}"
@@ -352,7 +353,7 @@ run_job_cron() {
     cmd+=(--expect-final)
   fi
   local run_start_ms
-  run_start_ms="$(python3 - <<'PY'
+  run_start_ms="$("$PY_BIN" - <<'PY'
 import time
 print(int(time.time()*1000))
 PY
@@ -423,7 +424,7 @@ PY
     local found_json=""
     while [[ $(date +%s) -lt $wait_deadline ]]; do
       if [[ -f "$runs_file" ]]; then
-        found_json="$(python3 - <<'PY' "$runs_file" "$run_start_ms"
+        found_json="$("$PY_BIN" - <<'PY' "$runs_file" "$run_start_ms"
 import json, sys
 path = sys.argv[1]
 start_ms = int(sys.argv[2])
@@ -462,37 +463,37 @@ PY
     else
       local finished_status delivered delivery_status finished_error
       local session_id session_key summary_present
-      finished_status="$(python3 - <<'PY' "$found_json"
+      finished_status="$("$PY_BIN" - <<'PY' "$found_json"
 import json,sys
 o=json.loads(sys.argv[1]); print(o.get("status"))
 PY
 )"
-      delivered="$(python3 - <<'PY' "$found_json"
+      delivered="$("$PY_BIN" - <<'PY' "$found_json"
 import json,sys
 o=json.loads(sys.argv[1]); print(o.get("delivered"))
 PY
 )"
-      delivery_status="$(python3 - <<'PY' "$found_json"
+      delivery_status="$("$PY_BIN" - <<'PY' "$found_json"
 import json,sys
 o=json.loads(sys.argv[1]); print(o.get("deliveryStatus"))
 PY
 )"
-      finished_error="$(python3 - <<'PY' "$found_json"
+      finished_error="$("$PY_BIN" - <<'PY' "$found_json"
 import json,sys
 o=json.loads(sys.argv[1]); print(o.get("error"))
 PY
 )"
-      session_id="$(python3 - <<'PY' "$found_json"
+      session_id="$("$PY_BIN" - <<'PY' "$found_json"
 import json,sys
 o=json.loads(sys.argv[1]); print(o.get("sessionId"))
 PY
 )"
-      session_key="$(python3 - <<'PY' "$found_json"
+      session_key="$("$PY_BIN" - <<'PY' "$found_json"
 import json,sys
 o=json.loads(sys.argv[1]); print(o.get("sessionKey"))
 PY
 )"
-      summary_present="$(python3 - <<'PY' "$found_json"
+      summary_present="$("$PY_BIN" - <<'PY' "$found_json"
 import json,sys
 o=json.loads(sys.argv[1]); s=o.get("summary")
 print("1" if isinstance(s,str) and s.strip() else "0")
@@ -501,10 +502,89 @@ PY
       echo "FINISHED: status=$finished_status delivered=$delivered deliveryStatus=$delivery_status error=$finished_error" | tee -a "$LOG"
       echo "TRACE: sessionId=$session_id sessionKey=$session_key summary_present=$summary_present" | tee -a "$LOG"
 
+      # 对声明了工具的任务：summary 为空时先检查 session 中是否有真实 toolCall/toolResult 证据。
+      # 若存在证据则不判失败（避免误杀：模型已发起工具但 summary 未写入）；否则硬失败。
+      if [[ -n "$tools_csv" && "$summary_present" == "0" ]]; then
+        local ev_out
+        ev_out="$("$PY_BIN" - <<'PY' "$HOME" "${agent_id:-}" "${session_id:-}" "${tools_csv:-}"
+import glob, json, os, sys
+home = sys.argv[1]
+agent_id = (sys.argv[2] or "").strip()
+session_id = (sys.argv[3] or "").strip()
+tools_csv = (sys.argv[4] or "").strip()
+
+if not session_id:
+    print("FAIL\tno_session_id")
+    raise SystemExit(0)
+
+session_file = os.path.join(home, ".openclaw", "agents", agent_id, "sessions", session_id + ".jsonl")
+if not os.path.isfile(session_file):
+    pat = os.path.join(home, ".openclaw", "agents", "*", "sessions", session_id + ".jsonl")
+    ms = sorted(glob.glob(pat))
+    if ms:
+        session_file = ms[0]
+    else:
+        print("FAIL\tno_session_file")
+        raise SystemExit(0)
+
+expected = set(t.strip() for t in tools_csv.split(",") if t.strip())
+assistant_toolcall = False
+tool_result_seen = False
+matched_expected = False
+
+with open(session_file, "r", encoding="utf-8", errors="ignore") as f:
+    for line in f:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            obj = json.loads(line)
+        except Exception:
+            continue
+        if obj.get("type") != "message":
+            continue
+        m = obj.get("message") or {}
+        role = m.get("role")
+        if role == "assistant":
+            for item in m.get("content") or []:
+                if item.get("type") != "toolCall":
+                    continue
+                nm = str(item.get("name") or "")
+                if not nm:
+                    continue
+                assistant_toolcall = True
+                if (not expected) or (nm in expected) or ("tool_call" in expected and nm == "exec"):
+                    matched_expected = True
+        elif role == "toolResult":
+            tname = str(m.get("toolName") or "")
+            if tname:
+                tool_result_seen = True
+                if (not expected) or (tname in expected) or ("tool_call" in expected and tname == "exec"):
+                    matched_expected = True
+
+if (assistant_toolcall or tool_result_seen) and matched_expected:
+    print("PASS\treal_tool_evidence")
+else:
+    print("FAIL\tno_real_tool_evidence")
+PY
+)"
+        local ev_code="${ev_out%%$'\t'*}"
+        local ev_reason="${ev_out#*$'\t'}"
+        if [[ "$ev_code" == "PASS" ]]; then
+          echo "INFO: summary empty but session has real tool evidence ($ev_reason)" | tee -a "$LOG"
+        else
+          echo "HARD_FAIL: finished has empty summary and no tool evidence ($ev_reason)" | tee -a "$LOG"
+          ((JOB_FAIL++)) || true
+          if [[ "$JOB_PASS" -gt 0 ]]; then
+            ((JOB_PASS--)) || true
+          fi
+        fi
+      fi
+
       if [[ "$VERIFY_SEND" == "1" ]]; then
         # 应发送：message 中抽取的 tool_* 含 tool_send_*
         local vs_out
-        vs_out="$(python3 - <<'PY' "$found_json" "$HOME" "${agent_id:-}" "${session_id:-}" "$tools_csv" "${job_id:-}"
+        vs_out="$("$PY_BIN" - <<'PY' "$found_json" "$HOME" "${agent_id:-}" "${session_id:-}" "$tools_csv" "${job_id:-}"
 import glob
 import json
 import os
@@ -854,7 +934,7 @@ fi
 
 # 预处理：一次性从 jobs.json 抽取每个任务的工具列表
 JOBS_PLAN_JSONL="$(
-python3 - <<'PY' "$JOBS_JSON" "$FILTER_REGEX"
+"$PY_BIN" - <<'PY' "$JOBS_JSON" "$FILTER_REGEX"
 import json, re, sys
 
 path = sys.argv[1]

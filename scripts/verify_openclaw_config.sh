@@ -19,12 +19,17 @@ set -euo pipefail
 ROOT_BASE="${OPENCLAW_CONFIG_HOME:-$HOME}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+PY_BIN="$REPO_ROOT/.venv/bin/python"
+if [[ ! -x "$PY_BIN" ]]; then
+  echo "[verify_openclaw_config] missing python interpreter: $PY_BIN" >&2
+  exit 2
+fi
 checked=0
 for rel in .openclaw/openclaw.json .openclaw/cron/jobs.json; do
   f="$ROOT_BASE/$rel"
   if [[ -f "$f" ]]; then
     checked=1
-    if ! python3 -c "import json,sys; json.load(open(sys.argv[1],encoding='utf-8'))" "$f"; then
+    if ! "$PY_BIN" -c "import json,sys; json.load(open(sys.argv[1],encoding='utf-8'))" "$f"; then
       echo "[verify_openclaw_config] invalid JSON: $f" >&2
       exit 1
     fi
@@ -33,7 +38,7 @@ for rel in .openclaw/openclaw.json .openclaw/cron/jobs.json; do
 done
 
 if [[ "${VERIFY_OTA_LOAD_PATHS:-}" == "1" && -f "$ROOT_BASE/.openclaw/openclaw.json" ]]; then
-  python3 - "$ROOT_BASE/.openclaw/openclaw.json" "$REPO_ROOT" <<'PY'
+  "$PY_BIN" - "$ROOT_BASE/.openclaw/openclaw.json" "$REPO_ROOT" <<'PY'
 import json, sys
 from pathlib import Path
 cfg, repo = Path(sys.argv[1]), Path(sys.argv[2]).resolve()
@@ -53,7 +58,7 @@ fi
 # 可选：校验单工具 cron 任务是否声明了严格 toolsAllow（默认开启）
 # 关闭方式：VERIFY_CRON_TOOLS_ALLOW=0 bash scripts/verify_openclaw_config.sh
 if [[ "${VERIFY_CRON_TOOLS_ALLOW:-1}" == "1" && -f "$ROOT_BASE/.openclaw/cron/jobs.json" ]]; then
-  if ! python3 "$SCRIPT_DIR/check_cron_tools_allow.py" --jobs "$ROOT_BASE/.openclaw/cron/jobs.json"; then
+  if ! "$PY_BIN" "$SCRIPT_DIR/check_cron_tools_allow.py" --jobs "$ROOT_BASE/.openclaw/cron/jobs.json"; then
     echo "[verify_openclaw_config] cron toolsAllow 校验失败，请修复后再执行。" >&2
     exit 1
   fi
@@ -61,7 +66,7 @@ fi
 
 # 可选：toolsAllow 中的工具名必须在 config/tools_manifest.json 中注册（OpenClaw 插件从 manifest 注册工具）
 if [[ "${VERIFY_MANIFEST_VS_CRON_TOOLS:-1}" == "1" && -f "$REPO_ROOT/config/tools_manifest.json" && -f "$ROOT_BASE/.openclaw/cron/jobs.json" ]]; then
-  if ! python3 "$SCRIPT_DIR/verify_tools_manifest_vs_cron.py" --jobs "$ROOT_BASE/.openclaw/cron/jobs.json" --manifest "$REPO_ROOT/config/tools_manifest.json"; then
+  if ! "$PY_BIN" "$SCRIPT_DIR/verify_tools_manifest_vs_cron.py" --jobs "$ROOT_BASE/.openclaw/cron/jobs.json" --manifest "$REPO_ROOT/config/tools_manifest.json"; then
     echo "[verify_openclaw_config] tools_manifest 与 cron toolsAllow 不一致，请修复后再执行。" >&2
     exit 1
   fi

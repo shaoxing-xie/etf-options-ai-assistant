@@ -348,3 +348,117 @@ details.screening-details summary {
     grid-template-columns: 1fr;
   }
 }
+
+.research-kv {
+  display: grid;
+  grid-template-columns: 92px 1fr;
+  gap: 6px;
+  margin-bottom: 6px;
+  align-items: start;
+}
+
+.research-k {
+  font-size: 11px;
+  opacity: 0.78;
+}
+
+.research-v {
+  font-size: 12px;
+  color: #e8ecf7;
+}
+
+.research-status-pill {
+  display: inline-flex;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  border: 1px solid #334483;
+}
+
+.research-status-pill.ok {
+  border-color: #2d6a45;
+  color: #bff2cf;
+}
+
+.research-status-pill.stale {
+  border-color: #7a5a1d;
+  color: #ffe0b2;
+}
+
+.research-status-pill.missing {
+  border-color: #a0435a;
+  color: #ffb4b4;
+}
+
+.research-timeline {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.research-timeline-item {
+  border: 1px solid #334483;
+  border-radius: 8px;
+  background: #0d1428;
+  padding: 8px;
+}
+
+.research-timeline-meta {
+  font-size: 11px;
+  opacity: 0.78;
+  margin-bottom: 4px;
+}
+
+.research-heat-bar {
+  height: 8px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #2b4f9f, #4bb5ff);
+}
+
+.kpi-card.tone-warn {
+  border-color: #7a5a1d;
+}
+
+.kpi-card.tone-bad {
+  border-color: #a0435a;
+}
+
+.research-timeline-item.tone-warn {
+  border-color: #7a5a1d;
+}
+
+.research-timeline-item.tone-bad {
+  border-color: #a0435a;
+}
+
+.research-drawer {
+  margin-top: 10px;
+  background: #101831;
+  border: 1px solid #28335f;
+  border-radius: 10px;
+  padding: 10px;
+}
+
+.research-drawer-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.research-anomaly-item {
+  padding: 8px;
+  border: 1px solid #334483;
+  border-radius: 8px;
+  margin-bottom: 6px;
+  background: #0d1428;
+}
+
+.research-view {
+  display: none;
+}
+
+.research-view.active {
+  display: block;
+}

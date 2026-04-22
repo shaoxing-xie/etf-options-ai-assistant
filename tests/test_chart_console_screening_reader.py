@@ -41,10 +41,7 @@ def test_list_screening_date_files_orders_and_skips_emergency(tmp_path: Path) ->
 
 
 def test_screening_reader_summary_minimal(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(
-        "src.screening_quality_gate.screening_should_skip_due_to_pause",
-        lambda: (False, ""),
-    )
+    monkeypatch.setattr(ScreeningReader, "effective_pause", lambda self: {"blocked": False, "reason": None, "weekly_regime_pause": False, "emergency_pause_active": False})
     root = tmp_path
     (root / "data" / "screening").mkdir(parents=True)
     (root / "data" / "watchlist").mkdir(parents=True)
@@ -87,10 +84,7 @@ def test_read_artifact_by_date_missing(tmp_path: Path) -> None:
 
 
 def test_weekly_review_and_sentiment_files(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(
-        "src.screening_quality_gate.screening_should_skip_due_to_pause",
-        lambda: (False, ""),
-    )
+    monkeypatch.setattr(ScreeningReader, "effective_pause", lambda self: {"blocked": False, "reason": None, "weekly_regime_pause": False, "emergency_pause_active": False})
     root = tmp_path
     (root / "data" / "screening").mkdir(parents=True)
     (root / "data" / "watchlist").mkdir(parents=True)
@@ -120,10 +114,7 @@ def test_weekly_review_and_sentiment_files(tmp_path: Path, monkeypatch: pytest.M
 
 def test_sentiment_snapshot_from_precheck_sidecar(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Chart Console「市场情绪」应读取 pre-market 落盘的 data/sentiment_check/YYYY-MM-DD.json。"""
-    monkeypatch.setattr(
-        "src.screening_quality_gate.screening_should_skip_due_to_pause",
-        lambda: (False, ""),
-    )
+    monkeypatch.setattr(ScreeningReader, "effective_pause", lambda self: {"blocked": False, "reason": None, "weekly_regime_pause": False, "emergency_pause_active": False})
     root = tmp_path
     (root / "data" / "screening").mkdir(parents=True)
     (root / "data" / "watchlist").mkdir(parents=True)

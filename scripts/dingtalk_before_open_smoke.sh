@@ -5,6 +5,7 @@
 #   bash scripts/dingtalk_before_open_smoke.sh prod   # 真发（需 ~/.openclaw/.env 里 webhook 与加签正确）
 set -eu
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+PY_BIN="${ROOT}/.venv/bin/python"
 cd "$ROOT"
 
 if [[ -f "${HOME}/.openclaw/.env" ]]; then
@@ -24,4 +25,4 @@ case "$MODE" in
 esac
 
 ARGS_FILE="${ROOT}/scripts/examples/before_open_dingtalk_args.${MODE}.json"
-exec python3 "${ROOT}/tool_runner.py" tool_send_analysis_report "@${ARGS_FILE}"
+exec "${PY_BIN}" "${ROOT}/tool_runner.py" tool_send_analysis_report "@${ARGS_FILE}"

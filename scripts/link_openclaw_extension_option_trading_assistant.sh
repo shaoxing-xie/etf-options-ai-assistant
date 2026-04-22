@@ -16,6 +16,7 @@
 #   OTA_LEGACY_EXTENSION_SYMLINK=1 ./scripts/link_openclaw_extension_option_trading_assistant.sh
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+PY_BIN="${ROOT}/.venv/bin/python"
 EXT_ROOT="${OPENCLAW_EXTENSIONS_DIR:-$HOME/.openclaw/extensions}"
 DEST="$EXT_ROOT/option-trading-assistant"
 
@@ -43,5 +44,5 @@ fi
 ln -sfn "$ROOT" "$DEST"
 echo "OK: $DEST -> $(readlink -f "$DEST")"
 echo "[link_openclaw_extension_option_trading_assistant] 同步 plugins.load.paths（避免 plugin not found）…"
-python3 "$ROOT/scripts/ensure_openclaw_plugin_load_paths.py" --config "${OPENCLAW_JSON:-$HOME/.openclaw/openclaw.json}" --repo-root "$ROOT" --ensure-allow --ensure-entry
+"${PY_BIN}" "$ROOT/scripts/ensure_openclaw_plugin_load_paths.py" --config "${OPENCLAW_JSON:-$HOME/.openclaw/openclaw.json}" --repo-root "$ROOT" --ensure-allow --ensure-entry
 echo "[link_openclaw_extension_option_trading_assistant] 警告：extensions 符号链接与 load.paths 可能重复扫描同一仓库；稳定环境请只用 setup_openclaw_option_trading_assistant.sh" >&2

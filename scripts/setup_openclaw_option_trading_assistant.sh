@@ -15,6 +15,7 @@
 #   OTA_SKIP_ENSURE_ENTRY=1       不向 plugins.entries 追加
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+PY_BIN="${ROOT}/.venv/bin/python"
 OPENCLAW_JSON="${OPENCLAW_JSON:-$HOME/.openclaw/openclaw.json}"
 EXT_ROOT="${OPENCLAW_EXTENSIONS_DIR:-$HOME/.openclaw/extensions}"
 DEST="$EXT_ROOT/option-trading-assistant"
@@ -23,7 +24,7 @@ ENSURE_ARGS=(--config "$OPENCLAW_JSON" --repo-root "$ROOT")
 [[ "${OTA_SKIP_ENSURE_ALLOW:-}" == "1" ]] || ENSURE_ARGS+=(--ensure-allow)
 [[ "${OTA_SKIP_ENSURE_ENTRY:-}" == "1" ]] || ENSURE_ARGS+=(--ensure-entry)
 
-python3 "$ROOT/scripts/ensure_openclaw_plugin_load_paths.py" "${ENSURE_ARGS[@]}"
+"${PY_BIN}" "$ROOT/scripts/ensure_openclaw_plugin_load_paths.py" "${ENSURE_ARGS[@]}"
 
 if [[ "${OTA_KEEP_EXTENSION_SYMLINK:-}" == "1" ]]; then
   echo "[setup_openclaw_option_trading_assistant] OTA_KEEP_EXTENSION_SYMLINK=1：保留 $DEST（可能与 load.paths 重复扫描，仅调试用）"

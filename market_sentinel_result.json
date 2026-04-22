@@ -1,0 +1,23 @@
+{
+  "overall_score": 63,
+  "sentiment_stage": {
+    "score": 63,
+    "stage": "修复期",
+    "description": "市场处于修复期阶段，情绪正在改善但仍需关注风险"
+  },
+  "sub_scores": {
+    "limit_up_sentiment": 65,
+    "fund_flow_sentiment": 62,
+    "northbound_flow_sentiment": 80,
+    "sector_sentiment": 45
+  },
+  "factor_attribution": {
+    "limit_up": "涨停家数较多但破板率偏高，之前表现分化，整体偏多",
+    "fund_flow": "今日资金流出但近三日累计大幅净流入，资金趋势改善",
+    "northbound": "北向资金连续净流入，今日单日及五日累计均保持流入，信心较足",
+    "sector": "板块涨跌分化，轮动加速，整体处于震荡状态"
+  },
+  "data_completeness_ratio": 0.75,
+  "degraded": true,
+  "degraded_reason": "板块数据采用备用数据源（sina_新浪行业），质量评分为65；北向资金数据为上一交易日数据（2026-04-20）",
+  "action_bias": "谨慎乐观，可考虑逐步建仓但需控制仓位，重点关注资金流向和板块轮动

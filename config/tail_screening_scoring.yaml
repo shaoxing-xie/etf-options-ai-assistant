@@ -1,0 +1,79 @@
+# 多范式尾盘选股 — 参数外置（默认上线：oscillation）
+version: "v1_20260422"
+default_regime: oscillation   # oscillation | neutral | auto
+
+# §3.5：指数代理涨跌幅（market_history 失败时备用）
+market_proxy:
+  index_proxy_symbol: "000300"
+
+# auto 制度：tool_detect_market_regime（510300 日线缓存）；失败回退 oscillation
+regime_detection:
+  etf_symbol: "510300"
+  mode: "production"
+
+hard_gates:
+  min_days_listed: 60
+  min_amount_cny: 50000000
+  exclude_st: true
+  near_limit_abs_pct: 9.5
+
+tail_grab:
+  max_symbols: 15
+  timeout_per_symbol_sec: 2
+  total_timeout_sec: 600
+  on_budget_exhausted: skip_paradigm
+  # 分钟线失败数 / 已尝试标的数 > 阈值则整池空（与总超时一致口径）
+  max_failure_ratio: 0.8
+  # 当分钟线不足以计算 last30 时，是否允许使用实时涨跌幅代理（降级）
+  allow_proxy_when_no_last30m: true
+
+paradigms:
+  fund_flow_follow:
+    entry_threshold: 72
+  tail_grab:
+    entry_threshold: 72
+  oversold_bounce:
+    entry_threshold: 65
+  sector_rotation:
+    entry_threshold: 63
+    sector_source: rank
+    rs_min_threshold_pct: 0.5
+    sector_rank_limit: 60
+    # sector_rank 不可用时，允许降级为个股相对强度简化评分
+    allow_sector_proxy_fallback: true
+
+confluence:
+  bonus_per_paradigm: 4
+  max_bonus: 12
+
+regime_overrides:
+  # 显式中性：与 §三 基础 paradigms 一致（块为空 = 不覆盖）
+  neutral: {}
+  # 趋势族占位：检测为 trending_up/down 时合并基础参数；可按回测再填覆盖
+  trend_up: {}
+  trend_down: {}
+  oscillation:
+    paradigms:
+      fund_flow_follow:
+        entry_threshold: 68
+        weight_multiplier: 0.8
+      tail_grab:
+        entry_threshold: 70
+        weight_multiplier: 0.9
+      oversold_bounce:
+        entry_threshold: 60
+        weight_multiplier: 1.2
+      sector_rotation:
+        entry_threshold: 60
+        weight_multiplier: 1.0
+        rs_min_threshold_pct: 0.3
+    confluence:
+      bonus_per_paradigm: 3
+      max_bonus: 9
+    composite_caps:
+      fund_flow_follow_max_in_top5: 2
+      tail_grab_max_in_top5: 2
+    extra_gates:
+      dispersion_pause_above: { enabled: false, value: 0.6 }
+      index_proxy_pause_below_pct: { enabled: false, value: -1.5 }
+      index_consecutive_down_days: { enabled: false, days: 3 }

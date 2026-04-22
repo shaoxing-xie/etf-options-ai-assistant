@@ -12,10 +12,11 @@ set -euo pipefail
 #   ETF_OPTIONS_ASSISTANT_ROOT=/path/to/etf-options-ai-assistant ./scripts/run_chart_console_pro.sh
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+PY_BIN="${ROOT_DIR}/.venv/bin/python"
 HOST="${CHART_CONSOLE_PRO_HOST:-0.0.0.0}"
 PORT="${CHART_CONSOLE_PRO_PORT:-8611}"
 
 cd "${ROOT_DIR}"
 echo "[run_chart_console_pro] ROOT=${ROOT_DIR}"
 echo "[run_chart_console_pro] URL=http://localhost:${PORT}"
-exec CHART_CONSOLE_PRO_HOST="${HOST}" CHART_CONSOLE_PRO_PORT="${PORT}" python3 apps/chart_console/api/server.py
+exec CHART_CONSOLE_PRO_HOST="${HOST}" CHART_CONSOLE_PRO_PORT="${PORT}" "${PY_BIN}" apps/chart_console/api/server.py
