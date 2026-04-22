@@ -29,18 +29,29 @@ function renderRows(tbodyId, rows) {
   const tbody = qs(tbodyId);
   if (!tbody) return;
   tbody.innerHTML = "";
-  const list = Array.isArray(rows) ? rows : [];
+  const onlyIssues = !!qs("opsOnlyIssues")?.checked;
+  const src = Array.isArray(rows) ? rows : [];
+  const list = onlyIssues
+    ? src.filter((r) => {
+        const q = String(r?.quality_status || "");
+        const s = String(r?.last_run_status || "");
+        return q === "degraded" || s === "error" || Number(r?.consecutive_errors || 0) > 0;
+      })
+    : src;
   if (!list.length) {
     const tr = document.createElement("tr");
-    tr.innerHTML = "<td colspan='6'>暂无事件</td>";
+    tr.innerHTML = "<td colspan='7'>暂无事件</td>";
     tbody.appendChild(tr);
     return;
   }
   for (const r of list) {
     const tr = document.createElement("tr");
+    const q = String(r.quality_status || "");
+    const qLabel = q || "ok";
+    const qStyle = qLabel === "degraded" ? " style='color:#f7c88a;font-weight:600;'" : "";
     tr.innerHTML = `<td>${esc(r.task_id || "")}</td><td>${esc(r.name || "")}</td><td>${esc(r.schedule || "")}</td><td>${esc(
       r.last_run_status || "",
-    )}</td><td>${esc(r.consecutive_errors ?? "")}</td><td>${esc((r.tools_allow || []).join(","))}</td>`;
+    )}</td><td${qStyle}>${esc(qLabel)}</td><td>${esc(r.consecutive_errors ?? "")}</td><td>${esc((r.tools_allow || []).join(","))}</td>`;
     tbody.appendChild(tr);
   }
 }
@@ -68,4 +79,5 @@ qs("tab-ops")?.addEventListener("click", () => {
 qs("btnOpsRefresh")?.addEventListener("click", () => loadOpsEvents());
 qs("subtab-ops-exec")?.addEventListener("click", () => setOpsSubview("exec"));
 qs("subtab-ops-collect")?.addEventListener("click", () => setOpsSubview("collect"));
+qs("opsOnlyIssues")?.addEventListener("change", () => loadOpsEvents());
 

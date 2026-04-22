@@ -130,3 +130,81 @@ def test_semantic_screening_candidates_prefers_snapshot(tmp_path: Path) -> None:
     reader = SemanticReader(root)
     payload = reader.screening_candidates("2026-04-22")
     assert payload["candidates"][0]["symbol"] == "000001"
+
+
+def test_research_metrics_and_diagnostics(tmp_path: Path) -> None:
+    root = tmp_path
+    (root / "data" / "semantic" / "screening_view").mkdir(parents=True)
+    (root / "data" / "semantic" / "sentiment_snapshot").mkdir(parents=True)
+    (root / "data" / "semantic" / "timeline_feed").mkdir(parents=True)
+    (root / "data" / "screening").mkdir(parents=True)
+    (root / "data" / "watchlist").mkdir(parents=True)
+    (root / "data" / "tail_screening").mkdir(parents=True)
+    (root / "config").mkdir(parents=True)
+    (root / "config" / "weekly_calibration.json").write_text('{"regime":"oscillation"}', encoding="utf-8")
+    (root / "config" / "data_quality_policy.yaml").write_text("screening: {}\n", encoding="utf-8")
+    (root / "data" / "watchlist" / "default.json").write_text('{"symbols":[]}', encoding="utf-8")
+    (root / "data" / "screening" / "2026-04-22.json").write_text(
+        json.dumps({"run_date": "2026-04-22", "screening": {"data": [{"symbol": "000001", "score": 80}]}}),
+        encoding="utf-8",
+    )
+    (root / "data" / "tail_screening" / "latest.json").write_text(
+        json.dumps({"run_date": "2026-04-22", "recommended": [{"symbol": "000001", "score": 88}]}),
+        encoding="utf-8",
+    )
+    (root / "data" / "semantic" / "screening_view" / "2026-04-22.json").write_text(
+        json.dumps(
+            {
+                "_meta": {"schema_name": "screening_view_v1", "trade_date": "2026-04-22"},
+                "data": {
+                    "watchlist_state": {},
+                    "candidates": {"nightly": [{"symbol": "000001", "score": 80}], "tail": [{"symbol": "000001", "score": 88}]},
+                    "performance_context": {},
+                    "effect_stats": {"hit_rate_5d_pct": 0.6, "pause_events_count": 0},
+                    "sector_rotation_heatmap": [],
+                    "tail_paradigm_pools": {},
+                    "task_execution_monitor": [{"task_id": "t1", "status": "ok"}],
+                    "alert_thresholds": {},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    (root / "data" / "semantic" / "sentiment_snapshot" / "2026-04-22.json").write_text(
+        json.dumps(
+            {
+                "_meta": {"schema_name": "sentiment_snapshot_v1", "trade_date": "2026-04-22"},
+                "data": {"overall_score": 72, "sentiment_stage": "高潮期", "sentiment_dispersion": 0.42},
+            }
+        ),
+        encoding="utf-8",
+    )
+    (root / "data" / "semantic" / "timeline_feed" / "2026-04-22.jsonl").write_text(
+        json.dumps(
+            {
+                "_meta": {"task_id": "intraday-tail-screening", "quality_status": "degraded", "lineage_refs": []},
+                "data": {
+                    "event_id": "ev1",
+                    "event_time": "2026-04-22T14:00:00Z",
+                    "event_type": "tail_recommendation",
+                    "summary": "degraded",
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    reader = SemanticReader(root)
+    metrics = reader.research_metrics("2026-04-22", window=5)
+    assert metrics["_meta"]["schema_name"] == "research_metrics_v1"
+    assert metrics["sentiment_trend"]["current_score"] == 72
+    assert metrics["screening_effectiveness"]["nightly_candidates"] == 1
+    diagnostics = reader.research_diagnostics("2026-04-22", window=5)
+    assert diagnostics["_meta"]["schema_name"] == "research_diagnostics_v1"
+    assert diagnostics["diagnostics"]["degraded_event_count"] >= 1
+    factor = reader.factor_diagnostics("2026-04-22", period="week")
+    assert factor["_meta"]["schema_name"] == "factor_diagnostics_v1"
+    assert isinstance(factor["factors"], list)
+    attribution = reader.strategy_attribution("2026-04-22")
+    assert attribution["_meta"]["schema_name"] == "strategy_attribution_v1"
+    assert "by_task_stage" in attribution["attribution"]

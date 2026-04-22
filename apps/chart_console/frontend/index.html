@@ -311,9 +311,12 @@
           <button type="button" id="btnResearchAnomalyDrawer">异常详情</button>
           <span id="researchStatus" class="small"></span>
         </div>
+        <div id="researchFallbackBanner" class="error-banner" style="display:none;"></div>
         <div class="screening-grid">
           <aside class="screening-col">
             <div class="research-view active" id="research-overview-left" data-subview="overview">
+              <h4 class="screening-h4">数据质量与口径</h4>
+              <div id="researchQualityBadge" class="small"></div>
               <h4 class="screening-h4">市场状态</h4>
               <div id="researchMarketState" class="small"></div>
               <h4 class="screening-h4">风险快照</h4>
@@ -357,6 +360,15 @@
                   <tbody id="researchTopTbody"></tbody>
                 </table>
               </div>
+              <h4 class="screening-h4">因子诊断（轻量）</h4>
+              <div class="screening-table-wrap">
+                <table>
+                  <thead><tr><th>因子</th><th>IC代理</th><th>Top命中率</th><th>样本数</th><th>稳定性</th></tr></thead>
+                  <tbody id="researchFactorDiagTbody"></tbody>
+                </table>
+              </div>
+              <h4 class="screening-h4">策略归因（轻量）</h4>
+              <div id="researchAttribution" class="small"></div>
             </div>
             <div class="research-view" id="research-nightly-main" data-subview="nightly">
               <h4 class="screening-h4">夜盘候选池（nightly-stock-screening）</h4>
@@ -411,15 +423,31 @@
               <h4 class="screening-h4">时间轴</h4>
               <label class="small">交易日</label>
               <select id="researchDatePick"></select>
+              <label class="small" style="display:block; margin-top:8px;">
+                <input id="researchTimelineOnlyAnomaly" type="checkbox" />
+                仅显示异常（degraded）
+              </label>
               <div id="researchTimeline" class="small research-timeline"></div>
             </div>
             <div class="research-view" id="research-nightly-right" data-subview="nightly">
-              <h4 class="screening-h4">时间轴（参考）</h4>
-              <div class="small screening-muted">回到「投研总览」可查看完整事件流。</div>
+              <h4 class="screening-h4">时间轴（夜盘）</h4>
+              <label class="small">交易日</label>
+              <select id="researchNightlyDatePick"></select>
+              <label class="small" style="display:block; margin-top:8px;">
+                <input id="researchNightlyTimelineOnlyAnomaly" type="checkbox" />
+                仅显示异常（degraded）
+              </label>
+              <div id="researchNightlyTimeline" class="small research-timeline"></div>
             </div>
             <div class="research-view" id="research-tail-right" data-subview="tail">
-              <h4 class="screening-h4">时间轴（参考）</h4>
-              <div class="small screening-muted">回到「投研总览」可查看完整事件流。</div>
+              <h4 class="screening-h4">时间轴（尾盘）</h4>
+              <label class="small">交易日</label>
+              <select id="researchTailDatePick"></select>
+              <label class="small" style="display:block; margin-top:8px;">
+                <input id="researchTailTimelineOnlyAnomaly" type="checkbox" />
+                仅显示异常（degraded）
+              </label>
+              <div id="researchTailTimeline" class="small research-timeline"></div>
             </div>
           </aside>
         </div>
@@ -439,12 +467,16 @@
         </div>
         <div class="bar screening-toolbar">
           <button type="button" id="btnOpsRefresh">刷新</button>
+          <label class="small">
+            <input id="opsOnlyIssues" type="checkbox" />
+            仅看异常（degraded/error）
+          </label>
           <span id="opsStatus" class="small"></span>
         </div>
         <div class="research-view active" id="ops-exec-view" data-subview="exec">
           <div class="screening-table-wrap">
             <table>
-              <thead><tr><th>任务ID</th><th>名称</th><th>cron</th><th>状态</th><th>连续错误</th><th>工具</th></tr></thead>
+              <thead><tr><th>任务ID</th><th>名称</th><th>cron</th><th>状态</th><th>质量</th><th>连续错误</th><th>工具</th></tr></thead>
               <tbody id="opsExecTbody"></tbody>
             </table>
           </div>
@@ -452,7 +484,7 @@
         <div class="research-view" id="ops-collect-view" data-subview="collect">
           <div class="screening-table-wrap">
             <table>
-              <thead><tr><th>任务ID</th><th>名称</th><th>cron</th><th>状态</th><th>连续错误</th><th>工具</th></tr></thead>
+              <thead><tr><th>任务ID</th><th>名称</th><th>cron</th><th>状态</th><th>质量</th><th>连续错误</th><th>工具</th></tr></thead>
               <tbody id="opsCollectTbody"></tbody>
             </table>
           </div>

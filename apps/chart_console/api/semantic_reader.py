@@ -216,6 +216,27 @@ class SemanticReader:
         old = self._read_semantic_snapshot("dashboard_snapshot", trade_date)
         return old if isinstance(old, dict) else None
 
+    def _resolve_trade_date(self, trade_date: str) -> str:
+        td = (trade_date or "").strip()
+        if validate_screening_date_key(td):
+            return td
+        dates = self.semantic_trade_dates()
+        if dates:
+            return dates[-1]
+        dash = self.dashboard()
+        dmeta = dash.get("_meta") if isinstance(dash.get("_meta"), dict) else {}
+        d = str(dmeta.get("trade_date") or "").strip()
+        if validate_screening_date_key(d):
+            return d
+        return _today_utc()
+
+    def semantic_trade_dates(self) -> list[str]:
+        base = self.root / "data" / "semantic" / "screening_view"
+        if not base.is_dir():
+            return []
+        out = sorted([p.stem for p in base.glob("*.json") if p.is_file() and validate_screening_date_key(p.stem)])
+        return out
+
     def timeline(self, trade_date: str) -> dict[str, Any]:
         if not validate_screening_date_key(trade_date):
             raise ValueError("invalid trade_date")
@@ -530,5 +551,226 @@ class SemanticReader:
                 "trade_date": td or _today_utc(),
                 "quality_status": "ok",
                 "lineage_refs": [lineage],
+            },
+        }
+
+    def research_metrics(self, trade_date: str = "", window: int = 5) -> dict[str, Any]:
+        td = self._resolve_trade_date(trade_date)
+        w = max(1, min(int(window or 5), 20))
+        dashboard = self.dashboard()
+        view = self.screening_view(td)
+        sentiment = dashboard.get("sentiment_temperature") if isinstance(dashboard.get("sentiment_temperature"), dict) else {}
+        risk = dashboard.get("risk_snapshot") if isinstance(dashboard.get("risk_snapshot"), dict) else {}
+
+        dates = self.semantic_trade_dates()
+        selected_dates = [d for d in dates if d <= td][-w:]
+        score_series: list[float | None] = []
+        for d in selected_dates:
+            snap = self._read_sentiment_snapshot(d) or {}
+            sc = snap.get("overall_score")
+            if not isinstance(sc, (int, float)):
+                score_series.append(None)
+            else:
+                score_series.append(float(sc))
+        trend_deltas: list[float] = []
+        for i in range(1, len(score_series)):
+            a, b = score_series[i - 1], score_series[i]
+            if isinstance(a, (int, float)) and isinstance(b, (int, float)):
+                trend_deltas.append(round(float(b) - float(a), 4))
+
+        candidates = (view.get("candidates") if isinstance(view.get("candidates"), dict) else {})
+        nightly = candidates.get("nightly") if isinstance(candidates.get("nightly"), list) else []
+        tail = candidates.get("tail") if isinstance(candidates.get("tail"), list) else []
+        effect_stats = view.get("effect_stats") if isinstance(view.get("effect_stats"), dict) else {}
+        hit_rate_5d = effect_stats.get("hit_rate_5d_pct")
+        if not isinstance(hit_rate_5d, (int, float)):
+            hit_rate_5d = None
+
+        task_monitor = view.get("task_execution_monitor") if isinstance(view.get("task_execution_monitor"), list) else []
+        stale_or_missing = [
+            row for row in task_monitor
+            if isinstance(row, dict) and str(row.get("status")) in {"stale", "missing"}
+        ]
+        quality_status = "degraded" if stale_or_missing else "ok"
+        if (sentiment.get("quality_status") or {}).get("degraded"):
+            quality_status = "degraded"
+
+        return {
+            "sentiment_trend": {
+                "current_score": sentiment.get("score"),
+                "current_stage": sentiment.get("stage"),
+                "dispersion": sentiment.get("dispersion"),
+                "score_series": score_series,
+                "trend_5d": trend_deltas,
+            },
+            "screening_effectiveness": {
+                "nightly_candidates": len(nightly),
+                "tail_recommendations": len(tail),
+                "hit_rate_5d": hit_rate_5d,
+                "pause_events": effect_stats.get("pause_events_count"),
+                "extreme_alert_count": risk.get("extreme_alert_count"),
+            },
+            "task_health": {
+                "stale_or_missing_count": len(stale_or_missing),
+                "stale_or_missing_tasks": [str(x.get("task_id") or "") for x in stale_or_missing],
+            },
+            "_meta": {
+                "schema_name": "research_metrics_v1",
+                "schema_version": "1.0.0",
+                "task_id": "research-metrics-aggregation",
+                "run_id": "",
+                "data_layer": "L4",
+                "generated_at": datetime.now(timezone.utc).isoformat(),
+                "trade_date": td,
+                "quality_status": quality_status,
+                "lineage_refs": [
+                    f"data/semantic/screening_view/{td}.json",
+                    f"data/semantic/sentiment_snapshot/{td}.json",
+                ],
+            },
+        }
+
+    def research_diagnostics(self, trade_date: str = "", window: int = 5) -> dict[str, Any]:
+        td = self._resolve_trade_date(trade_date)
+        metrics = self.research_metrics(td, window=window)
+        timeline = self.timeline(td)
+        events = timeline.get("events") if isinstance(timeline.get("events"), list) else []
+        degraded_events = [
+            {
+                "task_id": str(e.get("task_id") or ""),
+                "event_time": str(e.get("event_time") or ""),
+                "summary": str(e.get("summary") or ""),
+            }
+            for e in events
+            if isinstance(e, dict) and str(e.get("quality_status") or "") == "degraded"
+        ]
+        return {
+            "metrics": metrics,
+            "diagnostics": {
+                "degraded_event_count": len(degraded_events),
+                "degraded_events": degraded_events[:20],
+            },
+            "_meta": {
+                "schema_name": "research_diagnostics_v1",
+                "schema_version": "1.0.0",
+                "task_id": "research-diagnostics-aggregation",
+                "run_id": "",
+                "data_layer": "L4",
+                "generated_at": datetime.now(timezone.utc).isoformat(),
+                "trade_date": td,
+                "quality_status": "degraded" if degraded_events else "ok",
+                "lineage_refs": [
+                    f"data/semantic/timeline_feed/{td}.jsonl",
+                    f"data/semantic/screening_view/{td}.json",
+                ],
+            },
+        }
+
+    def factor_diagnostics(self, trade_date: str = "", period: str = "week") -> dict[str, Any]:
+        td = self._resolve_trade_date(trade_date)
+        view = self.screening_view(td)
+        candidates = (view.get("candidates") if isinstance(view.get("candidates"), dict) else {})
+        nightly = candidates.get("nightly") if isinstance(candidates.get("nightly"), list) else []
+        scored = [r for r in nightly if isinstance(r, dict) and isinstance(r.get("score"), (int, float))]
+        sorted_rows = sorted(scored, key=lambda x: float(x.get("score") or 0.0), reverse=True)
+        bucket = max(1, len(sorted_rows) // 3)
+        top = sorted_rows[:bucket]
+        bottom = sorted_rows[-bucket:] if sorted_rows else []
+
+        def _avg(rows: list[dict[str, Any]], key: str) -> float | None:
+            vals = [float(r.get(key)) for r in rows if isinstance(r.get(key), (int, float))]
+            if not vals:
+                return None
+            return float(sum(vals) / len(vals))
+
+        spread = None
+        top_ret = _avg(top, "pct_change")
+        bot_ret = _avg(bottom, "pct_change")
+        if isinstance(top_ret, (int, float)) and isinstance(bot_ret, (int, float)):
+            spread = round(float(top_ret) - float(bot_ret), 4)
+
+        hit_top = None
+        if top:
+            c = 0
+            t = 0
+            for r in top:
+                pc = r.get("pct_change")
+                if isinstance(pc, (int, float)):
+                    t += 1
+                    if float(pc) > 0:
+                        c += 1
+            if t > 0:
+                hit_top = round(c / t, 4)
+
+        factors = [
+            {
+                "name": "composite_score",
+                "ic_proxy": spread,
+                "hit_rate_top_bucket": hit_top,
+                "sample_size": len(sorted_rows),
+                "stability": 1.0 if len(sorted_rows) >= 3 else None,
+            }
+        ]
+        return {
+            "period": period,
+            "factors": factors,
+            "_meta": {
+                "schema_name": "factor_diagnostics_v1",
+                "schema_version": "1.0.0",
+                "task_id": "factor-diagnostics",
+                "run_id": "",
+                "data_layer": "L4",
+                "generated_at": datetime.now(timezone.utc).isoformat(),
+                "trade_date": td,
+                "quality_status": "ok" if scored else "degraded",
+                "lineage_refs": [f"data/semantic/screening_view/{td}.json"],
+            },
+        }
+
+    def strategy_attribution(self, trade_date: str = "") -> dict[str, Any]:
+        td = self._resolve_trade_date(trade_date)
+        view = self.screening_view(td)
+        tail = ((view.get("candidates") or {}).get("tail") if isinstance(view.get("candidates"), dict) else [])
+        by_paradigm: dict[str, dict[str, Any]] = {}
+        for row in tail if isinstance(tail, list) else []:
+            if not isinstance(row, dict):
+                continue
+            tags = row.get("source_tags") if isinstance(row.get("source_tags"), list) else []
+            for tag in tags:
+                k = str(tag or "").strip() or "unknown"
+                if k not in by_paradigm:
+                    by_paradigm[k] = {"recommendations": 0, "avg_score": 0.0}
+                by_paradigm[k]["recommendations"] += 1
+                sc = row.get("score")
+                if isinstance(sc, (int, float)):
+                    by_paradigm[k]["avg_score"] += float(sc)
+        for v in by_paradigm.values():
+            n = max(1, int(v["recommendations"]))
+            v["avg_score"] = round(float(v["avg_score"]) / n, 4)
+
+        nightly = ((view.get("candidates") or {}).get("nightly") if isinstance(view.get("candidates"), dict) else [])
+        gate = view.get("task_execution_monitor") if isinstance(view.get("task_execution_monitor"), list) else []
+        stale = sum(1 for r in gate if isinstance(r, dict) and str(r.get("status")) in {"stale", "missing"})
+        return {
+            "attribution": {
+                "by_paradigm": by_paradigm,
+                "by_task_stage": {
+                    "nightly": {"recommendations": len(nightly) if isinstance(nightly, list) else 0},
+                    "tail": {"recommendations": len(tail) if isinstance(tail, list) else 0},
+                },
+                "gate_impact": {
+                    "stale_or_missing_tasks": stale,
+                },
+            },
+            "_meta": {
+                "schema_name": "strategy_attribution_v1",
+                "schema_version": "1.0.0",
+                "task_id": "strategy-attribution",
+                "run_id": "",
+                "data_layer": "L4",
+                "generated_at": datetime.now(timezone.utc).isoformat(),
+                "trade_date": td,
+                "quality_status": "ok",
+                "lineage_refs": [f"data/semantic/screening_view/{td}.json"],
             },
         }

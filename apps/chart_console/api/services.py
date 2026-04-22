@@ -276,6 +276,35 @@ class ApiServices:
         return {"success": True, "message": "ok", "data": self._semantic.ops_events(trade_date)}
 
     def get_semantic_trade_dates(self) -> dict[str, Any]:
-        base = ROOT / "data" / "semantic" / "screening_view"
-        dates = sorted([p.stem for p in base.glob("*.json") if p.is_file()]) if base.is_dir() else []
+        dates = self._semantic.semantic_trade_dates()
         return {"success": True, "message": "ok", "data": dates}
+
+    def get_semantic_research_metrics(self, trade_date: str = "", window: int = 5) -> dict[str, Any]:
+        data = self._semantic.research_metrics(trade_date, window=window)
+        return {"success": True, "message": "ok", "data": data}
+
+    def get_semantic_research_diagnostics(self, trade_date: str = "", window: int = 5) -> dict[str, Any]:
+        data = self._semantic.research_diagnostics(trade_date, window=window)
+        return {"success": True, "message": "ok", "data": data}
+
+    def get_semantic_factor_diagnostics(self, trade_date: str = "", period: str = "week") -> dict[str, Any]:
+        data = self._semantic.factor_diagnostics(trade_date, period=period)
+        return {"success": True, "message": "ok", "data": data}
+
+    def get_semantic_strategy_attribution(self, trade_date: str = "") -> dict[str, Any]:
+        data = self._semantic.strategy_attribution(trade_date)
+        return {"success": True, "message": "ok", "data": data}
+
+    def record_fallback_event(self, primary_url: str, fallback_url: str, reason: str = "") -> dict[str, Any]:
+        now = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+        out_path = ROOT / "data" / "meta" / "evidence" / "fallback_events.jsonl"
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "event_time": now,
+            "primary_url": str(primary_url or ""),
+            "fallback_url": str(fallback_url or ""),
+            "reason": str(reason or ""),
+        }
+        with out_path.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(payload, ensure_ascii=False) + "\n")
+        return {"success": True, "message": "ok", "data": payload}

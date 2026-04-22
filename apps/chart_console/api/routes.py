@@ -119,6 +119,27 @@ class ApiRoutes:
             return self.svc.get_semantic_ops_events(str(trade_date)), 200, {}
         if path == "/api/semantic/trade_dates":
             return self.svc.get_semantic_trade_dates(), 200, {}
+        if path == "/api/semantic/research_metrics":
+            trade_date = (query.get("trade_date") or [""])[0]
+            try:
+                window = int((query.get("window") or ["5"])[0])
+            except Exception:
+                return {"success": False, "message": "invalid window", "data": None}, 400, {}
+            return self.svc.get_semantic_research_metrics(str(trade_date), window), 200, {}
+        if path == "/api/semantic/research_diagnostics":
+            trade_date = (query.get("trade_date") or [""])[0]
+            try:
+                window = int((query.get("window") or ["5"])[0])
+            except Exception:
+                return {"success": False, "message": "invalid window", "data": None}, 400, {}
+            return self.svc.get_semantic_research_diagnostics(str(trade_date), window), 200, {}
+        if path == "/api/semantic/factor_diagnostics":
+            trade_date = (query.get("trade_date") or [""])[0]
+            period = (query.get("period") or ["week"])[0]
+            return self.svc.get_semantic_factor_diagnostics(str(trade_date), str(period)), 200, {}
+        if path == "/api/semantic/strategy_attribution":
+            trade_date = (query.get("trade_date") or [""])[0]
+            return self.svc.get_semantic_strategy_attribution(str(trade_date)), 200, {}
         if path == "/api/ops/events":
             trade_date = (query.get("trade_date") or [""])[0]
             return self.svc.get_ops_events(str(trade_date)), 200, {"X-Deprecated": "true", "X-Replacement": "/api/semantic/ops_events"}
@@ -160,4 +181,11 @@ class ApiRoutes:
                 return {"success": False, "message": "template must be object"}, 400
             saved = self.svc.workspace.save_template(name, template)
             return {"success": True, "data": saved}, 200
+        if path == "/api/internal/record_fallback":
+            primary_url = str(body.get("primary_url", "")).strip()
+            fallback_url = str(body.get("fallback_url", "")).strip()
+            reason = str(body.get("reason", "")).strip()
+            if not primary_url:
+                return {"success": False, "message": "missing primary_url"}, 400
+            return self.svc.record_fallback_event(primary_url, fallback_url, reason), 200
         return {"success": False, "message": "not found"}, 404

@@ -1,4 +1,4 @@
-import { jget } from "./api.js";
+import { jget, jpost } from "./api.js";
 import { loadChartForSymbol, setView } from "./app.js";
 
 function qs(id) {
@@ -47,6 +47,7 @@ let lastDates = [];
 let cachedSummary = null;
 let tailCached = null;
 let researchCache = { dashboard: {}, view: {}, timeline: [] };
+let fallbackBannerTimer = null;
 const RESEARCH_ALERT_DEFAULTS = {
   hit_rate_5d_pct: { warn_below: 0.45, bad_below: 0.35 },
   pause_events_count: { warn_at_or_above: 2, bad_at_or_above: 4 },
@@ -58,10 +59,39 @@ async function jgetWithFallback(primaryUrl, fallbackUrl) {
     const r = await jget(primaryUrl);
     if (r && r.success) return r;
     if (!fallbackUrl) return r;
+    await recordFallbackEvent(primaryUrl, fallbackUrl, r?.message || "primary_not_success");
   } catch (e) {
     if (!fallbackUrl) throw e;
+    await recordFallbackEvent(primaryUrl, fallbackUrl, e?.message || "primary_request_failed");
   }
+  showFallbackBanner(primaryUrl, fallbackUrl);
   return jget(fallbackUrl);
+}
+
+function showFallbackBanner(primaryUrl, fallbackUrl) {
+  const el = qs("researchFallbackBanner");
+  if (!el) return;
+  if (fallbackBannerTimer) {
+    clearTimeout(fallbackBannerTimer);
+    fallbackBannerTimer = null;
+  }
+  el.style.display = "block";
+  el.textContent = `已触发兼容兜底：${primaryUrl} -> ${fallbackUrl}`;
+  fallbackBannerTimer = setTimeout(() => {
+    el.style.display = "none";
+  }, 6000);
+}
+
+async function recordFallbackEvent(primaryUrl, fallbackUrl, reason) {
+  try {
+    await jpost("/api/internal/record_fallback", {
+      primary_url: primaryUrl,
+      fallback_url: fallbackUrl,
+      reason: reason || "",
+    });
+  } catch (_) {
+    // ignore fallback recording failures to avoid blocking UI
+  }
 }
 
 function setScreeningSubview(name) {
@@ -978,7 +1008,9 @@ function renderResearchKV(elId, rows) {
 function renderResearchTimeline(events) {
   const el = qs("researchTimeline");
   if (!el) return;
-  const list = Array.isArray(events) ? events : [];
+  const onlyAnomaly = !!qs("researchTimelineOnlyAnomaly")?.checked;
+  const src = Array.isArray(events) ? events : [];
+  const list = onlyAnomaly ? src.filter((e) => String(e?.quality_status || "") === "degraded") : src;
   if (!list.length) {
     el.innerHTML = `<div class="small screening-muted">暂无时间轴事件</div>`;
     return;
@@ -993,6 +1025,50 @@ function renderResearchTimeline(events) {
       </div>`;
     })
     .join("");
+}
+
+function renderSubTimeline(targetId, events, onlyAnomaly) {
+  const el = qs(targetId);
+  if (!el) return;
+  const src = Array.isArray(events) ? events : [];
+  const list = onlyAnomaly ? src.filter((e) => String(e?.quality_status || "") === "degraded") : src;
+  if (!list.length) {
+    el.innerHTML = `<div class="small screening-muted">暂无时间轴事件</div>`;
+    return;
+  }
+  el.innerHTML = list
+    .map((e) => {
+      const quality = e.quality_status === "degraded" ? "数据降级" : "正常";
+      const tone = e.quality_status === "degraded" ? "tone-warn" : "";
+      return `<div class="research-timeline-item ${tone}">
+        <div class="research-timeline-meta">${esc(e.event_time || "—")} · ${esc(e.task_id || "unknown")} · ${esc(quality)}</div>
+        <div>${esc(e.summary || "—")}</div>
+      </div>`;
+    })
+    .join("");
+}
+
+async function loadTimelineInto(targetDate, targetId, onlyAnomaly = false) {
+  if (!targetDate) {
+    renderSubTimeline(targetId, [], onlyAnomaly);
+    return;
+  }
+  const timeline = await jgetWithFallback(`/api/semantic/timeline?trade_date=${encodeURIComponent(targetDate)}`, "");
+  const events = (timeline.data || {}).events || [];
+  renderSubTimeline(targetId, events, onlyAnomaly);
+}
+
+function renderResearchQuality(meta) {
+  const el = qs("researchQualityBadge");
+  if (!el) return;
+  const m = meta && typeof meta === "object" ? meta : {};
+  const q = String(m.quality_status || "unknown");
+  const refs = Array.isArray(m.lineage_refs) ? m.lineage_refs : [];
+  const icon = q === "ok" ? "OK" : q === "degraded" ? "WARN" : "ERR";
+  const refsText = refs.length ? refs.join(" | ") : "—";
+  el.innerHTML = `<div><strong>${icon}</strong> 数据质量：${esc(q)}</div><div class="screening-muted">schema=${esc(
+    m.schema_name || "—",
+  )} v${esc(m.schema_version || "—")} · trade_date=${esc(m.trade_date || "—")}</div><div class="screening-muted">lineage: ${esc(refsText)}</div>`;
 }
 
 function metricTone(metricKey, v) {
@@ -1094,6 +1170,43 @@ function renderTaskMonitor(rows) {
   }
 }
 
+function renderFactorDiagnostics(rows) {
+  const tbody = qs("researchFactorDiagTbody");
+  if (!tbody) return;
+  tbody.innerHTML = "";
+  const list = Array.isArray(rows) ? rows : [];
+  if (!list.length) {
+    const tr = document.createElement("tr");
+    tr.innerHTML = "<td colspan='5'>暂无因子诊断数据</td>";
+    tbody.appendChild(tr);
+    return;
+  }
+  for (const r of list) {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `<td>${esc(r.name || "")}</td><td>${esc(r.ic_proxy ?? "—")}</td><td>${esc(
+      r.hit_rate_top_bucket ?? "—",
+    )}</td><td>${esc(r.sample_size ?? "—")}</td><td>${esc(r.stability ?? "—")}</td>`;
+    tbody.appendChild(tr);
+  }
+}
+
+function renderStrategyAttribution(attr) {
+  const el = qs("researchAttribution");
+  if (!el) return;
+  const a = attr && typeof attr === "object" ? attr : {};
+  const byParadigm = a.by_paradigm && typeof a.by_paradigm === "object" ? a.by_paradigm : {};
+  const stage = a.by_task_stage && typeof a.by_task_stage === "object" ? a.by_task_stage : {};
+  const gate = a.gate_impact && typeof a.gate_impact === "object" ? a.gate_impact : {};
+  const pRows = Object.entries(byParadigm)
+    .map(([k, v]) => `${k}: 推荐${v.recommendations ?? 0} 平均分${v.avg_score ?? "—"}`)
+    .join(" | ");
+  el.innerHTML = `<div><strong>按范式：</strong>${esc(pRows || "—")}</div><div><strong>按阶段：</strong>nightly=${
+    esc((stage.nightly || {}).recommendations ?? "—")
+  } / tail=${esc((stage.tail || {}).recommendations ?? "—")}</div><div><strong>门闸影响：</strong>stale_or_missing_tasks=${esc(
+    gate.stale_or_missing_tasks ?? "—",
+  )}</div>`;
+}
+
 function renderSimpleRows(tbodyId, rows, cols, emptyText) {
   const tbody = qs(tbodyId);
   if (!tbody) return;
@@ -1154,6 +1267,20 @@ function renderResearchTaskPools(viewData) {
   renderSimpleRows("researchPoolTailGrabTbody", pools.tail_grab || [], poolCols, "暂无尾盘抢筹池");
   renderSimpleRows("researchPoolOversoldTbody", pools.oversold_bounce || [], poolCols, "暂无超跌反弹池");
   renderSimpleRows("researchPoolSectorRotTbody", pools.sector_rotation || [], poolCols, "暂无板块轮动池");
+  const nightlyEmptyHint = qs("research-nightly-left");
+  if (nightlyEmptyHint) {
+    const nightlyCount = nightly.length;
+    const td = ((viewData || {})._meta || {}).trade_date || "—";
+    if (nightlyCount <= 0) {
+      nightlyEmptyHint.innerHTML = `<h4 class="screening-h4">夜盘选股说明</h4><div class="small screening-muted">当前交易日 ${esc(
+        td,
+      )} 的夜盘候选为空。常见原因：该日夜盘任务未产出或被门闸拦截。可切换交易日查看历史有数据的审计结果。</div>`;
+    } else {
+      nightlyEmptyHint.innerHTML = `<h4 class="screening-h4">夜盘选股说明</h4><div class="small screening-muted">当前交易日 ${esc(
+        td,
+      )} 有 ${esc(nightlyCount)} 条夜盘候选，展示 \`nightly-stock-screening\` 只读结果。</div>`;
+    }
+  }
 }
 
 function collectResearchAnomalies() {
@@ -1220,13 +1347,41 @@ function setResearchSubview(name) {
   if (drawer && name !== "overview") drawer.style.display = "none";
 }
 
-async function loadResearch() {
+async function loadResearch(tradeDateOverride = "") {
   const status = qs("researchStatus");
   if (status) status.textContent = "加载中…";
   try {
+    const hist = await jgetWithFallback("/api/semantic/trade_dates", "/api/tail_screening/history");
+    const dates = Array.isArray(hist.data)
+      ? hist.data.map((x) => (typeof x === "string" ? x : x.date)).filter(Boolean)
+      : [];
+    const metricsResp = await jgetWithFallback(
+      tradeDateOverride
+        ? `/api/semantic/research_metrics?trade_date=${encodeURIComponent(tradeDateOverride)}&window=5`
+        : "/api/semantic/research_metrics?window=5",
+      "/api/semantic/dashboard",
+    );
+    const metricsData = metricsResp.data || {};
+    let tradeDate = (metricsData?._meta || {}).trade_date || "";
+    if (!tradeDate && dates.length) tradeDate = dates[dates.length - 1];
+    if (tradeDateOverride) {
+      tradeDate = tradeDateOverride;
+    }
+    const diagnosticsResp = await jgetWithFallback(
+      `/api/semantic/research_diagnostics?trade_date=${encodeURIComponent(tradeDate)}&window=5`,
+      `/api/semantic/timeline?trade_date=${encodeURIComponent(tradeDate)}`,
+    );
+    const diagnosticsData = diagnosticsResp.data || {};
     const dashboard = await jgetWithFallback("/api/semantic/dashboard", "/api/screening/summary");
     const data = dashboard.data || {};
-    const tradeDate = (data?._meta || {}).trade_date || "";
+    const factorResp = await jgetWithFallback(
+      `/api/semantic/factor_diagnostics?trade_date=${encodeURIComponent(tradeDate)}&period=week`,
+      "",
+    );
+    const attributionResp = await jgetWithFallback(
+      `/api/semantic/strategy_attribution?trade_date=${encodeURIComponent(tradeDate)}`,
+      "",
+    );
     const view = tradeDate
       ? await jgetWithFallback(
           `/api/semantic/screening_view?trade_date=${encodeURIComponent(tradeDate)}`,
@@ -1234,15 +1389,16 @@ async function loadResearch() {
         )
       : { data: {} };
     const viewData = view.data || {};
-    const sent = data.sentiment_temperature || {};
+    const sent = metricsData.sentiment_trend || {};
     const market = data.market_state || {};
     const risk = data.risk_snapshot || {};
+    renderResearchQuality(metricsData._meta || {});
     renderResearchKV("researchSentiment", [
-      { k: "综合得分", v: sent.score },
-      { k: "阶段", v: sent.stage },
+      { k: "综合得分", v: sent.current_score },
+      { k: "阶段", v: sent.current_stage },
       { k: "分歧度", v: sent.dispersion },
-      { k: "行动倾向", v: sent.trend },
-      { k: "质量", v: (sent.quality_status || {}).degraded ? "degraded" : "ok" },
+      { k: "趋势变化", v: Array.isArray(sent.trend_5d) ? sent.trend_5d.join(", ") : "—" },
+      { k: "质量", v: (metricsData._meta || {}).quality_status || "unknown" },
     ]);
     renderResearchKV("researchMarketState", [
       { k: "市场状态", v: market.regime },
@@ -1254,28 +1410,56 @@ async function loadResearch() {
       { k: "门闸原因", v: risk.latest_gate_reason || "—" },
       { k: "极端告警", v: risk.extreme_alert_count ?? "—" },
     ]);
-    renderResearchPerformanceCards(viewData.effect_stats || {});
+    renderResearchPerformanceCards({
+      ...(viewData.effect_stats || {}),
+      ...(metricsData.screening_effectiveness || {}),
+    });
     renderResearchHeatmap(viewData.sector_rotation_heatmap || []);
     renderTaskMonitor(viewData.task_execution_monitor || []);
+    renderFactorDiagnostics((factorResp.data || {}).factors || []);
+    renderStrategyAttribution((attributionResp.data || {}).attribution || {});
     renderResearchTaskPools(viewData);
     renderResearchTop(data.top_recommendations || []);
     const pick = qs("researchDatePick");
-    if (pick && tradeDate) {
-      pick.innerHTML = `<option value="${esc(tradeDate)}">${esc(tradeDate)}</option>`;
+    if (pick) {
+      pick.innerHTML = dates
+        .slice()
+        .reverse()
+        .map((d) => `<option value="${esc(d)}">${esc(d)}</option>`)
+        .join("");
       pick.value = tradeDate;
     }
+    const nightlyPick = qs("researchNightlyDatePick");
+    if (nightlyPick) {
+      nightlyPick.innerHTML = dates
+        .slice()
+        .reverse()
+        .map((d) => `<option value="${esc(d)}">${esc(d)}</option>`)
+        .join("");
+      nightlyPick.value = tradeDate;
+    }
+    const tailPick = qs("researchTailDatePick");
+    if (tailPick) {
+      tailPick.innerHTML = dates
+        .slice()
+        .reverse()
+        .map((d) => `<option value="${esc(d)}">${esc(d)}</option>`)
+        .join("");
+      tailPick.value = tradeDate;
+    }
     if (tradeDate) {
-      const timeline = await jgetWithFallback(
-        `/api/semantic/timeline?trade_date=${encodeURIComponent(tradeDate)}`,
-        "",
-      );
-      const events = (timeline.data || {}).events || [];
+      const timeline = await jgetWithFallback(`/api/semantic/timeline?trade_date=${encodeURIComponent(tradeDate)}`, "");
+      const events = (timeline.data || {}).events || (diagnosticsData.diagnostics || {}).degraded_events || [];
       researchCache = { dashboard: data, view: viewData, timeline: events };
       renderResearchTimeline(events);
+      renderSubTimeline("researchNightlyTimeline", events, !!qs("researchNightlyTimelineOnlyAnomaly")?.checked);
+      renderSubTimeline("researchTailTimeline", events, !!qs("researchTailTimelineOnlyAnomaly")?.checked);
       renderResearchAnomalyDrawer();
     } else {
       researchCache = { dashboard: data, view: viewData, timeline: [] };
       renderResearchTimeline([]);
+      renderSubTimeline("researchNightlyTimeline", [], false);
+      renderSubTimeline("researchTailTimeline", [], false);
       renderResearchAnomalyDrawer();
     }
     if (status) status.textContent = "已更新";
@@ -1320,10 +1504,30 @@ qs("btnResearchRefresh")?.addEventListener("click", () => loadResearch());
 qs("researchDatePick")?.addEventListener("change", async (e) => {
   const v = e.target?.value;
   if (!v) return;
-  const timeline = await jgetWithFallback(`/api/semantic/timeline?trade_date=${encodeURIComponent(v)}`, "");
-  researchCache.timeline = (timeline.data || {}).events || [];
+  await loadResearch(v);
+});
+qs("researchTimelineOnlyAnomaly")?.addEventListener("change", () => {
   renderResearchTimeline(researchCache.timeline);
-  renderResearchAnomalyDrawer();
+});
+qs("researchNightlyDatePick")?.addEventListener("change", async (e) => {
+  const v = e.target?.value || "";
+  if (!v) return;
+  await loadResearch(v);
+  setResearchSubview("nightly");
+});
+qs("researchTailDatePick")?.addEventListener("change", async (e) => {
+  const v = e.target?.value || "";
+  if (!v) return;
+  await loadResearch(v);
+  setResearchSubview("tail");
+});
+qs("researchNightlyTimelineOnlyAnomaly")?.addEventListener("change", async () => {
+  const v = qs("researchNightlyDatePick")?.value || "";
+  await loadTimelineInto(v, "researchNightlyTimeline", !!qs("researchNightlyTimelineOnlyAnomaly")?.checked);
+});
+qs("researchTailTimelineOnlyAnomaly")?.addEventListener("change", async () => {
+  const v = qs("researchTailDatePick")?.value || "";
+  await loadTimelineInto(v, "researchTailTimeline", !!qs("researchTailTimelineOnlyAnomaly")?.checked);
 });
 qs("subtab-research-overview")?.addEventListener("click", () => setResearchSubview("overview"));
 qs("subtab-research-nightly")?.addEventListener("click", () => setResearchSubview("nightly"));
