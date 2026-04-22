@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-钉钉通知发送器
-读取 pending_notifications.json，通过 OpenClaw message 工具发送私信
+飞书通知发送器（运维通道）
+读取 pending_notifications.json，通过飞书 webhook 发送消息
 
 用法示例（在项目根目录执行）：
   # 将 data/pending_notifications.json 中未发送项输出为可投递记录（stdout）
@@ -14,10 +14,14 @@
 
 import json
 from pathlib import Path
+import sys
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 DATA_DIR = BASE_DIR / "data"
 QUEUE_FILE = DATA_DIR / "pending_notifications.json"
+
+if str(BASE_DIR) not in sys.path:
+    sys.path.insert(0, str(BASE_DIR))
 
 
 def load_pending() -> list:
@@ -32,14 +36,18 @@ def mark_sent(queue: list):
         json.dump(queue, f, ensure_ascii=False, indent=2)
 
 
-def send_via_openclaw(user_id: str, message: str) -> bool:
-    """
-    通过 openclaw message tool 发送钉钉私信
-    使用 sessions_send 或直接输出供 agent 读取
-    """
-    # 输出到 stdout，供 cron 调用方（agent）捕获并发送
-    print(f"__DINGTALK_PRIVATE__:{user_id}:{message}")
-    return True
+def send_via_feishu_webhook(title: str, message: str) -> bool:
+    from plugins.merged.send_feishu_notification import tool_send_feishu_notification
+
+    out = tool_send_feishu_notification(
+        notification_type="message",
+        title=title,
+        message=message,
+    )
+    ok = bool(isinstance(out, dict) and out.get("success") is True)
+    # stdout 保留最小回执，便于 cron 日志审计
+    print(json.dumps({"success": ok, "channel": "feishu_webhook", "detail": out}, ensure_ascii=False))
+    return ok
 
 
 def main():
@@ -58,10 +66,10 @@ def main():
         message = item["message"]
         
         print(f"\n--- Sending to {user_name} ({user_id}) ---")
-        send_via_openclaw(user_id, message)
+        ok = send_via_feishu_webhook(title=f"价格预警触发（{user_name}）", message=message)
         
         # 标记已发送
-        item["sent"] = True
+        item["sent"] = bool(ok)
         item["sent_at"] = __import__("datetime").datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     
     mark_sent(queue)

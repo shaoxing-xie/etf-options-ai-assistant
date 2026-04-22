@@ -2,7 +2,7 @@
 """
 预警轮询脚本（由 cron 触发，每10分钟执行一次）
 - 检查所有活跃预警的条件
-- 触发时通过 DingTalk 私信通知用户
+- 触发时写入待发送队列，由 alert_notify.py 通过飞书 webhook 推送（运维通道）
 - 触发后自动取消预警
 
 用法示例（在项目根目录执行）：
@@ -156,7 +156,7 @@ def _write_trigger_log(triggered: list):
 
 
 def _enqueue_notifications(triggered: list):
-    """将触发的预警加入钉钉私信发送队列"""
+    """将触发的预警加入飞书 webhook 发送队列（由 alert_notify.py 消费）"""
     queue_file = DATA_DIR / "pending_notifications.json"
     queue = []
     if queue_file.exists():
