@@ -448,11 +448,11 @@ def test_fetch_global_merges_sina_when_yf_partial(
     assert "^DJI" in codes
 
 
-@patch("plugins.data_collection.index.fetch_global._eastmoney_global_spot_by_em_code")
+@patch("plugins.data_collection.index.fetch_global._fetch_fmp")
 @patch("plugins.data_collection.index.fetch_global._fetch_sina")
 @patch("plugins.data_collection.index.fetch_global._fetch_yfinance")
 def test_fetch_global_eastmoney_fills_missing_when_yf_only_hsi(
-    mock_yf: MagicMock, mock_sina: MagicMock, mock_em: MagicMock
+    mock_yf: MagicMock, mock_sina: MagicMock, mock_fmp: MagicMock
 ) -> None:
     """Yahoo 限流常见仅恒生有数：东财一次补全 DJI/SPX/NDX 等无新浪映射符号。"""
     mock_sina.return_value = {"success": False, "data": []}
@@ -471,84 +471,25 @@ def test_fetch_global_eastmoney_fills_missing_when_yf_only_hsi(
         "source": "yfinance",
         "fetch_failures": [{"code": "^DJI", "reason": "Too Many Requests"}],
     }
-    mock_em.return_value = {
-        "DJIA": {
-            "name": "道琼斯",
-            "price": 40000.0,
-            "change": 1.0,
-            "change_pct": 1.2,
-            "prev_close": 39999.0,
-            "timestamp": "t2",
-            "source_detail": "eastmoney_global_spot_em",
-        },
-        "SPX": {
-            "name": "标普500指数",
-            "price": 5000.0,
-            "change": 0.5,
-            "change_pct": 0.81,
-            "prev_close": None,
-            "timestamp": "t2",
-            "source_detail": "eastmoney_global_spot_em",
-        },
-        "NDX": {
-            "name": "纳斯达克",
-            "price": 18000.0,
-            "change": -5.0,
-            "change_pct": -0.31,
-            "prev_close": None,
-            "timestamp": "t2",
-            "source_detail": "eastmoney_global_spot_em",
-        },
-        "N225": {
-            "name": "日经225",
-            "price": 38000.0,
-            "change": 100.0,
-            "change_pct": 0.25,
-            "prev_close": None,
-            "timestamp": "t2",
-            "source_detail": "eastmoney_global_spot_em",
-        },
-        "KS11": {
-            "name": "韩国KOSPI",
-            "price": 2600.0,
-            "change": 1.0,
-            "change_pct": 0.15,
-            "prev_close": None,
-            "timestamp": "t2",
-            "source_detail": "eastmoney_global_spot_em",
-        },
-        "GDAXI": {
-            "name": "德国DAX",
-            "price": 18000.0,
-            "change": 20.0,
-            "change_pct": 0.4,
-            "prev_close": None,
-            "timestamp": "t2",
-            "source_detail": "eastmoney_global_spot_em",
-        },
-        "SX5E": {
-            "name": "欧洲斯托克50",
-            "price": 4800.0,
-            "change": 10.0,
-            "change_pct": 0.2,
-            "prev_close": None,
-            "timestamp": "t2",
-            "source_detail": "eastmoney_global_spot_em",
-        },
-        "FTSE": {
-            "name": "英国富时100",
-            "price": 8000.0,
-            "change": 5.0,
-            "change_pct": 0.11,
-            "prev_close": None,
-            "timestamp": "t2",
-            "source_detail": "eastmoney_global_spot_em",
-        },
+    mock_fmp.return_value = {
+        "success": True,
+        "data": [
+            {"code": "^DJI", "name": "道琼斯", "price": 40000.0, "change": 1.0, "change_pct": 1.2, "timestamp": "t2"},
+            {"code": "^GSPC", "name": "标普500指数", "price": 5000.0, "change": 0.5, "change_pct": 0.81, "timestamp": "t2"},
+            {"code": "^IXIC", "name": "纳斯达克", "price": 18000.0, "change": -5.0, "change_pct": -0.31, "timestamp": "t2"},
+            {"code": "^N225", "name": "日经225", "price": 38000.0, "change": 100.0, "change_pct": 0.25, "timestamp": "t2"},
+            {"code": "^KS11", "name": "韩国KOSPI", "price": 2600.0, "change": 1.0, "change_pct": 0.15, "timestamp": "t2"},
+            {"code": "^GDAXI", "name": "德国DAX", "price": 18000.0, "change": 20.0, "change_pct": 0.4, "timestamp": "t2"},
+            {"code": "^STOXX50E", "name": "欧洲斯托克50", "price": 4800.0, "change": 10.0, "change_pct": 0.2, "timestamp": "t2"},
+            {"code": "^FTSE", "name": "英国富时100", "price": 8000.0, "change": 5.0, "change_pct": 0.11, "timestamp": "t2"},
+        ],
+        "source": "financialmodelingprep.com",
     }
     codes = "^DJI,^GSPC,^IXIC,^N225,^HSI,^KS11,^GDAXI,^STOXX50E,^FTSE"
     r = fetch_global_index_spot(codes)
     assert r.get("success") is True
-    assert "eastmoney" in str(r.get("source") or "").lower()
+    # yfinance 命中 HSI + FMP 补全其余，返回 source 可能为 mixed
+    assert str(r.get("source") or "").lower() in {"mixed", "fmp", "financialmodelingprep.com"}
     by = {row["code"]: row for row in (r.get("data") or []) if isinstance(row, dict)}
     assert by["^HSI"].get("change_pct") == 0.55
     assert by["^DJI"].get("change_pct") == 1.2

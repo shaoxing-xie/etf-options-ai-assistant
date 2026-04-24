@@ -1872,6 +1872,11 @@ def _format_tail_session_report(
     monitor_projection = analysis.get("monitor_projection") if isinstance(analysis.get("monitor_projection"), dict) else {}
     deviation_proxy = analysis.get("deviation_proxy") if isinstance(analysis.get("deviation_proxy"), dict) else {}
     pattern_alerts = analysis.get("pattern_alerts") if isinstance(analysis.get("pattern_alerts"), list) else []
+    valuation_blend = snap.get("valuation_blend") if isinstance(snap.get("valuation_blend"), dict) else {}
+    premium_pct_20d = analysis.get("premium_percentile_20d")
+    deviation_pct_20d = analysis.get("deviation_percentile_20d")
+    temp_band = analysis.get("temperature_band")
+    temp_cap = analysis.get("temperature_position_ceiling")
 
     lines.append("### 一、时点快照")
     if monitor_ctx:
@@ -1890,6 +1895,15 @@ def _format_tail_session_report(
         )
     if snap.get("iopv_source") == "manual":
         lines.append(f"- 人工IOPV日期：{snap.get('manual_iopv_updated_date') or 'N/A'}")
+    if valuation_blend:
+        lines.append(
+            f"- 双源估值：置信度 {valuation_blend.get('confidence') or 'N/A'} / 偏差 {_fmt_pct(valuation_blend.get('agreement_gap_pct')) or 'N/A'}"
+        )
+        fundgz = valuation_blend.get("fundgz") if isinstance(valuation_blend.get("fundgz"), dict) else {}
+        futures = valuation_blend.get("futures_proxy") if isinstance(valuation_blend.get("futures_proxy"), dict) else {}
+        lines.append(
+            f"- 融合口径：futures {_fmt_pct(futures.get('premium_rate')) or 'N/A'} / fundgz {_fmt_pct(fundgz.get('premium_rate')) or 'N/A'} / 选用 {_fmt_pct(valuation_blend.get('chosen_value')) or 'N/A'}"
+        )
     amt = _safe_float(snap.get("amount"))
     if amt is not None:
         lines.append(f"- 成交额（代理流动性）：{amt/1e8:.2f} 亿元")
@@ -1920,7 +1934,8 @@ def _format_tail_session_report(
             f"- 偏离代理：理论 {_fmt_pct(deviation_proxy.get('expected_pct')) or 'N/A'} / 实际 {_fmt_pct(deviation_proxy.get('actual_pct')) or 'N/A'} / 偏离 {_fmt_pct(deviation_proxy.get('deviation_pct')) or 'N/A'}"
         )
         lines.append(f"- 偏离趋势：{deviation_proxy.get('deviation_trend') or 'N/A'}")
-        lines.append(f"- RiskGate 动作：{risk_gate.get('action_state') or 'N/A'}")
+        gate_action = risk_gate.get("action") or risk_gate.get("action_state") or "N/A"
+        lines.append(f"- RiskGate 动作：{gate_action}")
         hits = risk_gate.get("gates_triggered") if isinstance(risk_gate.get("gates_triggered"), list) else []
         if hits:
             lines.append(f"- 触发规则：{', '.join(str(x) for x in hits)}")
@@ -1938,6 +1953,13 @@ def _format_tail_session_report(
         lines.append("")
 
         lines.append("### 六、简版操作建议")
+        if premium_pct_20d is not None or deviation_pct_20d is not None:
+            lines.append(
+                f"- 历史分位：溢价 {(_fmt_num(premium_pct_20d, 2) + '%') if premium_pct_20d is not None else 'N/A'} / 偏离 {(_fmt_num(deviation_pct_20d, 2) + '%') if deviation_pct_20d is not None else 'N/A'}"
+            )
+        if temp_band:
+            cap_txt = f"{_fmt_num(_safe_float(temp_cap) * 100, 0)}%" if _safe_float(temp_cap) is not None else "N/A"
+            lines.append(f"- 温度仓位：{temp_band}（仓位上限系数 {cap_txt}）")
         options = analysis.get("decision_options") if isinstance(analysis.get("decision_options"), dict) else {}
         l1 = _tail_option_line("保守", options.get("conservative"))
         l2 = _tail_option_line("中性", options.get("neutral"))
@@ -2007,8 +2029,16 @@ def _format_tail_session_report(
     lines.append(
         f"- RiskGate：流动性(成交额) {(_fmt_num((_safe_float(risk_gate.get('liquidity_amount')) or 0.0)/1e8, 2) + '亿') if risk_gate.get('liquidity_amount') is not None else 'N/A'}，汇率风险倍率 {_fmt_num(risk_gate.get('fx_risk_multiplier'), 2) or 'N/A'}，质量 {risk_gate.get('quality_status') or 'N/A'}"
     )
-    if risk_gate.get("action_state"):
-        lines.append(f"- 动作矩阵状态：{risk_gate.get('action_state')}")
+    if risk_gate.get("action") or risk_gate.get("action_state"):
+        gate_action = risk_gate.get("action") or risk_gate.get("action_state")
+        lines.append(f"- 门禁动作：{gate_action}")
+    if premium_pct_20d is not None or deviation_pct_20d is not None:
+        lines.append(
+            f"- 历史分位：溢价 {(_fmt_num(premium_pct_20d, 2) + '%') if premium_pct_20d is not None else 'N/A'} / 偏离 {(_fmt_num(deviation_pct_20d, 2) + '%') if deviation_pct_20d is not None else 'N/A'}"
+        )
+    if temp_band:
+        cap_txt = f"{_fmt_num(_safe_float(temp_cap) * 100, 0)}%" if _safe_float(temp_cap) is not None else "N/A"
+        lines.append(f"- 温度仓位：{temp_band}（仓位上限系数 {cap_txt}）")
     hits = risk_gate.get("gates_triggered") if isinstance(risk_gate.get("gates_triggered"), list) else []
     if hits:
         lines.append(f"- 门槛触发：{', '.join(str(x) for x in hits)}")

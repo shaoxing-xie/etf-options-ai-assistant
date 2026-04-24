@@ -47,6 +47,9 @@ workflows/logs/
 # Local-only config overlay (merged after base + profile)
 config/local.yaml
 
+# Config backups
+config/domains/*.yaml.bak.*
+
 # OpenClaw runtime data (local only)
 .openclaw/
 

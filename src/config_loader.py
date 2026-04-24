@@ -48,6 +48,26 @@ if _openclaw_env.exists():
         from dotenv import load_dotenv  # type: ignore[import-not-found]
 
         load_dotenv(_openclaw_env, override=False)
+        # 规范写法为 `KEY=VALUE`。这里保留对历史 `export KEY=...` 的兼容解析，
+        # 仅用于平滑迁移（补齐缺失键，且遵循 override=False 语义）。
+        try:
+            for line in _openclaw_env.read_text(encoding="utf-8").splitlines():
+                s = line.strip()
+                if not s or s.startswith("#"):
+                    continue
+                if s.startswith("export "):
+                    s = s[7:].strip()
+                if "=" not in s:
+                    continue
+                k, _, v = s.partition("=")
+                k = k.strip()
+                v = v.strip()
+                if len(v) >= 2 and ((v[0] == v[-1] == '"') or (v[0] == v[-1] == "'")):
+                    v = v[1:-1]
+                if k and os.getenv(k) is None:
+                    os.environ[k] = v
+        except OSError:
+            pass
     except ImportError:
         try:
             for line in _openclaw_env.read_text(encoding="utf-8").splitlines():

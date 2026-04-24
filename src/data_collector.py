@@ -4765,6 +4765,21 @@ def fetch_etf_daily_em(
         except Exception as e:
             last_error = str(e)
             logger.warning(f"获取ETF日线数据失败（新浪接口）: symbol={symbol}, 尝试{attempt+1}/{max_retries}, 错误: {last_error}")
+            # 优化原则：DNS/网络策略类错误大概率“本轮不可恢复”，继续重试只会拖慢 cron 并导致超时。
+            low = last_error.lower()
+            if any(
+                k in low
+                for k in (
+                    "temporary failure in name resolution",
+                    "failed to resolve",
+                    "name resolution",
+                    "tunnel connection failed",
+                    "403 forbidden",
+                    "blocked by sandbox network policy",
+                )
+            ):
+                logger.warning("检测到不可恢复网络错误，跳过新浪接口后续重试，进入备用方案2（东方财富）")
+                break
             if attempt < max_retries - 1:
                 continue
             else:
@@ -4936,7 +4951,13 @@ def get_etf_current_price(symbol: str = "510300") -> Optional[float]:
                         )
                         if price_value > 0:
                             return price_value
-        except Exception:
+        except Exception as e:
+            # 优化原则：THS 域名在 cron/隔离环境下常见 DNS 失败，重复尝试会显著拖慢整轮任务。
+            msg = str(e).lower()
+            if any(k in msg for k in ("temporary failure in name resolution", "failed to resolve", "name resolution", "tunnel connection failed", "403 forbidden")):
+                logger.warning("同花顺ETF现货不可用（网络/DNS/403），本轮跳过 THS 实时源: %s", str(e)[:160])
+            else:
+                logger.debug("同花顺ETF现货失败（将继续尝试后续源）: %s", str(e)[:160])
             pass
 
         # 1.5) ETF 基金实时行情（新浪全量分类列表）：fund_etf_category_sina
@@ -4977,7 +4998,12 @@ def get_etf_current_price(symbol: str = "510300") -> Optional[float]:
                                     continue
                         if price_value > 0:
                             return price_value
-        except Exception:
+        except Exception as e:
+            msg = str(e).lower()
+            if any(k in msg for k in ("temporary failure in name resolution", "failed to resolve", "name resolution", "tunnel connection failed", "403 forbidden")):
+                logger.warning("新浪ETF分类现货不可用（网络/DNS/403），本轮跳过该源: %s", str(e)[:160])
+            else:
+                logger.debug("新浪ETF分类现货失败（将继续尝试后续源）: %s", str(e)[:160])
             pass
 
         # 2) 分时数据（新浪）：stock_zh_a_minute，period=1 取最后 close
@@ -4989,7 +5015,12 @@ def get_etf_current_price(symbol: str = "510300") -> Optional[float]:
                 cp = float(minute_df["close"].iloc[-1])
                 if cp > 0:
                     return cp
-        except Exception:
+        except Exception as e:
+            msg = str(e).lower()
+            if any(k in msg for k in ("temporary failure in name resolution", "failed to resolve", "name resolution", "tunnel connection failed", "403 forbidden")):
+                logger.warning("新浪分钟线现货不可用（网络/DNS/403），本轮跳过该源: %s", str(e)[:160])
+            else:
+                logger.debug("新浪分钟线现货失败（将继续尝试后续源）: %s", str(e)[:160])
             pass
 
         logger.warning(f"无法获取ETF当前价格: {symbol}")

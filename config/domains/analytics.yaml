@@ -337,6 +337,10 @@ nasdaq_tail_session_513300:
   index_symbol: ^IXIC
   decision_mode: user_final_decision
   futures_enabled: true
+  fundgz_fresh_ok_seconds: 180
+  fundgz_fresh_degrade_seconds: 600
+  blend_gap_warn_pct: 3.0
+  percentile_lookback_days: 20
   range_defaults:
     band_core_multiplier: 0.8
     band_safe_multiplier: 1.2

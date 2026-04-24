@@ -3,7 +3,9 @@ set -euo
 set -o pipefail
 
 cd /home/xie/etf-options-ai-assistant
+set -a
 source /home/xie/.openclaw/.env >/dev/null 2>&1 || true
+set +a
 
 export FUND_FLOW_ENABLE_EASTMONEY_FALLBACK=true
 export TAIL_SCREENING_DEFAULT_REGIME="${TAIL_SCREENING_DEFAULT_REGIME:-oscillation}"

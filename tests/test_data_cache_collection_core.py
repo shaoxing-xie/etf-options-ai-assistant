@@ -38,7 +38,12 @@ def test_morning_daily_steps_order(
     summary = run_data_cache_collection("morning_daily")
     assert summary_success(summary)
     tools = [s.get("tool") for s in summary["steps"]]
-    assert tools == ["index_historical", "etf_historical", "stock_historical"]
+    # 采集实现允许数据源后缀（例如 *_tushare）；这里只校验顺序与“种类”一致
+    assert [t.replace("_tushare", "") for t in tools] == [
+        "index_historical",
+        "etf_historical",
+        "stock_historical",
+    ]
 
 
 @patch("plugins.data_collection.stock.fetch_minute.tool_fetch_stock_minute", side_effect=_mock_fetch_ok)
@@ -116,7 +121,11 @@ def test_close_minute_has_daily_refresh_step(
     notes = [s for s in summary["steps"] if s.get("tool") == "daily_historical_after_close"]
     assert len(notes) == 1
     # after note: three historical steps
-    assert any(s.get("tool") == "index_historical" for s in summary["steps"])
+    tools = [s.get("tool") for s in summary["steps"]]
+    norm = [t.replace("_tushare", "") if isinstance(t, str) else t for t in tools]
+    assert "index_historical" in norm
+    assert "etf_historical" in norm
+    assert "stock_historical" in norm
 
 
 @patch("plugins.data_collection.stock.fetch_historical.tool_fetch_stock_historical", side_effect=_mock_fetch_ok)

@@ -74,6 +74,108 @@ def _project_root() -> Path:
     return Path(__file__).resolve().parents[2]
 
 
+def _read_nikkei_premium_gate_snapshot(trade_date: str) -> Dict[str, Any]:
+    """
+    读取 513880（日经）当日溢价门禁快照，用于轮动“跨境溢价风险扣分/门禁”。
+
+    约定由 tail_session runner 落盘：
+    - data/semantic/nikkei_513880_intraday_dashboard_view/{trade_date}_M7.json
+    """
+    root = _project_root()
+    p = root / "data" / "semantic" / "nikkei_513880_intraday_dashboard_view" / f"{trade_date}_M7.json"
+    if not p.is_file():
+        return {"status": "unavailable", "reason": "nikkei_semantic_missing"}
+    try:
+        obj = json.loads(p.read_text(encoding="utf-8"))
+    except Exception:
+        return {"status": "unavailable", "reason": "nikkei_semantic_parse_failed"}
+    if not isinstance(obj, dict):
+        return {"status": "unavailable", "reason": "nikkei_semantic_invalid"}
+    data = obj.get("data") if isinstance(obj.get("data"), dict) else {}
+    risk_gate = data.get("risk_gate") if isinstance(data.get("risk_gate"), dict) else {}
+    return {
+        "status": "ok",
+        "premium_rate_pct": data.get("premium_rate_pct"),
+        "premium_percentile_20d": data.get("premium_percentile_20d"),
+        "temperature_band": data.get("temperature_band"),
+        "temperature_position_ceiling": data.get("temperature_position_ceiling"),
+        "risk_gate_action": risk_gate.get("action"),
+        "risk_gate_position_ceiling": risk_gate.get("position_ceiling"),
+        "risk_gate_reasons": risk_gate.get("reasons") if isinstance(risk_gate.get("reasons"), list) else [],
+        "meta": obj.get("_meta") if isinstance(obj.get("_meta"), dict) else {},
+        "path": str(p),
+    }
+
+
+def _apply_cross_border_premium_penalty(
+    ranked_payload: List[Dict[str, Any]],
+    *,
+    nikkei_snap: Dict[str, Any],
+) -> Tuple[List[Dict[str, Any]], List[str]]:
+    """
+    对跨境ETF（当前仅 513880）施加溢价风险扣分/门禁标记。
+    - 不改变 pipeline 的原始打分逻辑，只做结果端的可解释调整（并写入 three_factor/risk_override）。
+    """
+    warnings: List[str] = []
+    if not ranked_payload:
+        return ranked_payload, warnings
+    if not isinstance(nikkei_snap, dict) or nikkei_snap.get("status") != "ok":
+        return ranked_payload, warnings
+
+    band = str(nikkei_snap.get("temperature_band") or "").strip().lower()
+    action = str(nikkei_snap.get("risk_gate_action") or "").strip().upper()
+    # 扣分强度：warm/hot 或 action=WAIT/GO_LIGHT 时更保守
+    penalty_mult = 1.0
+    if action == "WAIT":
+        penalty_mult = 0.70
+    elif action == "GO_LIGHT":
+        penalty_mult = 0.85
+    elif band == "hot":
+        penalty_mult = 0.75
+    elif band == "warm":
+        penalty_mult = 0.90
+
+    if penalty_mult >= 0.999:
+        return ranked_payload, warnings
+
+    out: List[Dict[str, Any]] = []
+    for row in ranked_payload:
+        if not isinstance(row, dict):
+            continue
+        if str(row.get("symbol") or "").strip() != "513880":
+            out.append(row)
+            continue
+        nr = dict(row)
+        try:
+            base_score = float(nr.get("score") or 0.0)
+        except Exception:
+            base_score = 0.0
+        nr["score_before_premium_penalty"] = base_score
+        nr["score"] = round(base_score * penalty_mult, 6)
+        override = {
+            "type": "cross_border_premium_penalty",
+            "multiplier": penalty_mult,
+            "nikkei_snapshot": {
+                "premium_rate_pct": nikkei_snap.get("premium_rate_pct"),
+                "premium_percentile_20d": nikkei_snap.get("premium_percentile_20d"),
+                "temperature_band": nikkei_snap.get("temperature_band"),
+                "risk_gate_action": nikkei_snap.get("risk_gate_action"),
+                "risk_gate_reasons": nikkei_snap.get("risk_gate_reasons"),
+            },
+        }
+        nr["risk_override"] = override
+        tf = nr.get("three_factor") if isinstance(nr.get("three_factor"), dict) else {}
+        tf2 = dict(tf)
+        tf2["cross_border_premium_penalty"] = {"multiplier": penalty_mult, "action": action, "band": band}
+        nr["three_factor"] = tf2
+        out.append(nr)
+
+    warnings.append(f"cross_border_premium_penalty_applied:513880×{penalty_mult:.2f}")
+    # 重新按 score 排序，保证输出一致
+    out_sorted = sorted(out, key=lambda x: float(x.get("score") or 0.0), reverse=True)
+    return out_sorted, warnings
+
+
 def _load_latest_sentiment_snapshot() -> Tuple[Dict[str, Any], List[str]]:
     warnings: List[str] = []
     base = _project_root() / "data" / "semantic" / "sentiment_snapshot"
@@ -523,6 +625,7 @@ def _run_rotation_pipeline_with_timeout(
     score_engine: str,
     runtime_inputs: Dict[str, Any],
     max_runtime_seconds: float,
+    allow_multiprocessing: bool = True,
 ) -> Tuple[Dict[str, Any], List[str]]:
     """
     硬超时包装：将重计算放入子进程，超时则终止进程并返回降级结果，避免联调卡死。
@@ -531,6 +634,36 @@ def _run_rotation_pipeline_with_timeout(
     import time
 
     warnings: List[str] = []
+    if not allow_multiprocessing:
+        try:
+            pipe = run_rotation_pipeline(
+                symbols,
+                cfg,
+                lookback_days=lookback_days,
+                score_engine=score_engine,
+                runtime_inputs=runtime_inputs,
+            )
+            return (pipe if isinstance(pipe, dict) else {"ranked_active": [], "ranked_by_pool": {}, "errors": ["invalid_pipe"]}), warnings
+        except Exception as e:  # noqa: BLE001
+            warnings.append(f"pipeline_direct_failed:{type(e).__name__}")
+            return (
+                {
+                    "ranked_active": [],
+                    "ranked_by_pool": {},
+                    "ranked_all_for_display": [],
+                    "inactive": [],
+                    "fallback_legacy_ranking": True,
+                    "correlation_matrix": None,
+                    "correlation_symbols": [],
+                    "warnings": ["pipeline_direct_failed"],
+                    "config_snapshot": {"lookback_days": lookback_days, "score_engine": score_engine},
+                    "data_readiness": {"degraded": True, "degraded_reasons": ["pipeline_direct_failed"]},
+                    "pool_type_map": {},
+                    "errors": [str(e)],
+                    "three_factor_context": {"enabled": False},
+                },
+                warnings,
+            )
     timeout_s = float(max(0.1, max_runtime_seconds))
     ctx = mp.get_context("fork") if hasattr(mp, "get_context") else mp  # type: ignore[assignment]
     q: Any = ctx.Queue(maxsize=1)
@@ -747,6 +880,7 @@ def tool_etf_rotation_research(
         score_engine=engine,
         runtime_inputs=runtime_inputs,
         max_runtime_seconds=float(max_runtime_seconds or 35.0),
+        allow_multiprocessing=(str(mode).lower() != "test"),
     )
     shadow_compare: Dict[str, Any] = {}
     if rt.dual_run and (not light_mode) and (not any("pipeline_timeout" in w for w in timeout_warnings)):
@@ -758,6 +892,7 @@ def tool_etf_rotation_research(
                 score_engine=shadow_engine,
                 runtime_inputs=runtime_inputs,
                 max_runtime_seconds=max(5.0, float(max_runtime_seconds or 35.0) * 0.5),
+                allow_multiprocessing=(str(mode).lower() != "test"),
             )
             p_rank = [r.symbol for r in (pipe.get("ranked_active") or [])[:10]]
             s_rank = [r.symbol for r in (shadow_pipe.get("ranked_active") or [])[:10]]
@@ -1025,11 +1160,14 @@ def tool_etf_rotation_research(
         }
         for r in ranked
     ]
+    trade_date = datetime.now(ZoneInfo("Asia/Shanghai")).strftime("%Y-%m-%d")
+    nikkei_snap = _read_nikkei_premium_gate_snapshot(trade_date)
+    ranked_payload, cross_border_warn = _apply_cross_border_premium_penalty(ranked_payload, nikkei_snap=nikkei_snap)
+    warnings.extend(cross_border_warn)
     top5_payload = ranked_payload[:5]
 
     task_id = "etf-rotation-research"
     run_id = datetime.now(ZoneInfo("Asia/Shanghai")).strftime("%Y%m%dT%H%M%S")
-    trade_date = datetime.now(ZoneInfo("Asia/Shanghai")).strftime("%Y-%m-%d")
     generated_at = datetime.now().isoformat()
     artifact_refs = {}
     if mode != "test":

@@ -9,9 +9,13 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta
+import json
 import logging
 from pathlib import Path
+import re
 from typing import Any, Dict, List, Optional, Tuple
+from urllib.error import URLError
+from urllib.request import urlopen
 
 import yaml
 
@@ -90,6 +94,290 @@ def _safe_float(v: Any) -> Optional[float]:
         return float(v)
     except Exception:
         return None
+
+
+def _parse_fundgz_payload(raw_text: str) -> Optional[Dict[str, Any]]:
+    text = str(raw_text or "").strip()
+    m = re.search(r"jsonpgz\((.*)\)\s*;?\s*$", text)
+    if not m:
+        return None
+    payload = str(m.group(1) or "").strip()
+    if not payload:
+        return None
+    try:
+        return json.loads(payload)
+    except Exception:
+        return None
+
+
+def _fetch_fundgz_snapshot(etf_code: str, timeout_seconds: float = 5.0) -> Dict[str, Any]:
+    url = f"http://fundgz.1234567.com.cn/js/{str(etf_code).strip()}.js"
+    try:
+        with urlopen(url, timeout=timeout_seconds) as resp:
+            body = resp.read().decode("utf-8", errors="ignore")
+    except (URLError, TimeoutError) as e:
+        return {"status": "unavailable", "reason": f"request_failed:{type(e).__name__}"}
+    except Exception as e:
+        return {"status": "unavailable", "reason": f"request_error:{type(e).__name__}"}
+    parsed = _parse_fundgz_payload(body)
+    if not isinstance(parsed, dict):
+        if "jsonpgz()" in body:
+            return {"status": "unavailable", "reason": "empty_payload"}
+        return {"status": "unavailable", "reason": "invalid_jsonp"}
+    gsz = _safe_float(parsed.get("gsz"))
+    if gsz is None or gsz <= 0:
+        return {"status": "unavailable", "reason": "missing_gsz"}
+    return {
+        "status": "ok",
+        "fundcode": str(parsed.get("fundcode") or ""),
+        "name": str(parsed.get("name") or ""),
+        "nav_estimate": gsz,
+        "pct_change": _safe_float(parsed.get("gszzl")),
+        "estimate_time": str(parsed.get("gztime") or ""),
+        "nav_date": str(parsed.get("jzrq") or ""),
+        "official_nav": _safe_float(parsed.get("dwjz")),
+    }
+
+
+def _calc_fundgz_freshness_seconds(estimate_time: str, now_sh: datetime) -> Optional[int]:
+    s = str(estimate_time or "").strip()
+    if not s:
+        return None
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M"):
+        try:
+            dt = datetime.strptime(s, fmt)
+            if getattr(now_sh, "tzinfo", None) is not None:
+                dt = now_sh.tzinfo.localize(dt) if hasattr(now_sh.tzinfo, "localize") else dt.replace(tzinfo=now_sh.tzinfo)
+            delta = int((now_sh - dt).total_seconds())
+            return max(delta, 0)
+        except Exception:
+            continue
+    return None
+
+
+def _load_recent_513300_history_days(lookback_days: int = 20) -> List[Dict[str, Any]]:
+    root = Path(__file__).resolve().parents[2] / "data" / "semantic" / "nasdaq_513300_monitor_events"
+    if not root.exists():
+        return []
+    days: List[Dict[str, Any]] = []
+    for p in sorted(root.glob("*.jsonl"), reverse=True):
+        try:
+            for line in p.read_text(encoding="utf-8").splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                obj = json.loads(line)
+                if isinstance(obj, dict):
+                    days.append(obj)
+        except Exception:
+            continue
+        if len(days) >= lookback_days * 8:
+            break
+    return days
+
+
+def _load_recent_monitor_history_days(dataset_dir: str, lookback_days: int = 20) -> List[Dict[str, Any]]:
+    """
+    从语义层事件目录读取近 N 日历史（用于分位/温度计算）。
+
+    约定：
+    - `data/semantic/<dataset_dir>/YYYY-MM-DD.jsonl`：每行一条 L3 事件（append-only）
+    """
+    root = Path(__file__).resolve().parents[2] / "data" / "semantic" / dataset_dir
+    if not root.exists():
+        return []
+    days: List[Dict[str, Any]] = []
+    for p in sorted(root.glob("*.jsonl"), reverse=True):
+        try:
+            for line in p.read_text(encoding="utf-8").splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                obj = json.loads(line)
+                if isinstance(obj, dict):
+                    days.append(obj)
+        except Exception:
+            continue
+        if len(days) >= lookback_days * 8:
+            break
+    return days
+
+
+def _persist_semantic_event_jsonl(dataset_dir: str, trade_date: str, row: Dict[str, Any]) -> None:
+    """
+    语义层 L3 事件落盘（append-only）。
+    - path: data/semantic/<dataset_dir>/<trade_date>.jsonl
+    """
+    td = str(trade_date or "").strip()
+    if not td:
+        return
+    base = Path(__file__).resolve().parents[2] / "data" / "semantic" / dataset_dir
+    base.mkdir(parents=True, exist_ok=True)
+    p = base / f"{td}.jsonl"
+    with p.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+
+def _persist_semantic_view_json(dataset_dir: str, trade_date: str, monitor_point: str, view: Dict[str, Any]) -> None:
+    """
+    语义层 L4 视图落盘（overwrite latest）。
+    - path: data/semantic/<dataset_dir>/<trade_date>_<monitor_point>.json
+    """
+    td = str(trade_date or "").strip()
+    mp = str(monitor_point or "").strip().upper()
+    if not td or not mp:
+        return
+    base = Path(__file__).resolve().parents[2] / "data" / "semantic" / dataset_dir
+    base.mkdir(parents=True, exist_ok=True)
+    p = base / f"{td}_{mp}.json"
+    p.write_text(json.dumps(view, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _calc_nikkei_theoretical_premium(
+    *,
+    latest_price: Optional[float],
+    yesterday_nav: Optional[float],
+    index_change_pct: Optional[float],
+) -> Dict[str, Any]:
+    """
+    日经225ETF（513880）理论NAV溢价率：
+    theoretical_nav = yesterday_nav * (1 + index_change_pct/100)
+    premium_rate_pct = (latest_price/theoretical_nav - 1) * 100
+    """
+    if latest_price is None or latest_price <= 0:
+        return {"status": "unavailable", "reason": "latest_price_unavailable"}
+    if yesterday_nav is None or yesterday_nav <= 0:
+        return {"status": "unavailable", "reason": "yesterday_nav_unavailable"}
+    if index_change_pct is None:
+        return {"status": "unavailable", "reason": "index_change_pct_unavailable"}
+    theoretical_nav = yesterday_nav * (1.0 + float(index_change_pct) / 100.0)
+    if theoretical_nav <= 0:
+        return {"status": "unavailable", "reason": "theoretical_nav_invalid"}
+    premium_rate_pct = (latest_price / theoretical_nav - 1.0) * 100.0
+    return {
+        "status": "ok",
+        "theoretical_nav": theoretical_nav,
+        "premium_rate_pct": premium_rate_pct,
+    }
+
+
+def _nikkei_risk_gate_from_premium(
+    premium_rate_pct: Optional[float],
+    premium_percentile_20d: Optional[float],
+    quality: str,
+) -> Dict[str, Any]:
+    """
+    溢价门禁：绝对阈值 + 分位阈值（取更保守者）。
+    - action: GO / GO_LIGHT / WAIT
+    - position_ceiling: 0.25 / 0.50 / 0.75 / 1.00
+    """
+    reasons: List[str] = []
+    action = "GO"
+    cap = 1.0
+
+    # 数据缺口：退回保守上限
+    if str(quality or "").strip().lower() == "error":
+        reasons.append("PREMIUM_UNAVAILABLE_FALLBACK_DEVIATION")
+        return {"action": "GO_LIGHT", "position_ceiling": 0.6, "reasons": reasons}
+
+    # 绝对溢价阈值（单位：%）
+    if premium_rate_pct is not None:
+        if premium_rate_pct > 3.0:
+            action, cap = "WAIT", 0.25
+            reasons.append("PREMIUM_GT_3PCT")
+        elif premium_rate_pct > 2.0:
+            action, cap = "GO_LIGHT", 0.5
+            reasons.append("PREMIUM_2_TO_3PCT")
+        elif premium_rate_pct > 1.0:
+            action, cap = "GO", 0.75
+            reasons.append("PREMIUM_1_TO_2PCT")
+        else:
+            action, cap = "GO", 1.0
+            reasons.append("PREMIUM_LT_1PCT")
+
+    # 分位阈值（0–100）
+    if premium_percentile_20d is not None:
+        pct = float(premium_percentile_20d)
+        if pct > 85.0:
+            cap = min(cap, 0.25)
+            action = "WAIT" if action == "WAIT" else "GO_LIGHT"
+            reasons.append("PREMIUM_PCTL_GT_85")
+        elif pct > 60.0:
+            cap = min(cap, 0.5)
+            if action == "GO":
+                action = "GO_LIGHT"
+            reasons.append("PREMIUM_PCTL_60_TO_85")
+        elif pct >= 30.0:
+            cap = min(cap, 0.75)
+            reasons.append("PREMIUM_PCTL_30_TO_60")
+        else:
+            reasons.append("PREMIUM_PCTL_LT_30")
+
+    # 规范化
+    cap = float(cap)
+    if cap <= 0.26:
+        cap = 0.25
+    elif cap <= 0.51:
+        cap = 0.5
+    elif cap <= 0.76:
+        cap = 0.75
+    else:
+        cap = 1.0
+    if action not in {"GO", "GO_LIGHT", "WAIT"}:
+        action = "GO_LIGHT"
+    return {"action": action, "position_ceiling": cap, "reasons": reasons[:6]}
+
+
+def _check_gap_protection(
+    *,
+    yesterday_close: Optional[float],
+    today_open: Optional[float],
+    nikkei_ref_change_pct: Optional[float],
+    overshoot_pct: float = 1.5,
+) -> Optional[Dict[str, Any]]:
+    """
+    缺口保护：如果开盘缺口显著大于指数参考变动，则优先 WAIT，避免“跳空追/抄”误判。
+
+    - gap_pct = (today_open - yesterday_close)/yesterday_close*100
+    - 若 gap_pct < nikkei_ref_change_pct - overshoot_pct -> WAIT
+    """
+    if yesterday_close in (None, 0) or today_open is None or nikkei_ref_change_pct is None:
+        return None
+    gap_pct = (float(today_open) - float(yesterday_close)) / float(yesterday_close) * 100.0
+    if gap_pct < float(nikkei_ref_change_pct) - float(overshoot_pct):
+        return {
+            "action": "WAIT",
+            "position_ceiling": 0.25,
+            "reasons": ["GAP_RISK_OVERSHOOT"],
+            "evidence": {
+                "gap_pct": round(gap_pct, 3),
+                "nikkei_ref_change_pct": round(float(nikkei_ref_change_pct), 3),
+                "overshoot_pct": float(overshoot_pct),
+            },
+        }
+    return None
+
+
+def _safe_percentile(values: List[float], current: Optional[float]) -> Optional[float]:
+    if current is None:
+        return None
+    arr = sorted([x for x in values if x is not None])
+    if len(arr) < 5:
+        return None
+    le = sum(1 for x in arr if x <= current)
+    return round((le / len(arr)) * 100.0, 2)
+
+
+def _temperature_band(percentile: Optional[float]) -> Dict[str, Any]:
+    if percentile is None:
+        return {"band": "unknown", "position_ceiling": 0.6, "label": "历史样本不足"}
+    if percentile < 30.0:
+        return {"band": "cold", "position_ceiling": 1.0, "label": "低溢价区"}
+    if percentile < 60.0:
+        return {"band": "normal", "position_ceiling": 0.75, "label": "常态区"}
+    if percentile < 85.0:
+        return {"band": "warm", "position_ceiling": 0.5, "label": "偏热区"}
+    return {"band": "hot", "position_ceiling": 0.25, "label": "高溢价区"}
 
 
 def _resolve_monitor_context(monitor_point: str, monitor_bundle: Optional[str]) -> Dict[str, Any]:
@@ -1012,6 +1300,9 @@ def build_tail_session_report_data(
                 if idx_ret is not None:
                     index_day_ret_pct = idx_ret
 
+    # 日经/纳指：期指快照用于偏离代理与日经指数回退
+    futures_ref = _fetch_nikkei_futures_snapshot() if market_profile == "nikkei_513880" else _fetch_nq_futures_snapshot()
+
     iopv_source = "realtime" if (iopv_val is not None and premium_pct is not None) else "unavailable"
     manual_iopv = _resolve_manual_iopv(market_cfg, etf_code=etf_code, trade_date=rd["trade_date"])
     iopv_est_pack = _estimate_iopv(market_cfg, etf_code=etf_code, index_day_ret_pct=index_day_ret_pct, latest_price=latest_price)
@@ -1023,11 +1314,60 @@ def build_tail_session_report_data(
         iopv_val = _safe_float(iopv_est_pack.get("iopv_est"))
         premium_pct = _safe_float(iopv_est_pack.get("premium_est"))
         iopv_source = "estimated"
-    if market_profile in {"nasdaq_513300", "nikkei_513880"}:
-        # 513300 以偏离代理门禁为主，不依赖 IOPV 口径
-        iopv_val = None
-        premium_pct = None
-        iopv_source = "proxy_deviation"
+    if market_profile == "nikkei_513880":
+        # 日经场景：以「理论NAV」作为 IOPV 展示口径；premium_pct 为理论溢价率（%）。
+        fundgz = _fetch_fundgz_snapshot(etf_code=etf_code, timeout_seconds=5.0)
+        fundgz_official_nav = _safe_float(fundgz.get("official_nav")) if isinstance(fundgz, dict) else None
+        fundgz_nav_date = str(fundgz.get("nav_date") or "").strip() if isinstance(fundgz, dict) else ""
+        # 手工兜底：复用 manual_iopv_overrides.iopv 作为昨日NAV（配置命名历史原因），标记为 degraded
+        manual_nav = _safe_float((manual_iopv or {}).get("iopv")) if isinstance(manual_iopv, dict) else None
+        yesterday_nav = fundgz_official_nav if (fundgz_official_nav is not None and fundgz_official_nav > 0) else manual_nav
+        nav_source = "fundgz_official_nav" if yesterday_nav == fundgz_official_nav else ("manual_iopv_override_as_nav" if yesterday_nav == manual_nav else "unavailable")
+        idx_change_pct = _safe_float(index_day_ret_pct)
+        idx_source = "nikkei_index_spot" if idx_change_pct is not None else "unavailable"
+        # 若 spot 不可用，回退期指变化
+        if idx_change_pct is None:
+            idx_change_pct = _safe_float(futures_ref.get("change_pct"))
+            if idx_change_pct is not None:
+                idx_source = "nikkei_futures_fallback"
+        prem_pack = _calc_nikkei_theoretical_premium(
+            latest_price=latest_price,
+            yesterday_nav=yesterday_nav,
+            index_change_pct=idx_change_pct,
+        )
+        premium_quality = "ok"
+        if prem_pack.get("status") != "ok":
+            premium_quality = "error"
+            premium_pct = None
+            iopv_val = None
+        else:
+            iopv_val = _safe_float(prem_pack.get("theoretical_nav"))
+            premium_pct = _safe_float(prem_pack.get("premium_rate_pct"))
+            premium_quality = "ok"
+            # 源降级规则
+            if nav_source != "fundgz_official_nav" or idx_source != "nikkei_index_spot":
+                premium_quality = "degraded"
+            # NAV 日期不匹配也降级（fundgz 偶有延迟）
+            if nav_source == "fundgz_official_nav" and fundgz_nav_date and str(rd.get("trade_date") or "") == fundgz_nav_date:
+                # dwjz 通常是“昨日净值”，当天一致多为异常/盘中未更新口径，保守降级
+                premium_quality = "degraded"
+        rd["analysis_premium"] = {
+            "quality_status": premium_quality,
+            "nav_source": nav_source,
+            "nav_date": fundgz_nav_date,
+            "yesterday_nav": yesterday_nav,
+            "index_change_pct": idx_change_pct,
+            "index_source": idx_source,
+            "theoretical_nav": prem_pack.get("theoretical_nav") if prem_pack.get("status") == "ok" else None,
+            "premium_rate_pct": premium_pct,
+            "reason": prem_pack.get("reason"),
+        }
+        iopv_source = "theoretical_nav"
+    elif market_profile == "nasdaq_513300":
+        # 纳指场景仍以偏离代理门禁为主，但保留 IOPV 展示口径（若可得）
+        if iopv_source == "unavailable":
+            iopv_source = "proxy_deviation"
+    valuation_blend: Dict[str, Any] = {}
 
     manager_notice = bool((cfg.get("risk_notice_state") or {}).get("manager_premium_notice", False))
     resolved_mp = str(monitor_ctx.get("monitor_point") or "M7")
@@ -1035,7 +1375,6 @@ def build_tail_session_report_data(
     etf_actual_pct = _safe_float((rt_row or {}).get("change_pct"))
     if etf_actual_pct is None and latest_price is not None and hist_close not in (None, 0):
         etf_actual_pct = (latest_price - float(hist_close)) / float(hist_close) * 100.0
-    futures_ref = _fetch_nikkei_futures_snapshot() if market_profile == "nikkei_513880" else _fetch_nq_futures_snapshot()
     futures_change_pct = _safe_float(futures_ref.get("change_pct"))
     futures_weight = _nasdaq_futures_weight(resolved_mp) if market_profile == "nasdaq_513300" else 0.0
     beta_track = float((cfg.get("deviation_proxy") or {}).get("beta_track", 0.95)) if isinstance(cfg.get("deviation_proxy"), dict) else 0.95
@@ -1064,6 +1403,64 @@ def build_tail_session_report_data(
                 deviation_trend = "expanding"
             elif deviation_pct < -0.3:
                 deviation_trend = "converging"
+    if market_profile == "nasdaq_513300":
+        fundgz_fresh_ok_seconds = int(cfg.get("fundgz_fresh_ok_seconds", 180))
+        fundgz_fresh_degrade_seconds = int(cfg.get("fundgz_fresh_degrade_seconds", 600))
+        fundgz = _fetch_fundgz_snapshot(etf_code=etf_code, timeout_seconds=5.0)
+        fundgz_quality = "error"
+        fundgz_premium = None
+        freshness_seconds = None
+        if fundgz.get("status") == "ok":
+            freshness_seconds = _calc_fundgz_freshness_seconds(str(fundgz.get("estimate_time") or ""), now)
+            if freshness_seconds is None:
+                fundgz_quality = "degraded"
+            elif freshness_seconds <= fundgz_fresh_ok_seconds:
+                fundgz_quality = "ok"
+            elif freshness_seconds > fundgz_fresh_degrade_seconds:
+                fundgz_quality = "degraded"
+            else:
+                fundgz_quality = "ok"
+            nav_est = _safe_float(fundgz.get("nav_estimate"))
+            if nav_est and latest_price:
+                fundgz_premium = (latest_price - nav_est) / nav_est * 100.0
+        futures_premium = deviation_pct
+        agreement_gap_pct = None
+        if futures_premium is not None and fundgz_premium is not None:
+            agreement_gap_pct = abs(futures_premium - fundgz_premium)
+        chosen_value = futures_premium
+        confidence = "medium"
+        blend_warn = float(cfg.get("blend_gap_warn_pct", 3.0))
+        if fundgz_premium is not None and fundgz_quality == "ok" and futures_premium is not None:
+            if agreement_gap_pct is not None and agreement_gap_pct <= blend_warn:
+                chosen_value = (futures_premium + fundgz_premium) / 2.0
+                confidence = "high"
+            else:
+                chosen_value = max(futures_premium, fundgz_premium)
+                confidence = "low"
+        elif fundgz_premium is not None and fundgz_quality == "ok":
+            chosen_value = fundgz_premium
+            confidence = "medium"
+        valuation_blend = {
+            "futures_proxy": {
+                "premium_rate": futures_premium,
+                "freshness_seconds": 0 if futures_change_pct is not None else None,
+                "quality": "ok" if futures_change_pct is not None else "degraded",
+            },
+            "fundgz": {
+                "premium_rate": fundgz_premium,
+                "nav_estimate": fundgz.get("nav_estimate"),
+                "estimate_time": fundgz.get("estimate_time"),
+                "freshness_seconds": freshness_seconds,
+                "quality": fundgz_quality if fundgz.get("status") == "ok" else "error",
+                "reason": fundgz.get("reason"),
+            },
+            "chosen_value": chosen_value,
+            "confidence": confidence,
+            "agreement_gap_pct": agreement_gap_pct,
+            "quality_status": "ok" if confidence in {"high", "medium"} else "degraded",
+        }
+        # fundgz 为辅助估值源：不可用时不应污染 runner_errors（避免将网络/上游波动误判为本任务失败）。
+        # 其不可用原因已在 valuation_blend.fundgz.reason 中可追溯。
 
     layer_cycle = _layer_cycle(ma25_dev, rsi14, close, ma25)
     layer_timing = _layer_timing(streak, None, rsi14, ma25_dev, cfg)
@@ -1076,6 +1473,101 @@ def build_tail_session_report_data(
         layer_risk["gate_hits"] = gate_hits
         layer_risk["options"] = ["hold", "reduce", "exit_wait"]
     decision_options = _resolve_decision_options(layer_cycle, layer_timing, layer_risk, cfg)
+    if market_profile == "nasdaq_513300":
+        lookback_days = int(cfg.get("percentile_lookback_days", 20))
+        history = _load_recent_513300_history_days(lookback_days=lookback_days)
+        premium_hist: List[float] = []
+        deviation_hist: List[float] = []
+        for row in history:
+            snap0 = row.get("tail_session_snapshot") if isinstance(row.get("tail_session_snapshot"), dict) else {}
+            ana0 = row.get("analysis") if isinstance(row.get("analysis"), dict) else {}
+            dev0 = ana0.get("deviation_proxy") if isinstance(ana0.get("deviation_proxy"), dict) else {}
+            p = _safe_float(snap0.get("premium_pct"))
+            d = _safe_float(dev0.get("deviation_pct"))
+            if p is not None:
+                premium_hist.append(p)
+            if d is not None:
+                deviation_hist.append(d)
+        premium_percentile = _safe_percentile(premium_hist, premium_pct)
+        deviation_percentile = _safe_percentile(deviation_hist, deviation_pct)
+        temperature = _temperature_band(deviation_percentile if deviation_percentile is not None else premium_percentile)
+        cap_ratio = float(temperature.get("position_ceiling", 1.0))
+        decision_options["premium_percentile_20d"] = premium_percentile
+        decision_options["deviation_percentile_20d"] = deviation_percentile
+        for profile_name in ("conservative", "neutral", "aggressive"):
+            seg = decision_options.get(profile_name) if isinstance(decision_options.get(profile_name), dict) else None
+            if not seg:
+                continue
+            base_cap = _safe_float(seg.get("max_position_pct"))
+            if base_cap is not None:
+                seg["base_max_position_pct"] = base_cap
+                seg["max_position_pct"] = round(base_cap * cap_ratio)
+        decision_options["temperature_band"] = temperature.get("band")
+        decision_options["temperature_label"] = temperature.get("label")
+        decision_options["temperature_position_ceiling"] = cap_ratio
+    elif market_profile == "nikkei_513880":
+        lookback_days = int(cfg.get("percentile_lookback_days", 20))
+        history = _load_recent_monitor_history_days("nikkei_513880_monitor_events", lookback_days=lookback_days)
+        prem_hist: List[float] = []
+        dev_hist: List[float] = []
+        for row in history:
+            ana0 = row.get("analysis") if isinstance(row.get("analysis"), dict) else {}
+            snap0 = row.get("tail_session_snapshot") if isinstance(row.get("tail_session_snapshot"), dict) else {}
+            dev0 = ana0.get("deviation_proxy") if isinstance(ana0.get("deviation_proxy"), dict) else {}
+            # 新口径：analysis.premium_rate_pct；兼容：tail_session_snapshot.premium_pct（理论溢价率）
+            p = _safe_float(ana0.get("premium_rate_pct")) or _safe_float(snap0.get("premium_pct"))
+            d = _safe_float(dev0.get("deviation_pct"))
+            if p is not None:
+                prem_hist.append(p)
+            if d is not None:
+                dev_hist.append(d)
+        premium_percentile = _safe_percentile(prem_hist, premium_pct)
+        deviation_percentile = _safe_percentile(dev_hist, deviation_pct)
+        temperature = _temperature_band(premium_percentile)
+        cap_ratio = float(temperature.get("position_ceiling", 1.0))
+        decision_options["premium_percentile_20d"] = premium_percentile
+        decision_options["deviation_percentile_20d"] = deviation_percentile
+        decision_options["temperature_band"] = temperature.get("band")
+        decision_options["temperature_label"] = temperature.get("label")
+        decision_options["temperature_position_ceiling"] = cap_ratio
+        # 溢价门禁 cap（取更保守）
+        prem_quality = str((rd.get("analysis_premium") or {}).get("quality_status") or "ok")
+        gate = _nikkei_risk_gate_from_premium(premium_pct, premium_percentile, prem_quality)
+        # 缺口保护：仅在 M1/M2 生效（开盘初期）
+        mp0 = str(monitor_ctx.get("monitor_point") or "").strip().upper()
+        if mp0 in {"M1", "M2"}:
+            yesterday_close = hist_close
+            today_open = _safe_float((rt_row or {}).get("open"))
+            if today_open is None and isinstance(etf_hist, dict):
+                # 兜底：若 open 不可得，使用 latest_price 作为开盘代理（保守）
+                today_open = latest_price
+            nikkei_ref = _safe_float((rd.get("analysis_premium") or {}).get("index_change_pct"))
+            gap_hit = _check_gap_protection(
+                yesterday_close=yesterday_close,
+                today_open=today_open,
+                nikkei_ref_change_pct=nikkei_ref,
+                overshoot_pct=float(cfg.get("gap_overshoot_pct", 1.5)),
+            )
+            if gap_hit:
+                # 取更保守动作与上限
+                gate["action"] = "WAIT"
+                gate["position_ceiling"] = min(float(gate.get("position_ceiling") or 1.0), float(gap_hit.get("position_ceiling") or 0.25))
+                rs = list(gate.get("reasons") or [])
+                for r in (gap_hit.get("reasons") or []):
+                    if r not in rs:
+                        rs.append(r)
+                gate["reasons"] = rs[:6]
+                decision_options["gap_protection"] = gap_hit.get("evidence")
+        decision_options["nikkei_risk_gate"] = gate
+        effective_cap = min(cap_ratio, float(gate.get("position_ceiling") or 1.0))
+        for profile_name in ("conservative", "neutral", "aggressive"):
+            seg = decision_options.get(profile_name) if isinstance(decision_options.get(profile_name), dict) else None
+            if not seg:
+                continue
+            base_cap = _safe_float(seg.get("max_position_pct"))
+            if base_cap is not None:
+                seg["base_max_position_pct"] = base_cap
+                seg["max_position_pct"] = round(min(base_cap, effective_cap * 100.0))
 
     if iopv_source == "realtime":
         data_quality = "fresh"
@@ -1085,6 +1577,10 @@ def build_tail_session_report_data(
         data_quality = "estimated"
     else:
         data_quality = "partial"
+    if market_profile == "nasdaq_513300" and valuation_blend:
+        vqs = str(valuation_blend.get("quality_status") or "")
+        if vqs == "degraded" and data_quality == "fresh":
+            data_quality = "degraded"
     risk_notices = _build_risk_notices(
         {
             "premium_pct": premium_pct,
@@ -1121,6 +1617,7 @@ def build_tail_session_report_data(
         "iopv_est": (iopv_est_pack or {}).get("iopv_est"),
         "premium_est": (iopv_est_pack or {}).get("premium_est"),
         "est_confidence": (iopv_est_pack or {}).get("est_confidence"),
+        "valuation_blend": valuation_blend if valuation_blend else None,
     }
     range_pred = _predict_intraday_bands(latest_price, closes, cfg)
     monitor_projection = _build_monitor_projection(str(monitor_ctx.get("monitor_point") or "M7"), latest_price, range_pred)
@@ -1169,6 +1666,14 @@ def build_tail_session_report_data(
         "quality_status": "ok" if len(closes) >= 10 else "degraded",
         "action_state": action_state,
     }
+    if market_profile == "nikkei_513880":
+        gate = (decision_options.get("nikkei_risk_gate") if isinstance(decision_options.get("nikkei_risk_gate"), dict) else None) or {}
+        if gate:
+            risk_gate["action"] = gate.get("action")
+            risk_gate["position_ceiling"] = gate.get("position_ceiling")
+            risk_gate["reasons"] = gate.get("reasons") or []
+            # 日经：主门禁动作以理论溢价为准，避免与 deviation_proxy 的 action_state 混淆
+            risk_gate["action_state"] = gate.get("action")
     action_paths = {
         "conservative": decision_options.get("conservative"),
         "neutral": decision_options.get("neutral"),
@@ -1204,6 +1709,14 @@ def build_tail_session_report_data(
             "futures_weight": futures_weight if market_profile == "nasdaq_513300" else None,
             "expected_source": "nikkei_index_spot" if (market_profile == "nikkei_513880" and not used_futures_fallback) else ("nikkei_futures_fallback" if market_profile == "nikkei_513880" else "overnight_plus_futures"),
         },
+        "premium_percentile_20d": decision_options.get("premium_percentile_20d"),
+        "deviation_percentile_20d": decision_options.get("deviation_percentile_20d"),
+        "temperature_band": decision_options.get("temperature_band"),
+        "temperature_position_ceiling": decision_options.get("temperature_position_ceiling"),
+        "premium_theoretical_nav": (rd.get("analysis_premium") or {}).get("theoretical_nav"),
+        "premium_rate_pct": premium_pct,
+        "premium_quality_status": (rd.get("analysis_premium") or {}).get("quality_status"),
+        "valuation_blend": valuation_blend if valuation_blend else None,
         "pattern_alerts": pattern_alerts,
         "futures_reference": futures_ref,
         "monitor_context": monitor_ctx,
@@ -1237,6 +1750,13 @@ def build_tail_session_report_data(
         "projection_label": monitor_projection.get("projection_label"),
         "action_paths": action_paths,
         "deviation_proxy": rd.get("analysis", {}).get("deviation_proxy") if isinstance(rd.get("analysis"), dict) else None,
+        "valuation_blend": valuation_blend if valuation_blend else None,
+        "premium_rate_pct": rd.get("analysis", {}).get("premium_rate_pct") if isinstance(rd.get("analysis"), dict) else None,
+        "premium_percentile_20d": rd.get("analysis", {}).get("premium_percentile_20d") if isinstance(rd.get("analysis"), dict) else None,
+        "deviation_percentile_20d": rd.get("analysis", {}).get("deviation_percentile_20d") if isinstance(rd.get("analysis"), dict) else None,
+        "temperature_band": rd.get("analysis", {}).get("temperature_band") if isinstance(rd.get("analysis"), dict) else None,
+        "temperature_position_ceiling": rd.get("analysis", {}).get("temperature_position_ceiling") if isinstance(rd.get("analysis"), dict) else None,
+        "risk_gate": rd.get("analysis", {}).get("risk_gate") if isinstance(rd.get("analysis"), dict) else None,
     }
     td_reasons = layer_timing.get("reasons") if isinstance(layer_timing.get("reasons"), list) else []
     if "过热/连续上涨" in td_reasons:
@@ -1249,6 +1769,26 @@ def build_tail_session_report_data(
 
     if errors:
         rd["runner_errors"] = errors
+
+    # L3/L4 语义落盘（用于回放与分位计算；写入失败不阻断主流程）
+    try:
+        dataset_dir = "nasdaq_513300_monitor_events" if market_profile == "nasdaq_513300" else "nikkei_513880_monitor_events"
+        view_dir = "nasdaq_513300_intraday_dashboard_view" if market_profile == "nasdaq_513300" else "nikkei_513880_intraday_dashboard_view"
+        _persist_semantic_event_jsonl(dataset_dir, rd.get("trade_date") or "", rd)
+        mp = str(monitor_ctx.get("monitor_point") or "").strip().upper()
+        sem = rd.get("semantic_view") if isinstance(rd.get("semantic_view"), dict) else {}
+        sem_obj = {
+            "_meta": {
+                "schema_name": "nasdaq_513300_intraday_semantic" if market_profile == "nasdaq_513300" else "nikkei_513880_intraday_semantic",
+                "schema_version": "1.0.0",
+                "generated_at": rd.get("generated_at"),
+                "trade_date": rd.get("trade_date"),
+            },
+            "data": sem,
+        }
+        _persist_semantic_view_json(view_dir, rd.get("trade_date") or "", mp, sem_obj)
+    except Exception as e:
+        errors.append({"step": "persist_semantic_view", "error": str(e)})
     return rd, errors
 
 

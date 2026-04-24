@@ -748,6 +748,23 @@ def _assess_daily_report_completeness(
     missing: List[str] = []
     rd = report_data or {}
     an = analysis or {}
+    # 1) 数据日期审计：不等同于“字段缺失”，但会显著影响结论可靠性，需进入审计缺口。
+    stale = rd.get("data_stale_warning")
+    if not stale and isinstance(an, dict):
+        stale = an.get("data_stale_warning")
+    if isinstance(stale, str) and stale.strip():
+        missing.append("数据日期滞后")
+
+    # 2) 信息面：行业要闻（常见失败为 Tavily 401/配额/网络限制）；失败应进入缺口清单。
+    ind_blk = rd.get("industry_news") or rd.get("tool_fetch_industry_news_brief")
+    if isinstance(ind_blk, dict) and ind_blk.get("success") is False:
+        missing.append("行业要闻")
+
+    # 3) 信息面：政策要闻同理（若显式失败则记录；空列表不算缺失）。
+    pol_blk = rd.get("policy_news") or rd.get("tool_fetch_policy_news")
+    if isinstance(pol_blk, dict) and pol_blk.get("success") is False:
+        missing.append("政策要闻")
+
     if not _capital_flow_topic_substantive(rd):
         missing.append("资金流向专题")
     # 日报不再因关键位缺失阻断发送；仅用于审计行提示。

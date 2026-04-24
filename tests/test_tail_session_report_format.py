@@ -14,6 +14,13 @@ def test_tail_session_report_sections() -> None:
             "amount": 50000000,
             "data_quality": "fresh",
             "iopv_source": "realtime",
+            "valuation_blend": {
+                "confidence": "medium",
+                "agreement_gap_pct": 0.88,
+                "futures_proxy": {"premium_rate": 2.8},
+                "fundgz": {"premium_rate": 2.3},
+                "chosen_value": 2.5,
+            },
         },
         "analysis": {
             "index_close": 57810.8,
@@ -53,6 +60,10 @@ def test_tail_session_report_sections() -> None:
                     {"name": "afternoon_open_high", "value": 1.2478},
                 ],
             },
+            "premium_percentile_20d": 78.2,
+            "deviation_percentile_20d": 84.1,
+            "temperature_band": "warm",
+            "temperature_position_ceiling": 0.5,
         },
         "monitor_context": {
             "monitor_point": "M3",
@@ -65,9 +76,9 @@ def test_tail_session_report_sections() -> None:
     assert "### 一、时点快照" in body
     assert "### 二、本时点模板焦点" in body
     assert "### 三、区间预测（操作参考主轴）" in body
-    assert "### 四、时点专项预测" in body
-    assert "### 七、分层建议（不合成单一结论）" in body
-    assert "### 八、用户可选路径" in body
-    assert "### 九、风险提示与执行摩擦" in body
-    assert "### 十、用户决策声明" in body
+    assert "### 四、偏离代理与门禁" in body
+    assert "### 六、简版操作建议" in body
+    assert "### 七、用户决策声明" in body
     assert "IOPV来源：realtime" in body
+    assert "双源估值：置信度" in body
+    assert "历史分位：溢价" in body
