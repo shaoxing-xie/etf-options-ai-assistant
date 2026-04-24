@@ -97,6 +97,163 @@ def test_semantic_ops_events_prefers_snapshot(tmp_path: Path) -> None:
     assert payload["execution_audit_events"][0]["task_id"] == "snap"
 
 
+def test_semantic_ops_events_reports_tail_full_degraded(monkeypatch, tmp_path: Path) -> None:
+    jobs_path = tmp_path / "jobs.json"
+    jobs_path.write_text(
+        json.dumps(
+            {
+                "jobs": [
+                    {
+                        "id": "intraday-tail-screening",
+                        "name": "tail screening",
+                        "enabled": True,
+                        "schedule": {"expr": "0 14 * * 1-5"},
+                        "payload": {"toolsAllow": ["exec"]},
+                        "state": {"lastRunStatus": "ok", "consecutiveErrors": 0},
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "apps.chart_console.api.semantic_reader.Path",
+        lambda p: jobs_path if str(p) == "/home/xie/.openclaw/cron/jobs.json" else Path(p),
+    )
+    runs_dir = tmp_path / "runs"
+    runs_dir.mkdir(parents=True)
+    monkeypatch.setattr(SemanticReader, "_ops_runs_dir", lambda self: runs_dir)
+    (tmp_path / "data" / "tail_screening").mkdir(parents=True)
+    (tmp_path / "data" / "tail_screening" / "2026-04-22.json").write_text(
+        json.dumps(
+            {
+                "run_date": "2026-04-22",
+                "summary": {"degraded_mode": True},
+                "tool_trace": {
+                    "source_diagnostics": {
+                        "main_source_ok": False,
+                        "candidate_source": "watchlist_weak_proxy",
+                        "stock_rank": {"error_code": "UPSTREAM_FETCH_FAILED"},
+                    },
+                    "paradigm_trace": {
+                        "fund_flow_follow": {"forced_top10": True},
+                        "tail_grab": {"forced_top10": True},
+                        "oversold_bounce": {"forced_top10": True},
+                        "sector_rotation": {"forced_top10": True},
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    reader = SemanticReader(tmp_path)
+    payload = reader.ops_events("2026-04-22")
+    health = payload["task_health_events"][0]
+    assert health["task_id"] == "intraday-tail-screening"
+    assert health["quality_status"] == "degraded"
+    assert health["last_run_status"] == "error:data_degraded"
+    assert health["domain_error_code"] == "TAIL_SCREENING_FULL_DEGRADED"
+
+
+def test_semantic_ops_events_reports_tail_runtime_guard_error(monkeypatch, tmp_path: Path) -> None:
+    jobs_path = tmp_path / "jobs.json"
+    jobs_path.write_text(
+        json.dumps(
+            {
+                "jobs": [
+                    {
+                        "id": "intraday-tail-screening",
+                        "name": "tail screening",
+                        "enabled": True,
+                        "schedule": {"expr": "0 14 * * 1-5"},
+                        "payload": {"toolsAllow": ["exec"]},
+                        "state": {"lastRunStatus": "ok", "consecutiveErrors": 0},
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    runs_dir = tmp_path / "runs"
+    runs_dir.mkdir(parents=True)
+    (runs_dir / "intraday-tail-screening.jsonl").write_text(
+        json.dumps(
+            {
+                "ts": 1776934578150,
+                "jobId": "intraday-tail-screening",
+                "action": "finished",
+                "status": "ok",
+                "summary": "ERROR_TAIL_ARTIFACT_MISSING:data/tail_screening/2026-04-23.json",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(
+        "apps.chart_console.api.semantic_reader.Path",
+        lambda p: jobs_path if str(p) == "/home/xie/.openclaw/cron/jobs.json" else Path(p),
+    )
+    monkeypatch.setattr(SemanticReader, "_ops_runs_dir", lambda self: runs_dir)
+
+    reader = SemanticReader(tmp_path)
+    payload = reader.ops_events("2026-04-23")
+    health = payload["task_health_events"][0]
+    assert health["task_id"] == "intraday-tail-screening"
+    assert health["quality_status"] == "degraded"
+    assert health["last_run_status"] == "error:runtime_guard"
+    assert health["domain_error_code"] == "TAIL_SCREENING_RUNTIME_GUARD"
+
+
+def test_semantic_ops_events_reports_nightly_runtime_guard_error(monkeypatch, tmp_path: Path) -> None:
+    jobs_path = tmp_path / "jobs.json"
+    jobs_path.write_text(
+        json.dumps(
+            {
+                "jobs": [
+                    {
+                        "id": "nightly-stock-screening",
+                        "name": "nightly screening",
+                        "enabled": True,
+                        "schedule": {"expr": "0 20 * * 1-5"},
+                        "payload": {"toolsAllow": ["exec"]},
+                        "state": {"lastRunStatus": "ok", "consecutiveErrors": 0},
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    runs_dir = tmp_path / "runs"
+    runs_dir.mkdir(parents=True)
+    (runs_dir / "nightly-stock-screening.jsonl").write_text(
+        json.dumps(
+            {
+                "ts": 1776859363095,
+                "jobId": "nightly-stock-screening",
+                "action": "finished",
+                "status": "ok",
+                "summary": "ERROR_SCREENING_ARTIFACT_NOT_UPDATED",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "apps.chart_console.api.semantic_reader.Path",
+        lambda p: jobs_path if str(p) == "/home/xie/.openclaw/cron/jobs.json" else Path(p),
+    )
+    monkeypatch.setattr(SemanticReader, "_ops_runs_dir", lambda self: runs_dir)
+
+    reader = SemanticReader(tmp_path)
+    payload = reader.ops_events("2026-04-23")
+    health = payload["task_health_events"][0]
+    assert health["task_id"] == "nightly-stock-screening"
+    assert health["quality_status"] == "degraded"
+    assert health["last_run_status"] == "error:runtime_guard"
+    assert health["domain_error_code"] == "NIGHTLY_SCREENING_RUNTIME_GUARD"
+
+
 def test_semantic_screening_view_prefers_snapshot(tmp_path: Path) -> None:
     root = tmp_path
     d = root / "data" / "semantic" / "screening_view"
@@ -243,3 +400,32 @@ def test_orchestration_timeline_and_health(tmp_path: Path) -> None:
     health = reader.task_dependency_health("2026-04-22")
     assert health["_meta"]["schema_name"] == "task_dependency_health_v1"
     assert "satisfaction_rate" in health["health_metrics"]
+
+
+def test_rotation_heatmap_and_share_dashboard(tmp_path: Path) -> None:
+    root = tmp_path
+    (root / "data" / "semantic" / "rotation_heatmap").mkdir(parents=True)
+    (root / "data" / "semantic" / "etf_share_dashboard").mkdir(parents=True)
+    (root / "data" / "semantic" / "rotation_heatmap" / "2026-04-22.json").write_text(
+        json.dumps(
+            {
+                "_meta": {"schema_name": "semantic_rotation_heatmap_v1", "trade_date": "2026-04-22"},
+                "data": {"trade_date": "2026-04-22", "heatmap": [{"sector_name": "industry", "count": 3}]},
+            }
+        ),
+        encoding="utf-8",
+    )
+    (root / "data" / "semantic" / "etf_share_dashboard" / "2026-04-22.json").write_text(
+        json.dumps(
+            {
+                "_meta": {"schema_name": "semantic_etf_share_dashboard_v1", "trade_date": "2026-04-22"},
+                "data": {"trade_date": "2026-04-22", "rows": [{"etf_code": "510300", "trend_score": 0.1}]},
+            }
+        ),
+        encoding="utf-8",
+    )
+    reader = SemanticReader(root)
+    heat = reader.rotation_heatmap("2026-04-22")
+    share = reader.etf_share_dashboard("2026-04-22")
+    assert heat["_meta"]["schema_name"] == "semantic_rotation_heatmap_v1"
+    assert share["_meta"]["schema_name"] == "semantic_etf_share_dashboard_v1"

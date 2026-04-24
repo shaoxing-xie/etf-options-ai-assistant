@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import uuid
 from pathlib import Path
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -15,6 +16,7 @@ from analysis.etf_rotation_core import (
 )
 from src.rotation_config_loader import load_rotation_config
 from src.services.indicator_runtime import resolve_indicator_runtime
+from plugins.analysis.three_factor_engine_v3 import compute_three_factor_v3_candidates
 
 
 DEFAULT_ETF_NAME_MAP: Dict[str, str] = {
@@ -66,6 +68,302 @@ def _safe_write_json(path: Path, obj: Dict[str, Any]) -> None:
     tmp = path.with_suffix(path.suffix + ".tmp")
     tmp.write_text(json.dumps(obj, ensure_ascii=False, indent=2), encoding="utf-8")
     tmp.replace(path)
+
+
+def _project_root() -> Path:
+    return Path(__file__).resolve().parents[2]
+
+
+def _load_latest_sentiment_snapshot() -> Tuple[Dict[str, Any], List[str]]:
+    warnings: List[str] = []
+    base = _project_root() / "data" / "semantic" / "sentiment_snapshot"
+    if not base.is_dir():
+        warnings.append("sentiment_snapshot_missing")
+        return {}, warnings
+    files = sorted([p for p in base.glob("*.json") if p.is_file()])
+    if not files:
+        warnings.append("sentiment_snapshot_empty")
+        return {}, warnings
+    path = files[-1]
+    try:
+        obj = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        warnings.append("sentiment_snapshot_parse_failed")
+        return {}, warnings
+    if not isinstance(obj, dict):
+        warnings.append("sentiment_snapshot_invalid")
+        return {}, warnings
+    data = obj.get("data") if isinstance(obj.get("data"), dict) else {}
+    meta = obj.get("_meta") if isinstance(obj.get("_meta"), dict) else {}
+    if str(meta.get("quality_status") or "ok") != "ok":
+        warnings.append("sentiment_snapshot_degraded")
+    return {
+        "overall_score": data.get("overall_score"),
+        "sentiment_stage": data.get("sentiment_stage"),
+        "sentiment_dispersion": data.get("sentiment_dispersion"),
+        "factor_attribution": data.get("factor_attribution") if isinstance(data.get("factor_attribution"), dict) else {},
+        "meta": meta,
+    }, warnings
+
+
+def _persist_rotation_artifacts(
+    *,
+    task_id: str,
+    run_id: str,
+    symbols: List[str],
+    ranked_payload: List[Dict[str, Any]],
+    top5_payload: List[Dict[str, Any]],
+    ranked_by_pool: Dict[str, Any],
+    readiness: Dict[str, Any],
+    warnings: List[str],
+    errors: List[str],
+    three_factor_context: Dict[str, Any],
+    trade_date: str,
+    generated_at: str,
+) -> Dict[str, str]:
+    root = _project_root()
+    events_path = root / "data" / "decisions" / "orchestration" / "events" / f"{trade_date}.jsonl"
+    decision_candidates_path = root / "data" / "decision" / "rotation_candidates" / f"{trade_date}.jsonl"
+    decision_risk_path = root / "data" / "decision" / "risk_events" / f"{trade_date}.jsonl"
+    semantic_path = root / "data" / "semantic" / "rotation_latest" / f"{trade_date}.json"
+    semantic_heatmap_path = root / "data" / "semantic" / "rotation_heatmap" / f"{trade_date}.json"
+    semantic_share_path = root / "data" / "semantic" / "etf_share_dashboard" / f"{trade_date}.json"
+    events_path.parent.mkdir(parents=True, exist_ok=True)
+    decision_candidates_path.parent.mkdir(parents=True, exist_ok=True)
+    decision_risk_path.parent.mkdir(parents=True, exist_ok=True)
+    semantic_path.parent.mkdir(parents=True, exist_ok=True)
+    semantic_heatmap_path.parent.mkdir(parents=True, exist_ok=True)
+    semantic_share_path.parent.mkdir(parents=True, exist_ok=True)
+
+    quality_status = "ok"
+    degraded_reasons = list(readiness.get("degraded_reasons") or [])
+    if bool(readiness.get("degraded")) or warnings:
+        quality_status = "degraded"
+    # errors 多数是“个别标的缺历史/加载失败”，并不代表结果不可用；
+    # 仅当结果为空或明显不可用时才升级为 error。
+    if errors:
+        if not ranked_payload and not top5_payload:
+            quality_status = "error"
+        else:
+            quality_status = "degraded"
+            if "partial_symbol_data_missing" not in degraded_reasons:
+                degraded_reasons.append("partial_symbol_data_missing")
+
+    event_time = generated_at
+    event_id = f"{task_id}.{run_id}.{uuid.uuid4().hex[:8]}"
+    source_tools = [
+        "tool_etf_rotation_research",
+        "tool_fetch_sector_data",
+        "tool_fetch_a_share_fund_flow",
+        "tool_fetch_northbound_flow",
+        "pre-market-sentiment-check",
+    ]
+    event_payload = {
+        "_meta": {
+            "schema_name": "etf_rotation_research_event_v1",
+            "schema_version": "1.0.0",
+            "task_id": task_id,
+            "run_id": run_id,
+            "data_layer": "L3",
+            "generated_at": generated_at,
+            "trade_date": trade_date,
+            "source_tools": source_tools,
+            "lineage_refs": [str(semantic_path)],
+            "quality_status": quality_status,
+        },
+        "data": {
+            "event_id": event_id,
+            "event_time": event_time,
+            "initial_pool": symbols,
+            "scores": ranked_payload,
+            "top5": top5_payload,
+            "environment_gate": (three_factor_context.get("gate") or {}),
+            "capital_resonance_signals": [x.get("capital_resonance_type") for x in top5_payload],
+            "degraded_reasons": degraded_reasons,
+            "warnings": warnings,
+            "errors": errors,
+            "source_tools": source_tools,
+        },
+    }
+
+    with events_path.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(event_payload, ensure_ascii=False) + "\n")
+
+    heat_counter: Dict[str, int] = {}
+    for row in top5_payload:
+        sec = str(row.get("pool_type") or "unknown")
+        heat_counter[sec] = heat_counter.get(sec, 0) + 1
+    heatmap = [{"sector_name": k, "count": v} for k, v in sorted(heat_counter.items(), key=lambda x: (-x[1], x[0]))]
+
+    v3 = compute_three_factor_v3_candidates(ranked_payload)
+    decision_candidates = v3.get("candidates") if isinstance(v3, dict) else []
+    risk_events = v3.get("risk_events") if isinstance(v3, dict) else []
+    semantic_payload = {
+        "_meta": {
+            "schema_name": "etf_rotation_latest_semantic_v1",
+            "schema_version": "1.0.0",
+            "task_id": task_id,
+            "run_id": run_id,
+            "data_layer": "L4",
+            "generated_at": generated_at,
+            "trade_date": trade_date,
+            "quality_status": quality_status,
+            "lineage_refs": [str(events_path)],
+        },
+        "data": {
+            "trade_date": trade_date,
+            "top5": top5_payload,
+            "top10": ranked_payload[:10],
+            "heatmap": heatmap,
+            "environment": {
+                "stage": (three_factor_context.get("sentiment") or {}).get("stage"),
+                "dispersion": (three_factor_context.get("sentiment") or {}).get("dispersion"),
+                "gate_multiplier": (three_factor_context.get("gate") or {}).get("total_multiplier"),
+            },
+            "data_quality": {
+                "quality_status": quality_status,
+                "degraded_reasons": degraded_reasons,
+                "warnings": warnings,
+                "errors": errors,
+            },
+            "links": {
+                "event_file": str(events_path),
+                "event_id": event_id,
+            },
+            "ranked_by_pool": ranked_by_pool,
+            "three_factor_context": three_factor_context,
+        },
+    }
+    _safe_write_json(semantic_path, semantic_payload)
+    with decision_candidates_path.open("a", encoding="utf-8") as f:
+        for row in decision_candidates:
+            f.write(
+                json.dumps(
+                    {
+                        "_meta": {
+                            "schema_name": "decision_rotation_candidates_v1",
+                            "schema_version": "1.0.0",
+                            "task_id": task_id,
+                            "run_id": run_id,
+                            "data_layer": "L3",
+                            "generated_at": generated_at,
+                            "trade_date": trade_date,
+                            "source_tools": source_tools,
+                            "lineage_refs": [str(events_path), str(semantic_path)],
+                            "quality_status": quality_status,
+                        },
+                        "data": {
+                            "symbol": row.get("symbol"),
+                            "pool_type": row.get("pool_type"),
+                            "composite_score": row.get("composite_score_v3", row.get("score")),
+                            "score_breakdown": row.get("score_breakdown_v3", row.get("three_factor", {})),
+                        },
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n"
+            )
+    with decision_risk_path.open("a", encoding="utf-8") as f:
+        # 即使本轮无风险事件，也要落盘一个“空事件”记录，保证可回放与血缘完整性（避免出现文件缺失）。
+        if not risk_events:
+            risk_events = [
+                {
+                    "event_type": "none",
+                    "severity": "info",
+                    "details": {"note": "no risk events emitted by v3 engine"},
+                }
+            ]
+        for idx, ev in enumerate(risk_events):
+            f.write(
+                json.dumps(
+                    {
+                        "_meta": {
+                            "schema_name": "decision_risk_events_v1",
+                            "schema_version": "1.0.0",
+                            "task_id": task_id,
+                            "run_id": run_id,
+                            "data_layer": "L3",
+                            "generated_at": generated_at,
+                            "trade_date": trade_date,
+                            "source_tools": source_tools,
+                            "lineage_refs": [str(decision_candidates_path)],
+                            "quality_status": quality_status,
+                        },
+                        "data": {
+                            "event_id": f"{event_id}.risk.{idx}",
+                            "event_type": ev.get("event_type"),
+                            "severity": ev.get("severity"),
+                            "details": ev.get("details", {}),
+                        },
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n"
+            )
+    _safe_write_json(
+        semantic_heatmap_path,
+        {
+            "_meta": {
+                "schema_name": "semantic_rotation_heatmap_v1",
+                "schema_version": "1.0.0",
+                "task_id": task_id,
+                "run_id": run_id,
+                "data_layer": "L4",
+                "generated_at": generated_at,
+                "trade_date": trade_date,
+                "quality_status": quality_status,
+                "lineage_refs": [str(decision_candidates_path), str(decision_risk_path)],
+            },
+            "data": {
+                "trade_date": trade_date,
+                "heatmap": heatmap,
+                "top5": top5_payload,
+                "environment": semantic_payload["data"]["environment"],
+                "explanations": {"degraded_reasons": degraded_reasons, "warnings": warnings},
+            },
+        },
+    )
+    _safe_write_json(
+        semantic_share_path,
+        {
+            "_meta": {
+                "schema_name": "semantic_etf_share_dashboard_v1",
+                "schema_version": "1.0.0",
+                "task_id": task_id,
+                "run_id": run_id,
+                "data_layer": "L4",
+                "generated_at": generated_at,
+                "trade_date": trade_date,
+                "quality_status": quality_status,
+                "lineage_refs": [str(decision_candidates_path)],
+            },
+            "data": {
+                "trade_date": trade_date,
+                "rows": [
+                    {
+                        "etf_code": row.get("symbol"),
+                        "trend_score": ((row.get("score_breakdown_v3") or {}).get("share_trend")),
+                        "divergence_flags": [
+                            "price_share_divergence_gate"
+                            if ((row.get("score_breakdown_v3") or {}).get("share_trend", 0) or 0) < 0
+                            and ((row.get("score_breakdown_v3") or {}).get("momentum", 0) or 0) > 0
+                            else "none"
+                        ],
+                        "interpretation": "proxy from v3 engine",
+                    }
+                    for row in decision_candidates[:10]
+                ],
+            },
+        },
+    )
+    return {
+        "event_file": str(events_path),
+        "semantic_file": str(semantic_path),
+        "decision_candidates_file": str(decision_candidates_path),
+        "decision_risk_file": str(decision_risk_path),
+        "semantic_heatmap_file": str(semantic_heatmap_path),
+        "semantic_share_file": str(semantic_share_path),
+    }
 
 
 def _etf_display(symbol: str, name_map: Dict[str, str]) -> str:
@@ -217,6 +515,135 @@ def _operational_guidance_lines(
     return lines
 
 
+def _run_rotation_pipeline_with_timeout(
+    *,
+    symbols: List[str],
+    cfg: Dict[str, Any],
+    lookback_days: int,
+    score_engine: str,
+    runtime_inputs: Dict[str, Any],
+    max_runtime_seconds: float,
+) -> Tuple[Dict[str, Any], List[str]]:
+    """
+    硬超时包装：将重计算放入子进程，超时则终止进程并返回降级结果，避免联调卡死。
+    """
+    import multiprocessing as mp
+    import time
+
+    warnings: List[str] = []
+    timeout_s = float(max(0.1, max_runtime_seconds))
+    ctx = mp.get_context("fork") if hasattr(mp, "get_context") else mp  # type: ignore[assignment]
+    q: Any = ctx.Queue(maxsize=1)
+
+    def _child() -> None:
+        try:
+            pipe = run_rotation_pipeline(
+                symbols,
+                cfg,
+                lookback_days=lookback_days,
+                score_engine=score_engine,
+                runtime_inputs=runtime_inputs,
+            )
+            q.put({"ok": True, "pipe": pipe})
+        except Exception as e:  # noqa: BLE001
+            q.put({"ok": False, "error": str(e), "type": type(e).__name__})
+
+    t0 = time.monotonic()
+    p = ctx.Process(target=_child, daemon=True)
+    p.start()
+    p.join(timeout=timeout_s)
+    if p.is_alive():
+        try:
+            p.terminate()
+            p.join(timeout=2.0)
+        except Exception:
+            pass
+        warnings.append(f"pipeline_timeout:{timeout_s:.1f}s")
+        return (
+            {
+                "ranked_active": [],
+                "ranked_by_pool": {},
+                "ranked_all_for_display": [],
+                "inactive": [],
+                "fallback_legacy_ranking": True,
+                "correlation_matrix": None,
+                "correlation_symbols": [],
+                "warnings": ["pipeline_timeout"],
+                "config_snapshot": {"lookback_days": lookback_days, "score_engine": score_engine},
+                "data_readiness": {"degraded": True, "degraded_reasons": ["pipeline_timeout"]},
+                "pool_type_map": {},
+                "errors": ["pipeline_timeout"],
+                "three_factor_context": {"enabled": False},
+            },
+            warnings,
+        )
+    try:
+        msg = q.get_nowait()
+    except Exception:
+        warnings.append("pipeline_result_missing")
+        return (
+            {
+                "ranked_active": [],
+                "ranked_by_pool": {},
+                "ranked_all_for_display": [],
+                "inactive": [],
+                "fallback_legacy_ranking": True,
+                "correlation_matrix": None,
+                "correlation_symbols": [],
+                "warnings": ["pipeline_result_missing"],
+                "config_snapshot": {"lookback_days": lookback_days, "score_engine": score_engine},
+                "data_readiness": {"degraded": True, "degraded_reasons": ["pipeline_result_missing"]},
+                "pool_type_map": {},
+                "errors": ["pipeline_result_missing"],
+                "three_factor_context": {"enabled": False},
+            },
+            warnings,
+        )
+    if not isinstance(msg, dict) or not msg.get("ok"):
+        err = str((msg or {}).get("error") or "child_failed")
+        warnings.append(f"pipeline_child_failed:{err[:80]}")
+        return (
+            {
+                "ranked_active": [],
+                "ranked_by_pool": {},
+                "ranked_all_for_display": [],
+                "inactive": [],
+                "fallback_legacy_ranking": True,
+                "correlation_matrix": None,
+                "correlation_symbols": [],
+                "warnings": ["pipeline_child_failed"],
+                "config_snapshot": {"lookback_days": lookback_days, "score_engine": score_engine},
+                "data_readiness": {"degraded": True, "degraded_reasons": ["pipeline_child_failed"]},
+                "pool_type_map": {},
+                "errors": [err],
+                "three_factor_context": {"enabled": False},
+            },
+            warnings,
+        )
+    pipe = msg.get("pipe")
+    if not isinstance(pipe, dict):
+        warnings.append("pipeline_invalid_pipe")
+        pipe = {
+            "ranked_active": [],
+            "ranked_by_pool": {},
+            "ranked_all_for_display": [],
+            "inactive": [],
+            "fallback_legacy_ranking": True,
+            "correlation_matrix": None,
+            "correlation_symbols": [],
+            "warnings": ["pipeline_invalid_pipe"],
+            "config_snapshot": {"lookback_days": lookback_days, "score_engine": score_engine},
+            "data_readiness": {"degraded": True, "degraded_reasons": ["pipeline_invalid_pipe"]},
+            "pool_type_map": {},
+            "errors": ["pipeline_invalid_pipe"],
+            "three_factor_context": {"enabled": False},
+        }
+    elapsed = time.monotonic() - t0
+    if elapsed > timeout_s * 0.9:
+        warnings.append(f"pipeline_near_timeout:{elapsed:.1f}s")
+    return pipe, warnings
+
+
 def tool_etf_rotation_research(
     *,
     etf_pool: str = "",
@@ -225,6 +652,8 @@ def tool_etf_rotation_research(
     top_k: int = 3,
     mode: str = "prod",
     config_path: Optional[str] = None,
+    max_runtime_seconds: float = 35.0,
+    light_mode: bool = False,
 ) -> Dict[str, Any]:
     """
     OpenClaw 工具：ETF 轮动研究（研究级）
@@ -239,6 +668,8 @@ def tool_etf_rotation_research(
         top_k: 输出前 K 名
         mode: prod|test
         config_path: 可选，自定义 rotation 配置文件路径
+        max_runtime_seconds: 硬超时秒数（子进程超时终止），避免联调卡死
+        light_mode: 轻量模式：关闭相关性等重计算，缩短窗口，禁用 dual_run
     """
     from datetime import datetime
 
@@ -273,18 +704,61 @@ def tool_etf_rotation_research(
     mig = cfg.get("indicator_migration") if isinstance(cfg.get("indicator_migration"), dict) else {}
     task_cfg = ((mig.get("tasks") if isinstance(mig.get("tasks"), dict) else {}).get("etf_rotation_research"))
     task_cfg = task_cfg if isinstance(task_cfg, dict) else {}
-    primary_engine = str(task_cfg.get("score_engine_primary") or "58")
+    primary_engine = str(task_cfg.get("score_engine_primary") or "three_factor_v2")
     shadow_engine = str(task_cfg.get("score_engine_shadow") or "legacy")
 
-    engine = primary_engine if rt.migration_enabled else "legacy"
+    engine = primary_engine
     if rt.rollback_enabled and str(task_cfg.get("force_rollback_to_legacy", "")).lower() == "true":
         engine = "legacy"
 
-    pipe = run_rotation_pipeline(symbols, cfg, lookback_days=lookback_days, score_engine=engine)
-    shadow_compare: Dict[str, Any] = {}
-    if rt.dual_run:
+    if light_mode:
+        cfg = dict(cfg)
+        f = dict(cfg.get("filters") or {})
+        f["correlation_mode"] = "off"
         try:
-            shadow_pipe = run_rotation_pipeline(symbols, cfg, lookback_days=lookback_days, score_engine=shadow_engine)
+            f["correlation_lookback"] = min(int(f.get("correlation_lookback") or 252), 60)
+        except Exception:
+            f["correlation_lookback"] = 60
+        cfg["filters"] = f
+        feats = dict(cfg.get("features") or {})
+        feats["use_correlation"] = False
+        cfg["features"] = feats
+        lookback_days = min(int(lookback_days or 0), 90) if lookback_days else 90
+
+    sentiment_inputs, sentiment_warnings = _load_latest_sentiment_snapshot()
+    factor_attr = sentiment_inputs.get("factor_attribution") if isinstance(sentiment_inputs.get("factor_attribution"), dict) else {}
+    fund_flow = factor_attr.get("fund_flow") if isinstance(factor_attr.get("fund_flow"), dict) else {}
+    northbound = factor_attr.get("northbound") if isinstance(factor_attr.get("northbound"), dict) else {}
+    runtime_inputs = {
+        "sentiment": {
+            "overall_score": sentiment_inputs.get("overall_score"),
+            "sentiment_stage": sentiment_inputs.get("sentiment_stage"),
+            "sentiment_dispersion": sentiment_inputs.get("sentiment_dispersion"),
+        },
+        "flow": {
+            "fund_flow_score": fund_flow.get("score"),
+            "northbound_score": northbound.get("score"),
+        },
+    }
+    pipe, timeout_warnings = _run_rotation_pipeline_with_timeout(
+        symbols=symbols,
+        cfg=cfg,
+        lookback_days=lookback_days,
+        score_engine=engine,
+        runtime_inputs=runtime_inputs,
+        max_runtime_seconds=float(max_runtime_seconds or 35.0),
+    )
+    shadow_compare: Dict[str, Any] = {}
+    if rt.dual_run and (not light_mode) and (not any("pipeline_timeout" in w for w in timeout_warnings)):
+        try:
+            shadow_pipe, _shadow_warn = _run_rotation_pipeline_with_timeout(
+                symbols=symbols,
+                cfg=cfg,
+                lookback_days=lookback_days,
+                score_engine=shadow_engine,
+                runtime_inputs=runtime_inputs,
+                max_runtime_seconds=max(5.0, float(max_runtime_seconds or 35.0) * 0.5),
+            )
             p_rank = [r.symbol for r in (pipe.get("ranked_active") or [])[:10]]
             s_rank = [r.symbol for r in (shadow_pipe.get("ranked_active") or [])[:10]]
             overlap = len(set(p_rank) & set(s_rank))
@@ -301,12 +775,13 @@ def tool_etf_rotation_research(
     errors = list(pipe.get("errors") or [])
     ranked = pipe.get("ranked_active") or []
     ranked_by_pool = pipe.get("ranked_by_pool") or {}
-    warnings = list(pipe.get("warnings") or [])
+    warnings = list(pipe.get("warnings") or []) + sentiment_warnings + timeout_warnings
     fallback = bool(pipe.get("fallback_legacy_ranking"))
     corr_mat = pipe.get("correlation_matrix")
     corr_syms = pipe.get("correlation_symbols") or []
     config_snap = pipe.get("config_snapshot") or {}
     readiness = pipe.get("data_readiness") or {}
+    three_factor_context = pipe.get("three_factor_context") or {}
 
     if not ranked:
         return {
@@ -480,6 +955,12 @@ def tool_etf_rotation_research(
     lines.append("- 轮动基于缓存日线与配置因子；对突发事件与流动性冲击敏感。")
     if errors:
         lines.append(f"- 数据缺失/计算失败：{len(errors)} 条（见 data.errors）。")
+    if three_factor_context.get("enabled"):
+        gate = three_factor_context.get("gate") if isinstance(three_factor_context.get("gate"), dict) else {}
+        sent = three_factor_context.get("sentiment") if isinstance(three_factor_context.get("sentiment"), dict) else {}
+        lines.append(
+            f"- 三维共振门闸：阶段={sent.get('stage') or '未知'}，分歧度={sent.get('dispersion')}, 门闸系数={gate.get('total_multiplier')}。"
+        )
     lines.append("")
     lines.append("## 📂 数据与来源")
     lines.append("- 行情：read_cache_data → etf_daily（显式起止日期）。")
@@ -540,9 +1021,35 @@ def tool_etf_rotation_research(
             "excluded": r.excluded,
             "exclude_reason": r.exclude_reason,
             "soft_penalties": r.soft_penalties,
+            "three_factor": (three_factor_context.get("by_symbol") or {}).get(r.symbol, {}),
         }
         for r in ranked
     ]
+    top5_payload = ranked_payload[:5]
+
+    task_id = "etf-rotation-research"
+    run_id = datetime.now(ZoneInfo("Asia/Shanghai")).strftime("%Y%m%dT%H%M%S")
+    trade_date = datetime.now(ZoneInfo("Asia/Shanghai")).strftime("%Y-%m-%d")
+    generated_at = datetime.now().isoformat()
+    artifact_refs = {}
+    if mode != "test":
+        artifact_refs = _persist_rotation_artifacts(
+            task_id=task_id,
+            run_id=run_id,
+            symbols=symbols,
+            ranked_payload=ranked_payload,
+            top5_payload=top5_payload,
+            ranked_by_pool={
+                "industry": [{"symbol": r.symbol, "score": r.score} for r in (ind_rank[:10] if ind_rank else [])],
+                "concept": [{"symbol": r.symbol, "score": r.score} for r in (con_rank[:10] if con_rank else [])],
+            },
+            readiness=readiness,
+            warnings=warnings,
+            errors=errors,
+            three_factor_context=three_factor_context,
+            trade_date=trade_date,
+            generated_at=generated_at,
+        )
 
     # 落盘：给“发送工具（按 last report 读取）”提供稳定数据源，避免 agent 大段传参导致 summary 丢失/退化。
     try:
@@ -554,6 +1061,7 @@ def tool_etf_rotation_research(
                 "ranked": ranked_payload,
                 "errors": errors,
                 "shadow_compare": shadow_compare,
+                "artifact_refs": artifact_refs,
             },
         }
         _safe_write_json(
@@ -600,8 +1108,10 @@ def tool_etf_rotation_research(
             "regime": regime_info,
             "rotation_state": {"turnover_top5": turnover, "turnover_label": turn_label},
             "data_readiness": readiness,
+            "three_factor_context": three_factor_context,
             "errors": errors,
             "config_snapshot": config_snap,
+            "artifacts": artifact_refs,
             "indicator_runtime": {
                 "task": "etf_rotation_research",
                 "route": rt.route,
@@ -622,6 +1132,8 @@ def tool_etf_rotation_research(
                     "ranked": ranked_payload,
                     "errors": errors,
                     "shadow_compare": shadow_compare,
+                    "three_factor_context": three_factor_context,
+                    "artifacts": artifact_refs,
                 },
             },
         },

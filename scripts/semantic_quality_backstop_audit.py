@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
-DATASETS = ["sentiment_snapshot", "screening_candidates", "screening_view", "ops_events"]
+DATASETS = ["sentiment_snapshot", "screening_candidates", "screening_view", "ops_events", "rotation_latest"]
 DEGRADED_STREAK_THRESHOLD = 5
 SILENCE_SECONDS = 3600
 

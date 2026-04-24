@@ -268,6 +268,11 @@ nikkei_tail_session:
   streak_thresholds:
     up_days: 5
     down_days: 3
+  deviation_proxy:
+    severe_premium_threshold: 2.0
+    mild_premium_threshold: 0.5
+    severe_discount_threshold: -2.0
+    open_jump_threshold: 1.5
   gate_rules:
     liquidity_guard_gate:
       enabled: true
@@ -322,11 +327,21 @@ nikkei_tail_session:
           - stale
           - degraded
       message: 当前部分数据源存在缺口或时滞，系统建议仅作参考，不宜据此激进决策。
+    deviation_proxy_notice:
+      when:
+        ma25_dev_pct_gte: 5
+      message: 当前ETF与日经指数偏离扩张，需警惕溢价回落风险。
 nasdaq_tail_session_513300:
   enabled: true
   etf_code: '513300'
   index_symbol: ^IXIC
   decision_mode: user_final_decision
+  futures_enabled: true
+  range_defaults:
+    band_core_multiplier: 0.8
+    band_safe_multiplier: 1.2
+    min_band_pct: 0.35
+    max_band_pct: 2.2
   technical_thresholds:
     ma25_dev_overheat: 5
     rsi_overbought: 70
@@ -345,32 +360,13 @@ nasdaq_tail_session_513300:
       - hold
       - reduce
       - exit_wait
+  deviation_proxy:
+    beta_track: 0.95
+    fx_adj_pct: 0.0
+    severe_premium_threshold: 2.0
+    mild_premium_threshold: 0.5
+    severe_discount_threshold: -2.0
   gate_rules:
-    premium_hard_stop:
-      enabled: true
-      trigger:
-        premium_pct_gte: 5
-    premium_extreme_exit_bias:
-      enabled: true
-      trigger:
-        premium_pct_gte: 10
-    manager_notice_gate:
-      enabled: true
-      trigger:
-        manager_premium_notice: true
-        premium_pct_gte: 3
-    event_hard_gate:
-      enabled: true
-      trigger:
-        major_event_night: true
-    degraded_data_gate:
-      enabled: true
-      trigger:
-        data_quality_in:
-          - partial
-          - stale
-          - degraded
-          - estimated
     liquidity_guard_gate:
       enabled: true
       trigger:
@@ -398,33 +394,20 @@ nasdaq_tail_session_513300:
   risk_notice_state:
     manager_premium_notice: false
   risk_notice_rules:
-    premium_notice:
+    deviation_premium_notice:
       when:
-        premium_pct_gte: 3
-      message: 当前溢价偏高，需警惕价格向IOPV回归带来的被动回撤。
-    extreme_premium_notice:
-      when:
-        premium_pct_gte: 5
-      message: 当前溢价已达高风险区间，不宜追高。
-    discount_notice:
-      when:
-        premium_pct_lt: 0
-      message: 当前处于折价区间，具备一定安全垫。
+        ma25_dev_pct_gte: 5
+      message: 当前价格偏离理论区间，需警惕偏离扩大后的回撤风险。
     overbought_notice:
       when:
         rsi14_gte: 70
       message: 技术面进入过热区域，短线追高风险上升。
-    deviation_notice:
-      when:
-        ma25_dev_pct_gte: 5
-      message: 价格相对25日均线偏离过大，需防范均值回归。
     degraded_data_notice:
       when:
         data_quality_in:
           - partial
           - stale
           - degraded
-          - estimated
       message: 当前关键数据存在缺口或估算成分，建议降级执行。
 midday_recap:
   enabled: true

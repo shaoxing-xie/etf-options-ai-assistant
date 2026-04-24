@@ -1,0 +1,16 @@
+name: tail_session_513300
+description: 纳斯达克ETF华夏(513300)交易时段多时点区间监控与多角度建议（M1-M7）
+
+schedule: "15 9 * * 1-5"
+timezone: "Asia/Shanghai"
+
+structured_message: |
+  【Cron 单次调用】
+  调用一次 `tool_run_tail_session_analysis_and_send(mode='prod', fetch_mode='production', market_profile='nasdaq_513300', monitor_point='Mx')`。
+
+  约束：
+  - 输出 `report_type=tail_session`
+  - M1/M7 使用全版模板，M2-M6 使用简版快报模板
+  - 报告以区间预测与偏离代理门禁为主，输出 deviation_proxy 与差异规律提醒
+  - 报告只提供多角度建议与可选路径，不提供唯一交易结论
+  - 最终决策由用户自行作出

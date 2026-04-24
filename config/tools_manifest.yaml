@@ -1099,11 +1099,11 @@ tools:
         default: nikkei_513880
       monitor_point:
         type: string
-        description: 监控点编码（M1..M6）
-        default: M6
+        description: 监控点编码（M1..M7）
+        default: M7
       monitor_bundle:
         type: string
-        description: 可选；合并监控点（例如 M1_M2 或 M4_M5_M6）
+        description: 可选；合并监控点（例如 PROCESS 或 M1_M2 或 M4_M5_M6）
       webhook_url:
         type: string
         description: 可选：自定义机器人 webhook（包含 access_token）
@@ -1244,6 +1244,14 @@ tools:
         type: string
         description: prod|test
         default: prod
+      max_runtime_seconds:
+        type: number
+        description: 硬超时秒数（子进程超时终止），避免联调卡死
+        default: 35
+      light_mode:
+        type: boolean
+        description: 轻量模式（关闭相关性等重计算、缩短窗口、禁用双跑）
+        default: false
 - id: tool_send_etf_rotation_research_report
   label: ETF轮动研究（单次封装发送）
   description: 单次 toolCall：内部串联 tool_etf_rotation_research 与 tool_send_analysis_report，完成轮动计算并发送报告；供 Cron agentTurn 避免超大 toolResult 与重复投递。

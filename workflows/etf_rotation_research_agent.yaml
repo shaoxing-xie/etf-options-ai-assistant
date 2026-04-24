@@ -9,6 +9,11 @@ timezone: "Asia/Shanghai"
 structured_message: |
   执行 ETF 轮动研究。先读取并严格遵循 research.md 第一至六节及第十节「ETF 轮动研究」步骤与口径，按序执行并输出完整 Markdown 报告（研究级+免责声明）。
 
+  【策略口径（本次改造）】
+  - 必须使用三维共振 v2 口径（景气度40% + 资金流共振35% + 情绪门闸25%）。
+  - 报告正文必须显式包含：情绪阶段、分歧度、门闸系数、资金流共振状态（full/partial/no）。
+  - 若任一关键输入缺失，必须写出 degraded 原因，不得隐去。
+
   【标的池硬约束】
   - 禁止传入固定6只或任意显式 `etf_pool`。
   - 必须调用 `tool_etf_rotation_research` 且 `etf_pool=""`（留空），由 `config/rotation_config.yaml + config/symbols.json` 自动解析候选池（industry_etf + concept_etf + extra）。

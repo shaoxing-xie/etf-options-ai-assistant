@@ -2,12 +2,17 @@ from __future__ import annotations
 
 import json
 import re
+import ast
+import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from apps.chart_console.api.screening_reader import ScreeningReader, validate_screening_date_key
 from apps.chart_console.api.tail_screening_reader import TailScreeningReader
+
+_A_SHARE_NAME_MAP_CACHE: dict[str, str] | None = None
+_QT_NAME_CACHE: dict[str, str] = {}
 
 
 def _read_json(path: Path) -> dict[str, Any] | None:
@@ -22,6 +27,89 @@ def _read_json(path: Path) -> dict[str, Any] | None:
 
 def _today_utc() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+
+def _looks_like_code(value: Any) -> bool:
+    s = str(value or "").strip()
+    return bool(re.fullmatch(r"\d{6}", s))
+
+
+def _a_share_name_map() -> dict[str, str]:
+    global _A_SHARE_NAME_MAP_CACHE
+    if isinstance(_A_SHARE_NAME_MAP_CACHE, dict):
+        return _A_SHARE_NAME_MAP_CACHE
+    cmap: dict[str, str] = {}
+    try:
+        # Prefer local mootdx security list for full A-share code-name mapping.
+        from mootdx.quotes import Quotes  # type: ignore
+
+        df = Quotes.factory(market="std").stocks()
+        if hasattr(df, "iterrows"):
+            for _, row in df.iterrows():
+                raw_code = str(row.get("code") or "").strip()
+                code = raw_code.zfill(6) if raw_code.isdigit() else raw_code
+                name = str(row.get("name") or "").strip()
+                if _looks_like_code(code) and name and not _looks_like_code(name):
+                    cmap[code] = name
+    except Exception:
+        cmap = {}
+    if not cmap:
+        try:
+            # Final fallback: local static mapping in tail script.
+            tail_script = Path(__file__).resolve().parents[3] / "scripts" / "intraday_tail_screening_and_persist.py"
+            if tail_script.is_file():
+                mod = ast.parse(tail_script.read_text(encoding="utf-8"))
+                for node in mod.body:
+                    if isinstance(node, ast.Assign):
+                        for target in node.targets:
+                            if isinstance(target, ast.Name) and target.id == "_A_SHARE_NAME_FALLBACK":
+                                val = ast.literal_eval(node.value)
+                                if isinstance(val, dict):
+                                    for k, v in val.items():
+                                        code = str(k or "").strip()
+                                        name = str(v or "").strip()
+                                        if _looks_like_code(code) and name and not _looks_like_code(name):
+                                            cmap[code] = name
+                                break
+        except Exception:
+            pass
+    _A_SHARE_NAME_MAP_CACHE = cmap
+    return cmap
+
+
+def _to_qt_symbol(code: str) -> str:
+    c = str(code or "").strip()
+    if not _looks_like_code(c):
+        return c
+    return ("sh" if c.startswith("6") else "sz") + c
+
+
+def _fetch_qt_name_map(codes: list[str]) -> dict[str, str]:
+    valid = [c for c in codes if _looks_like_code(c)]
+    need = [c for c in valid if c not in _QT_NAME_CACHE]
+    if need:
+        qt_codes = ",".join(_to_qt_symbol(c) for c in sorted(set(need)))
+        url = f"http://qt.gtimg.cn/q={qt_codes}"
+        try:
+            with urllib.request.urlopen(url, timeout=8) as resp:  # noqa: S310
+                text = resp.read().decode("gbk", errors="ignore")
+            for line in text.split(";"):
+                line = line.strip()
+                if not line or "~" not in line:
+                    continue
+                try:
+                    left, raw = line.split("=", 1)
+                    key = left.split("v_")[1]
+                    sym = key[2:] if len(key) >= 8 else ""
+                    parts = raw.strip().strip('"').split("~")
+                    name = parts[1].strip() if len(parts) > 1 else ""
+                    if _looks_like_code(sym) and name and not _looks_like_code(name):
+                        _QT_NAME_CACHE[sym] = name
+                except Exception:
+                    continue
+        except Exception:
+            pass
+    return {c: _QT_NAME_CACHE.get(c, "") for c in valid}
 
 
 def _read_jsonl(path: Path) -> list[dict[str, Any]]:
@@ -46,6 +134,23 @@ class SemanticReader:
         self.root = root.resolve()
         self._screening = ScreeningReader(self.root)
         self._tail = TailScreeningReader(self.root)
+
+    @staticmethod
+    def _normalize_candidate_row(
+        row: dict[str, Any],
+        industry_by_symbol: dict[str, str],
+        name_by_symbol: dict[str, str],
+    ) -> dict[str, Any]:
+        merged = dict(row)
+        sym = str(merged.get("symbol") or "").strip()
+        name = str(merged.get("name") or merged.get("stock_name") or "").strip()
+        if (not name or _looks_like_code(name)) and sym:
+            resolved = str(name_by_symbol.get(sym) or "").strip()
+            merged["name"] = resolved if resolved and not _looks_like_code(resolved) else sym
+        sector_name = str(merged.get("sector_name") or "").strip()
+        if (not sector_name) and sym and industry_by_symbol.get(sym):
+            merged["sector_name"] = industry_by_symbol[sym]
+        return merged
 
     def _read_alert_thresholds(self) -> dict[str, Any]:
         defaults: dict[str, Any] = {
@@ -238,6 +343,105 @@ class SemanticReader:
         out = sorted([p.stem for p in base.glob("*.json") if p.is_file() and validate_screening_date_key(p.stem)])
         return out
 
+    def rotation_trade_dates(self) -> list[str]:
+        base = self.root / "data" / "semantic" / "rotation_latest"
+        if not base.is_dir():
+            return []
+        return sorted([p.stem for p in base.glob("*.json") if p.is_file() and validate_screening_date_key(p.stem)])
+
+    def rotation_heatmap_trade_dates(self) -> list[str]:
+        base = self.root / "data" / "semantic" / "rotation_heatmap"
+        if not base.is_dir():
+            return []
+        return sorted([p.stem for p in base.glob("*.json") if p.is_file() and validate_screening_date_key(p.stem)])
+
+    def etf_share_dashboard_trade_dates(self) -> list[str]:
+        base = self.root / "data" / "semantic" / "etf_share_dashboard"
+        if not base.is_dir():
+            return []
+        return sorted([p.stem for p in base.glob("*.json") if p.is_file() and validate_screening_date_key(p.stem)])
+
+    def rotation_latest(self, trade_date: str = "") -> dict[str, Any]:
+        td = (trade_date or "").strip()
+        if not validate_screening_date_key(td):
+            dates = self.rotation_trade_dates()
+            td = dates[-1] if dates else ""
+        if not td:
+            return {
+                "trade_date": "",
+                "top5": [],
+                "top10": [],
+                "heatmap": [],
+                "environment": {},
+                "data_quality": {"quality_status": "degraded", "degraded_reasons": ["rotation_latest_missing"]},
+                "_meta": {
+                    "schema_name": "etf_rotation_latest_semantic_v1",
+                    "schema_version": "1.0.0",
+                    "task_id": "etf-rotation-research",
+                    "run_id": "",
+                    "data_layer": "L4",
+                    "generated_at": datetime.now(timezone.utc).isoformat(),
+                    "trade_date": _today_utc(),
+                    "quality_status": "degraded",
+                    "lineage_refs": [],
+                },
+            }
+        path = self.root / "data" / "semantic" / "rotation_latest" / f"{td}.json"
+        obj = _read_json(path) or {}
+        data = obj.get("data") if isinstance(obj.get("data"), dict) else {}
+        meta = obj.get("_meta") if isinstance(obj.get("_meta"), dict) else {}
+        if not data:
+            return {
+                "trade_date": td,
+                "top5": [],
+                "top10": [],
+                "heatmap": [],
+                "environment": {},
+                "data_quality": {"quality_status": "degraded", "degraded_reasons": ["rotation_latest_invalid"]},
+                "_meta": {
+                    "schema_name": "etf_rotation_latest_semantic_v1",
+                    "schema_version": "1.0.0",
+                    "task_id": "etf-rotation-research",
+                    "run_id": "",
+                    "data_layer": "L4",
+                    "generated_at": datetime.now(timezone.utc).isoformat(),
+                    "trade_date": td,
+                    "quality_status": "degraded",
+                    "lineage_refs": [str(path)],
+                },
+            }
+        out = dict(data)
+        out["_meta"] = meta
+        return out
+
+    def rotation_heatmap(self, trade_date: str = "") -> dict[str, Any]:
+        td = (trade_date or "").strip()
+        if not validate_screening_date_key(td):
+            dates = self.rotation_heatmap_trade_dates()
+            td = dates[-1] if dates else ""
+        if not td:
+            return {"trade_date": "", "heatmap": [], "_meta": {"schema_name": "semantic_rotation_heatmap_v1", "quality_status": "degraded"}}
+        obj = _read_json(self.root / "data" / "semantic" / "rotation_heatmap" / f"{td}.json") or {}
+        data = obj.get("data") if isinstance(obj.get("data"), dict) else {}
+        meta = obj.get("_meta") if isinstance(obj.get("_meta"), dict) else {}
+        out = dict(data or {"trade_date": td, "heatmap": []})
+        out["_meta"] = meta
+        return out
+
+    def etf_share_dashboard(self, trade_date: str = "") -> dict[str, Any]:
+        td = (trade_date or "").strip()
+        if not validate_screening_date_key(td):
+            dates = self.etf_share_dashboard_trade_dates()
+            td = dates[-1] if dates else ""
+        if not td:
+            return {"trade_date": "", "rows": [], "_meta": {"schema_name": "semantic_etf_share_dashboard_v1", "quality_status": "degraded"}}
+        obj = _read_json(self.root / "data" / "semantic" / "etf_share_dashboard" / f"{td}.json") or {}
+        data = obj.get("data") if isinstance(obj.get("data"), dict) else {}
+        meta = obj.get("_meta") if isinstance(obj.get("_meta"), dict) else {}
+        out = dict(data or {"trade_date": td, "rows": []})
+        out["_meta"] = meta
+        return out
+
     def timeline(self, trade_date: str) -> dict[str, Any]:
         if not validate_screening_date_key(trade_date):
             raise ValueError("invalid trade_date")
@@ -355,40 +559,81 @@ class SemanticReader:
             },
         }
 
+    def _tail_source_head_from(self, tail_raw: dict[str, Any]) -> dict[str, Any]:
+        """Subset of data/tail_screening artifact for Chart Console 尾盘摘要/审计（只读派生）。"""
+        if not isinstance(tail_raw, dict) or not tail_raw:
+            return {}
+        keys = (
+            "run_id",
+            "run_date",
+            "generated_at",
+            "stage",
+            "applied_profile",
+            "market_regime",
+            "regime_detection_notes",
+            "scoring_version",
+            "gate_snapshot",
+            "summary",
+            "tool_trace",
+            "skip_reason",
+            "paradigm_pools",
+        )
+        return {k: tail_raw.get(k) for k in keys}
+
     def screening_view(self, trade_date: str, *, prefer_snapshot: bool = True) -> dict[str, Any]:
         if not validate_screening_date_key(trade_date):
             raise ValueError("invalid trade_date")
         if prefer_snapshot:
             snap = self._read_semantic_snapshot("screening_view", trade_date)
             if isinstance(snap, dict):
-                return snap
+                out = dict(snap)
+                tail_raw = self._tail.read_by_date(trade_date) or self._tail.read_latest() or {}
+                out["tail_source"] = self._tail_source_head_from(tail_raw if isinstance(tail_raw, dict) else {})
+                return out
         nightly = self._screening.read_artifact_by_date(trade_date) or {}
         tail = self._tail.read_by_date(trade_date) or self._tail.read_latest() or {}
         watch = self._screening.read_watchlist()
         summary = self._screening.summary()
         weekly_review = summary.get("weekly_review") or {}
         perf_ctx = self._read_weekly_performance_context() or weekly_review or {}
-        nightly_rows = (nightly.get("screening") or {}).get("data") or []
+        nightly_rows_raw = (nightly.get("screening") or {}).get("data") or []
         tail_rows_raw = tail.get("recommended") or []
         industry_by_symbol: dict[str, str] = {}
-        for row in nightly_rows:
+        for row in nightly_rows_raw:
             if not isinstance(row, dict):
                 continue
             sym = str(row.get("symbol") or "").strip()
             industry = str(row.get("industry") or "").strip()
             if sym and industry:
                 industry_by_symbol[sym] = industry
+        candidate_symbols: list[str] = []
+        for row in nightly_rows_raw:
+            if isinstance(row, dict):
+                candidate_symbols.append(str(row.get("symbol") or "").strip())
+        for row in tail_rows_raw:
+            if isinstance(row, dict):
+                candidate_symbols.append(str(row.get("symbol") or "").strip())
+        raw_paradigm_pools = tail.get("paradigm_pools") if isinstance(tail.get("paradigm_pools"), dict) else {}
+        for rows in raw_paradigm_pools.values():
+            if isinstance(rows, list):
+                for row in rows:
+                    if isinstance(row, dict):
+                        candidate_symbols.append(str(row.get("symbol") or "").strip())
+        name_by_symbol = dict(_a_share_name_map())
+        qt_map = _fetch_qt_name_map(candidate_symbols)
+        for k, v in qt_map.items():
+            if v and not _looks_like_code(v):
+                name_by_symbol[k] = v
+        nightly_rows: list[dict[str, Any]] = []
+        for row in nightly_rows_raw:
+            if not isinstance(row, dict):
+                continue
+            nightly_rows.append(self._normalize_candidate_row(row, industry_by_symbol, name_by_symbol))
         tail_rows: list[dict[str, Any]] = []
         for row in tail_rows_raw:
             if not isinstance(row, dict):
                 continue
-            merged = dict(row)
-            sym = str(merged.get("symbol") or "").strip()
-            sector_name = str(merged.get("sector_name") or "").strip()
-            if (not sector_name) and sym and industry_by_symbol.get(sym):
-                merged["sector_name"] = industry_by_symbol[sym]
-            tail_rows.append(merged)
-        raw_paradigm_pools = tail.get("paradigm_pools") if isinstance(tail.get("paradigm_pools"), dict) else {}
+            tail_rows.append(self._normalize_candidate_row(row, industry_by_symbol, name_by_symbol))
         tail_paradigm_pools: dict[str, list[dict[str, Any]]] = {}
         for pool_id, rows in raw_paradigm_pools.items():
             if not isinstance(rows, list):
@@ -397,12 +642,7 @@ class SemanticReader:
             for row in rows:
                 if not isinstance(row, dict):
                     continue
-                merged = dict(row)
-                sym = str(merged.get("symbol") or "").strip()
-                sector_name = str(merged.get("sector_name") or "").strip()
-                if (not sector_name) and sym and industry_by_symbol.get(sym):
-                    merged["sector_name"] = industry_by_symbol[sym]
-                normalized_rows.append(merged)
+                normalized_rows.append(self._normalize_candidate_row(row, industry_by_symbol, name_by_symbol))
             tail_paradigm_pools[str(pool_id)] = normalized_rows
         tail_summary = tail.get("summary") if isinstance(tail.get("summary"), dict) else {}
         sector_counter: dict[str, int] = {}
@@ -460,6 +700,7 @@ class SemanticReader:
             "effect_stats": effect_stats,
             "sector_rotation_heatmap": sector_rotation_heatmap,
             "tail_paradigm_pools": tail_paradigm_pools,
+            "tail_source": self._tail_source_head_from(tail if isinstance(tail, dict) else {}),
             "task_execution_monitor": task_execution_monitor,
             "alert_thresholds": self._read_alert_thresholds(),
             "_meta": {
@@ -555,8 +796,97 @@ class SemanticReader:
             return "提升 timeoutSeconds 或拆分任务步骤，先确认最慢环节"
         return "查看 runs/*.jsonl 的 lastError 与 summary，按错误关键词修复"
 
+    def _tail_screening_domain_error(self, trade_date: str) -> dict[str, Any]:
+        """识别尾盘选股“全降级兜底”异常，供 ops 事件上报。"""
+        td = str(trade_date or "").strip()
+        tail_obj = self._tail.read_by_date(td) if validate_screening_date_key(td) else None
+        if not isinstance(tail_obj, dict):
+            tail_obj = self._tail.read_latest() or {}
+        if not isinstance(tail_obj, dict) or not tail_obj:
+            return {"is_error": False}
+
+        summary = tail_obj.get("summary") if isinstance(tail_obj.get("summary"), dict) else {}
+        tool_trace = tail_obj.get("tool_trace") if isinstance(tail_obj.get("tool_trace"), dict) else {}
+        p_trace = tool_trace.get("paradigm_trace") if isinstance(tool_trace.get("paradigm_trace"), dict) else {}
+        source_diag = (
+            tool_trace.get("source_diagnostics") if isinstance(tool_trace.get("source_diagnostics"), dict) else {}
+        )
+        stock_rank = source_diag.get("stock_rank") if isinstance(source_diag.get("stock_rank"), dict) else {}
+        forced_all = all(
+            bool((p_trace.get(pid) or {}).get("forced_top10"))
+            for pid in ("fund_flow_follow", "tail_grab", "oversold_bounce", "sector_rotation")
+        )
+        degraded_mode = bool(summary.get("degraded_mode"))
+        source_main_ok = bool(source_diag.get("main_source_ok"))
+        candidate_source = str(source_diag.get("candidate_source") or "")
+        stock_rank_failed = str(stock_rank.get("error_code") or "") == "UPSTREAM_FETCH_FAILED"
+        # 全范式 forced_top10 且降级，意味着本轮结果已失真，应进入运维错误面板。
+        is_error = bool(degraded_mode and forced_all and (not source_main_ok or stock_rank_failed))
+        if not is_error:
+            return {"is_error": False}
+        run_date = str(tail_obj.get("run_date") or "")
+        return {
+            "is_error": True,
+            "error_code": "TAIL_SCREENING_FULL_DEGRADED",
+            "error": (
+                f"tail screening degraded with forced_top10(all paradigms); "
+                f"candidate_source={candidate_source or 'unknown'}; stock_rank_error={stock_rank.get('error_code') or 'none'}; "
+                f"run_date={run_date or 'unknown'}"
+            ),
+            "repair_hint": "检查上游资金流网络连通与 DNS（10jqka/eastmoney），恢复后重跑 intraday-tail-screening。",
+            "run_date": run_date,
+        }
+
+    def _tail_screening_run_guard_error(self, finished_row: dict[str, Any]) -> dict[str, Any]:
+        """识别 cron finished.status=ok 但 summary 已包含硬错误哨兵的情况。"""
+        if not isinstance(finished_row, dict):
+            return {"is_error": False}
+        status = str(finished_row.get("status") or "").strip().lower()
+        summary = str(finished_row.get("summary") or "").strip()
+        if status != "ok" or not summary:
+            return {"is_error": False}
+        sentinel_patterns: list[tuple[str, str, str]] = [
+            (r"^ERROR_[A-Z0-9_]+", "TAIL_SCREENING_RUNTIME_GUARD", "尾盘任务命中运行时产物门禁，请检查当日产物是否缺失。"),
+            (r"bash\\r", "TAIL_SCREENING_SCRIPT_FORMAT_ERROR", "尾盘脚本行结束符异常（CRLF），请统一为 LF 后重跑。"),
+            (r"No such file or directory", "TAIL_SCREENING_SCRIPT_PATH_ERROR", "尾盘脚本路径不存在，请检查 jobs 配置与脚本路径。"),
+        ]
+        for pat, code, hint in sentinel_patterns:
+            if re.search(pat, summary, flags=re.I):
+                return {
+                    "is_error": True,
+                    "error_code": code,
+                    "error": summary,
+                    "repair_hint": hint,
+                }
+        return {"is_error": False}
+
+    def _nightly_screening_run_guard_error(self, finished_row: dict[str, Any]) -> dict[str, Any]:
+        """识别 nightly cron finished.status=ok 但 summary 含硬错误哨兵的情况。"""
+        if not isinstance(finished_row, dict):
+            return {"is_error": False}
+        status = str(finished_row.get("status") or "").strip().lower()
+        summary = str(finished_row.get("summary") or "").strip()
+        if status != "ok" or not summary:
+            return {"is_error": False}
+        sentinel_patterns: list[tuple[str, str, str]] = [
+            (r"^ERROR_[A-Z0-9_]+", "NIGHTLY_SCREENING_RUNTIME_GUARD", "夜盘任务命中运行时产物门禁，请检查当日产物是否缺失。"),
+            (r"integer expression expected|unbound variable", "NIGHTLY_SCREENING_SHELL_GUARD", "夜盘脚本存在 shell 变量/比较异常，请检查 wrapper 脚本。"),
+        ]
+        for pat, code, hint in sentinel_patterns:
+            if re.search(pat, summary, flags=re.I):
+                return {"is_error": True, "error_code": code, "error": summary, "repair_hint": hint}
+        return {"is_error": False}
+
     def ops_events(self, trade_date: str = "") -> dict[str, Any]:
         """Batch2 扩展：统一数据层 L4 的执行审计/采集质量事件视图。"""
+        nikkei_execution_audit_jobs = {
+            "etf-nikkei-intraday-am-0915-513880": "process",
+            "etf-nikkei-m6-close-opportunity-513880": "close",
+        }
+        nasdaq_execution_audit_jobs = {
+            "etf-nasdaq-intraday-process-513300": "process",
+            "etf-nasdaq-close-opportunity-513300": "close",
+        }
         td = trade_date.strip() if isinstance(trade_date, str) else ""
         if td and validate_screening_date_key(td):
             snap = self._read_ops_snapshot(td)
@@ -566,7 +896,9 @@ class SemanticReader:
         execution: list[dict[str, Any]] = []
         collection: list[dict[str, Any]] = []
         task_health: list[dict[str, Any]] = []
+        tail_domain_error = self._tail_screening_domain_error(td or _today_utc())
         for job in jobs:
+            task_id = str(job.get("id") or "")
             payload = job.get("payload") if isinstance(job.get("payload"), dict) else {}
             tools = payload.get("toolsAllow") if isinstance(payload.get("toolsAllow"), list) else []
             state = job.get("state") if isinstance(job.get("state"), dict) else {}
@@ -574,7 +906,7 @@ class SemanticReader:
             status = state.get("lastRunStatus") or state.get("lastStatus")
             quality_status = "degraded" if (isinstance(consecutive, int) and consecutive > 0) else "ok"
             row = {
-                "task_id": str(job.get("id") or ""),
+                "task_id": task_id,
                 "name": str(job.get("name") or ""),
                 "enabled": bool(job.get("enabled")),
                 "schedule": self._schedule_label(job.get("schedule") if isinstance(job.get("schedule"), dict) else {}),
@@ -586,13 +918,50 @@ class SemanticReader:
                 "quality_status": quality_status,
                 "lineage_refs": [lineage],
             }
-            last_finished = self._last_finished_run(str(job.get("id") or ""))
+            last_finished = self._last_finished_run(task_id)
             run_status = str(last_finished.get("status") or status or "")
+            if not run_status and row["enabled"]:
+                run_status = "never-ran"
             run_error = str(last_finished.get("error") or state.get("lastError") or "")
+            run_log_path = str(self._ops_runs_dir() / f"{task_id}.jsonl")
+            row["last_run_status"] = run_status or row.get("last_run_status")
+            row["last_run_at_ms"] = last_finished.get("ts") or row.get("last_run_at_ms")
+            row["run_log_path"] = run_log_path
+            row["last_error"] = run_error
+            if task_id == "intraday-tail-screening" and bool(tail_domain_error.get("is_error")):
+                row["quality_status"] = "degraded"
+                row["domain_error_code"] = tail_domain_error.get("error_code")
+                row["domain_error"] = tail_domain_error.get("error")
+            tail_guard_error = self._tail_screening_run_guard_error(last_finished) if task_id == "intraday-tail-screening" else {"is_error": False}
+            if task_id == "intraday-tail-screening" and bool(tail_guard_error.get("is_error")):
+                row["quality_status"] = "degraded"
+                row["domain_error_code"] = tail_guard_error.get("error_code")
+                row["domain_error"] = tail_guard_error.get("error")
+            nightly_guard_error = (
+                self._nightly_screening_run_guard_error(last_finished)
+                if task_id == "nightly-stock-screening"
+                else {"is_error": False}
+            )
+            if task_id == "nightly-stock-screening" and bool(nightly_guard_error.get("is_error")):
+                row["quality_status"] = "degraded"
+                row["domain_error_code"] = nightly_guard_error.get("error_code")
+                row["domain_error"] = nightly_guard_error.get("error")
+
+            if task_id in nikkei_execution_audit_jobs:
+                row["event_scope"] = "execution_audit"
+                row["audit_domain"] = "nikkei225_etf_monitor"
+                row["monitor_group"] = nikkei_execution_audit_jobs[task_id]
+                row["status"] = run_status or "unknown"
+            if task_id in nasdaq_execution_audit_jobs:
+                row["event_scope"] = "execution_audit"
+                row["audit_domain"] = "nasdaq100_etf_monitor"
+                row["monitor_group"] = nasdaq_execution_audit_jobs[task_id]
+                row["status"] = run_status or "unknown"
+
             health_quality = "degraded" if run_status == "error" or (isinstance(consecutive, int) and consecutive > 0) else "ok"
             task_health.append(
                 {
-                    "task_id": str(job.get("id") or ""),
+                    "task_id": task_id,
                     "name": str(job.get("name") or ""),
                     "enabled": bool(job.get("enabled")),
                     "schedule": self._schedule_label(job.get("schedule") if isinstance(job.get("schedule"), dict) else {}),
@@ -604,12 +973,48 @@ class SemanticReader:
                     "duration_ms": last_finished.get("durationMs") or state.get("lastDurationMs"),
                     "error": run_error,
                     "repair_hint": self._repair_hint(run_error),
-                    "run_log_path": str(self._ops_runs_dir() / f"{str(job.get('id') or '')}.jsonl"),
+                    "domain_error_code": tail_domain_error.get("error_code")
+                    if task_id == "intraday-tail-screening" and bool(tail_domain_error.get("is_error"))
+                    else None,
+                    "domain_error": tail_domain_error.get("error")
+                    if task_id == "intraday-tail-screening" and bool(tail_domain_error.get("is_error"))
+                    else None,
+                    "domain_repair_hint": tail_domain_error.get("repair_hint")
+                    if task_id == "intraday-tail-screening" and bool(tail_domain_error.get("is_error"))
+                    else None,
+                    "run_log_path": run_log_path,
                     "last_error_at_ms": (last_finished.get("ts") if run_status == "error" else None),
                     "tools_allow": tools,
-                    "lineage_refs": [lineage, str(self._ops_runs_dir() / f"{str(job.get('id') or '')}.jsonl")],
+                    "lineage_refs": [lineage, run_log_path],
                 }
             )
+            if task_id == "intraday-tail-screening" and bool(tail_guard_error.get("is_error")):
+                task_health[-1]["quality_status"] = "degraded"
+                task_health[-1]["last_run_status"] = "error:runtime_guard"
+                task_health[-1]["domain_error_code"] = tail_guard_error.get("error_code")
+                task_health[-1]["domain_error"] = tail_guard_error.get("error")
+                task_health[-1]["domain_repair_hint"] = tail_guard_error.get("repair_hint")
+                merged_err = " | ".join(
+                    [x for x in [str(task_health[-1].get("error") or ""), str(tail_guard_error.get("error") or "")] if x]
+                )
+                task_health[-1]["error"] = merged_err
+            elif task_id == "intraday-tail-screening" and bool(tail_domain_error.get("is_error")):
+                task_health[-1]["quality_status"] = "degraded"
+                task_health[-1]["last_run_status"] = "error:data_degraded"
+                merged_err = " | ".join(
+                    [x for x in [str(task_health[-1].get("error") or ""), str(tail_domain_error.get("error") or "")] if x]
+                )
+                task_health[-1]["error"] = merged_err
+            elif task_id == "nightly-stock-screening" and bool(nightly_guard_error.get("is_error")):
+                task_health[-1]["quality_status"] = "degraded"
+                task_health[-1]["last_run_status"] = "error:runtime_guard"
+                task_health[-1]["domain_error_code"] = nightly_guard_error.get("error_code")
+                task_health[-1]["domain_error"] = nightly_guard_error.get("error")
+                task_health[-1]["domain_repair_hint"] = nightly_guard_error.get("repair_hint")
+                merged_err = " | ".join(
+                    [x for x in [str(task_health[-1].get("error") or ""), str(nightly_guard_error.get("error") or "")] if x]
+                )
+                task_health[-1]["error"] = merged_err
             if any(t == "tool_run_data_cache_job" for t in tools):
                 collection.append(row)
             else:
@@ -629,6 +1034,54 @@ class SemanticReader:
                 "trade_date": td or _today_utc(),
                 "quality_status": "ok",
                 "lineage_refs": [lineage],
+            },
+        }
+
+    def ops_run_detail(self, task_id: str, limit: int = 80) -> dict[str, Any]:
+        """L4: 任务运行详情（用于运维工作台钻取）。"""
+        tid = str(task_id or "").strip()
+        if not tid:
+            return {
+                "task_id": "",
+                "entries": [],
+                "last_finished": {},
+                "_meta": {
+                    "schema_name": "ops_run_detail_v1",
+                    "schema_version": "1.0.0",
+                    "task_id": "ops-run-detail",
+                    "run_id": "",
+                    "data_layer": "L4",
+                    "generated_at": datetime.now(timezone.utc).isoformat(),
+                    "trade_date": _today_utc(),
+                    "quality_status": "degraded",
+                    "lineage_refs": [],
+                },
+            }
+        n = max(10, min(int(limit or 80), 200))
+        p = self._ops_runs_dir() / f"{tid}.jsonl"
+        rows = _read_jsonl(p)
+        tail = rows[-n:] if len(rows) > n else rows
+        last_finished: dict[str, Any] = {}
+        for row in reversed(rows):
+            if isinstance(row, dict) and str(row.get("action") or "") == "finished":
+                last_finished = row
+                break
+        qs = "ok" if p.is_file() else "degraded"
+        return {
+            "task_id": tid,
+            "run_log_path": str(p),
+            "entries": tail,
+            "last_finished": last_finished,
+            "_meta": {
+                "schema_name": "ops_run_detail_v1",
+                "schema_version": "1.0.0",
+                "task_id": "ops-run-detail",
+                "run_id": "",
+                "data_layer": "L4",
+                "generated_at": datetime.now(timezone.utc).isoformat(),
+                "trade_date": _today_utc(),
+                "quality_status": qs,
+                "lineage_refs": [str(p)],
             },
         }
 

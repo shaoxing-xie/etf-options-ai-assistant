@@ -24,6 +24,25 @@ def _read_json(path: Path) -> dict:
     return obj if isinstance(obj, dict) else {}
 
 
+def _normalize_candidates(rows: list[dict]) -> list[dict]:
+    out: list[dict] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        item = dict(row)
+        symbol = str(item.get("symbol") or "").strip()
+        name = str(item.get("name") or item.get("stock_name") or "").strip()
+        if not name:
+            name = symbol
+        item["name"] = name
+        if not item.get("sector_name"):
+            industry = str(item.get("industry") or "").strip()
+            if industry:
+                item["sector_name"] = industry
+        out.append(item)
+    return out
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--trade-date", default="", help="YYYY-MM-DD; default today(UTC)")
@@ -38,9 +57,10 @@ def main() -> int:
         return 1
     art = _read_json(legacy)
     screening = art.get("screening") if isinstance(art.get("screening"), dict) else {}
+    candidates = _normalize_candidates(screening.get("data") if isinstance(screening.get("data"), list) else [])
     payload = {
         "run_date": trade_date,
-        "candidates": screening.get("data") if isinstance(screening.get("data"), list) else [],
+        "candidates": candidates,
         "summary": {
             "quality_score": screening.get("quality_score"),
             "degraded": screening.get("degraded"),

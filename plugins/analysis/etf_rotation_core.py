@@ -53,7 +53,7 @@ def _project_root() -> Path:
 
 
 def resolve_etf_pool(etf_pool: Optional[str], config: Dict[str, Any]) -> List[str]:
-    """非空 etf_pool 优先；否则 symbols.json 分组并集 + extra。"""
+    """非空 etf_pool 优先；否则按配置多源合并（静态/环境变量/观察池）。"""
     if etf_pool is not None and str(etf_pool).strip():
         return [s.strip() for s in str(etf_pool).split(",") if s.strip()]
 
@@ -69,13 +69,52 @@ def resolve_etf_pool(etf_pool: Optional[str], config: Dict[str, Any]) -> List[st
         if g:
             codes.extend(list(g.etf_codes or []))
     codes.extend(str(x) for x in extras)
+    merge_cfg = pool_cfg.get("merge_sources") or {}
+
+    if bool(merge_cfg.get("env_enabled", True)):
+        env_key = str(merge_cfg.get("env_var") or "ETF_CODES")
+        env_raw = str(os.environ.get(env_key) or "").strip()
+        if env_raw:
+            codes.extend([x.strip() for x in env_raw.split(",") if x.strip()])
+
+    if bool(merge_cfg.get("watchlist_enabled", True)):
+        watch_paths = merge_cfg.get("watchlist_paths") or [
+            "data/decisions/watchlist/current.json",
+            "data/watchlist/default.json",
+        ]
+        max_watch_items = int(merge_cfg.get("watchlist_max_items") or 10)
+        for rel in watch_paths:
+            p = _project_root() / str(rel)
+            if not p.exists():
+                continue
+            try:
+                obj = json.loads(p.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            watchlist = obj.get("watchlist") if isinstance(obj.get("watchlist"), list) else []
+            if not watchlist and isinstance(obj.get("symbols"), list):
+                watchlist = [{"symbol": x} for x in obj.get("symbols") if isinstance(x, str)]
+            loaded = 0
+            for item in watchlist:
+                if not isinstance(item, dict):
+                    continue
+                sym = str(item.get("symbol") or "").strip()
+                if sym:
+                    codes.append(sym)
+                    loaded += 1
+                if loaded >= max_watch_items:
+                    break
+            if loaded > 0:
+                break
+
     seen: set[str] = set()
     out: List[str] = []
     for c in codes:
         if c not in seen:
             seen.add(c)
             out.append(c)
-    return sorted(out)
+    max_size = int(merge_cfg.get("max_size") or 30)
+    return out[:max_size]
 
 
 def resolve_pool_type_map(symbols: List[str], config: Dict[str, Any]) -> Dict[str, str]:
@@ -834,6 +873,13 @@ def composite_raw_score_58(
     return float(sc), True
 
 
+def _safe_norm01(value: float, low: float, high: float) -> float:
+    if high <= low:
+        return 0.5
+    x = (float(value) - float(low)) / (float(high) - float(low))
+    return max(0.0, min(1.0, x))
+
+
 def run_rotation_pipeline(
     symbols: List[str],
     config: Dict[str, Any],
@@ -841,6 +887,7 @@ def run_rotation_pipeline(
     lookback_days: int = 120,
     as_of_yyyymmdd: Optional[str] = None,
     score_engine: str = "legacy",
+    runtime_inputs: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """
     加载日线、计算指标、相关性与最终排名。
@@ -1005,6 +1052,68 @@ def run_rotation_pipeline(
         r.stability_score = float(stability_map.get(r.symbol, 0.5))
 
     working: List[EtfRotationRow] = []
+    tf_cfg = config.get("three_factor_v2") or {}
+    tf_weights = tf_cfg.get("weights") or {}
+    w_momentum = float(tf_weights.get("sector_momentum") or 0.40)
+    w_resonance = float(tf_weights.get("capital_resonance") or 0.35)
+    w_sentiment = float(tf_weights.get("sentiment") or 0.25)
+    sentiment_inputs = (runtime_inputs or {}).get("sentiment") if isinstance(runtime_inputs, dict) else {}
+    if not isinstance(sentiment_inputs, dict):
+        sentiment_inputs = {}
+    stage = str(sentiment_inputs.get("sentiment_stage") or "震荡期")
+    dispersion = float(sentiment_inputs.get("sentiment_dispersion") or 0.0)
+    sentiment_score_raw = sentiment_inputs.get("overall_score")
+    if isinstance(sentiment_score_raw, (int, float)):
+        sentiment_score = float(sentiment_score_raw)
+        if sentiment_score > 1:
+            sentiment_score = sentiment_score / 100.0
+    else:
+        sentiment_score = 0.5
+    stage_multiplier_map = (tf_cfg.get("emotion_gate") or {}).get("stages") or {
+        "高潮期": 0.5,
+        "冰点期": 0.5,
+        "退潮期": 0.7,
+        "修复期": 0.9,
+        "震荡期": 1.0,
+    }
+    stage_multiplier = float(stage_multiplier_map.get(stage, 1.0))
+    if dispersion > 0.5:
+        dispersion_multiplier = 0.7
+    elif dispersion > 0.4:
+        dispersion_multiplier = 0.85
+    else:
+        dispersion_multiplier = 1.0
+    gate_multiplier = stage_multiplier * dispersion_multiplier
+
+    flow_inputs = (runtime_inputs or {}).get("flow") if isinstance(runtime_inputs, dict) else {}
+    if not isinstance(flow_inputs, dict):
+        flow_inputs = {}
+    ff = flow_inputs.get("fund_flow_score")
+    nf = flow_inputs.get("northbound_score")
+    if isinstance(ff, (int, float)) and isinstance(nf, (int, float)):
+        if ff > 0 and nf > 0:
+            resonance_score_global = 1.0
+            resonance_type = "full_resonance"
+        elif ff > 0 or nf > 0:
+            resonance_score_global = 0.5
+            resonance_type = "partial_resonance"
+        else:
+            resonance_score_global = 0.0
+            resonance_type = "no_resonance"
+    else:
+        resonance_score_global = 0.5
+        resonance_type = "market_level_fallback"
+        corr_warnings.append("capital_resonance_fallback_market_level")
+
+    m20_vals = np.array([float(x.momentum_20d) for x in rows], dtype=float) if rows else np.array([], dtype=float)
+    m60_vals = np.array([float(x.momentum_60d) for x in rows], dtype=float) if rows else np.array([], dtype=float)
+    vratio_vals = np.array([float(max(0.0, x.vol20_percentile)) for x in rows], dtype=float) if rows else np.array([], dtype=float)
+    m20_low, m20_high = (float(m20_vals.min()), float(m20_vals.max())) if m20_vals.size else (0.0, 1.0)
+    m60_low, m60_high = (float(m60_vals.min()), float(m60_vals.max())) if m60_vals.size else (0.0, 1.0)
+    vr_low, vr_high = (float(vratio_vals.min()), float(vratio_vals.max())) if vratio_vals.size else (0.0, 1.0)
+
+    three_factor_scores: Dict[str, Dict[str, Any]] = {}
+
     for r in rows:
         mac = r.mean_abs_corr
 
@@ -1037,6 +1146,21 @@ def run_rotation_pipeline(
                 use_trend=use_tr2,
                 use_corr_penalty=(corr_mode == "penalize"),
             )
+        if score_engine == "three_factor_v2":
+            m20_n = _safe_norm01(r.momentum_20d, m20_low, m20_high)
+            m60_n = _safe_norm01(r.momentum_60d, m60_low, m60_high)
+            vr_n = _safe_norm01(max(0.0, r.vol20_percentile), vr_low, vr_high)
+            momentum_score = 0.4 * m20_n + 0.3 * m60_n + 0.3 * min(vr_n / 0.5, 1.0)
+            raw_score = (momentum_score * w_momentum + resonance_score_global * w_resonance)
+            sc = raw_score * gate_multiplier + sentiment_score * w_sentiment
+            three_factor_scores[r.symbol] = {
+                "momentum_score": momentum_score,
+                "capital_resonance_score": resonance_score_global,
+                "capital_resonance_type": resonance_type,
+                "environment_gate": gate_multiplier,
+                "sentiment_score": sentiment_score,
+                "raw_score": raw_score,
+            }
         r.score = sc
         excl = False
         reason = None
@@ -1216,6 +1340,31 @@ def run_rotation_pipeline(
         "pool_type_map": pool_type_map,
         "errors": errors,
         "tech_features_by_symbol": tech_features_by_sym if score_engine == "58" else None,
+        "three_factor_context": {
+            "enabled": score_engine == "three_factor_v2",
+            "weights": {
+                "sector_momentum": w_momentum,
+                "capital_resonance": w_resonance,
+                "sentiment": w_sentiment,
+            },
+            "sentiment": {
+                "stage": stage,
+                "dispersion": dispersion,
+                "score": sentiment_score,
+            },
+            "gate": {
+                "stage_multiplier": stage_multiplier,
+                "dispersion_multiplier": dispersion_multiplier,
+                "total_multiplier": gate_multiplier,
+            },
+            "capital_resonance": {
+                "score": resonance_score_global,
+                "type": resonance_type,
+                "fund_flow_score": ff,
+                "northbound_score": nf,
+            },
+            "by_symbol": three_factor_scores if score_engine == "three_factor_v2" else {},
+        },
     }
 
 

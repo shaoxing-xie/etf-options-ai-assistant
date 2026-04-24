@@ -31,6 +31,44 @@ function setOpsSubview(name) {
   if (t3) t3.setAttribute("aria-selected", String(isHealth));
 }
 
+function openOpsDetailModal({ title, meta, jsonText }) {
+  const modal = qs("opsDetailModal");
+  if (!modal) return;
+  const t = qs("opsDetailTitle");
+  const m = qs("opsDetailMeta");
+  const pre = qs("opsDetailJson");
+  if (t) t.textContent = title || "任务详情";
+  if (m) m.innerHTML = meta || "";
+  if (pre) pre.textContent = jsonText || "";
+  modal.classList.add("active");
+}
+
+function closeOpsDetailModal() {
+  const modal = qs("opsDetailModal");
+  if (!modal) return;
+  modal.classList.remove("active");
+}
+
+function wireOpsDetailModal() {
+  qs("btnOpsDetailClose")?.addEventListener("click", () => closeOpsDetailModal());
+  qs("opsDetailModal")?.addEventListener("click", (e) => {
+    if (e?.target && e.target.id === "opsDetailModal") closeOpsDetailModal();
+  });
+  qs("btnOpsDetailCopy")?.addEventListener("click", async () => {
+    const pre = qs("opsDetailJson");
+    const txt = pre?.textContent || "";
+    if (!txt) return;
+    try {
+      await navigator.clipboard.writeText(txt);
+    } catch {
+      // ignore clipboard failures
+    }
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") closeOpsDetailModal();
+  });
+}
+
 function renderRows(tbodyId, rows) {
   const tbody = qs(tbodyId);
   if (!tbody) return;
@@ -55,8 +93,15 @@ function renderRows(tbodyId, rows) {
     const q = String(r.quality_status || "");
     const qLabel = q || "ok";
     const qStyle = qLabel === "degraded" ? " style='color:#f7c88a;font-weight:600;'" : "";
-    tr.innerHTML = `<td>${esc(r.task_id || "")}</td><td>${esc(r.name || "")}</td><td>${esc(r.schedule || "")}</td><td>${esc(
-      r.last_run_status || "",
+    const status = String(r.status || r.last_run_status || "");
+    const statusStyle = status === "error" ? " style='color:#ff9a9a;font-weight:600;'" : "";
+    const nameAddon = r.audit_domain === "nikkei225_etf_monitor"
+      ? ` <span class="chip">nikkei审计:${esc(r.monitor_group || "")}</span>`
+      : (r.audit_domain === "nasdaq100_etf_monitor"
+          ? ` <span class="chip">nasdaq审计:${esc(r.monitor_group || "")}</span>`
+          : "");
+    tr.innerHTML = `<td>${esc(r.task_id || "")}</td><td>${esc(r.name || "")}${nameAddon}</td><td>${esc(r.schedule || "")}</td><td${statusStyle}>${esc(
+      status,
     )}</td><td${qStyle}>${esc(qLabel)}</td><td>${esc(r.consecutive_errors ?? "")}</td><td>${esc((r.tools_allow || []).join(","))}</td>`;
     tbody.appendChild(tr);
   }
@@ -90,6 +135,8 @@ function renderHealthRows(tbodyId, rows) {
   };
   for (const r of list) {
     const tr = document.createElement("tr");
+    tr.classList.add("clickable");
+    tr.setAttribute("data-task-id", String(r.task_id || ""));
     const q = String(r.quality_status || "");
     const qLabel = q || "ok";
     const qStyle = qLabel === "degraded" ? " style='color:#f7c88a;font-weight:600;'" : "";
@@ -115,6 +162,37 @@ function renderHealthRows(tbodyId, rows) {
         }, 1200);
       } catch {
         // ignore clipboard failures in unsupported contexts
+      }
+    });
+  });
+
+  tbody.querySelectorAll("tr[data-task-id]").forEach((tr) => {
+    tr.addEventListener("click", async (e) => {
+      // Clicking the "log path" copy button should not open details.
+      if (e?.target && String(e.target.tagName || "").toLowerCase() === "button") return;
+      const tid = tr.getAttribute("data-task-id") || "";
+      if (!tid) return;
+      try {
+        const r = await jget(`/api/semantic/ops_run_detail?task_id=${encodeURIComponent(tid)}&limit=80`);
+        const d = r.data || {};
+        const lf = d.last_finished || {};
+        const status = String((lf && lf.status) || "");
+        const ts = lf && lf.ts ? new Date(Number(lf.ts)).toLocaleString() : "";
+        const dur = lf && lf.durationMs ? `${lf.durationMs}ms` : "";
+        const meta = `<span class="chip">status:${esc(status || "—")}</span> <span class="chip">ts:${esc(ts || "—")}</span> <span class="chip">dur:${esc(
+          dur || "—",
+        )}</span> <span class="chip">log:${esc(d.run_log_path || "")}</span>`;
+        openOpsDetailModal({
+          title: `运维任务详情：${tid}`,
+          meta,
+          jsonText: JSON.stringify(d, null, 2),
+        });
+      } catch (err) {
+        openOpsDetailModal({
+          title: `运维任务详情：${tid}`,
+          meta: `<span class="warn">加载失败</span> ${esc(String(err?.message || err))}`,
+          jsonText: "",
+        });
       }
     });
   });
@@ -151,4 +229,5 @@ qs("subtab-ops-exec")?.addEventListener("click", () => setOpsSubview("exec"));
 qs("subtab-ops-collect")?.addEventListener("click", () => setOpsSubview("collect"));
 qs("subtab-ops-health")?.addEventListener("click", () => setOpsSubview("health"));
 qs("opsOnlyIssues")?.addEventListener("change", () => loadOpsEvents());
+wireOpsDetailModal();
 

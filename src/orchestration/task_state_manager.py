@@ -24,6 +24,23 @@ def _utc_now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def _parse_utc_ts(value: Any) -> datetime | None:
+    if not isinstance(value, str):
+        return None
+    s = value.strip()
+    if not s:
+        return None
+    try:
+        if s.endswith("Z"):
+            return datetime.strptime(s, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+        dt = datetime.fromisoformat(s)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone.utc)
+    except Exception:
+        return None
+
+
 @dataclass(frozen=True)
 class DependencyWaitResult:
     satisfied: bool
@@ -180,14 +197,30 @@ class TaskStateManager:
                 self._write_state("skipped", "already_executed", depends_on)
                 return False, "already_executed"
             current = self._load_state()
+            stale_secs_raw = os.environ.get("ORCH_RUNNING_STALE_SECONDS", "900")
+            try:
+                stale_secs = max(60, int(stale_secs_raw))
+            except Exception:
+                stale_secs = 900
             if (
                 current.get("state") == "running"
                 and current.get("trade_date") == self.trade_date
                 and current.get("idempotency_key") == self.idempotency_key
             ):
-                self._append_event("running", "skipped", "duplicate_trigger", depends_on, True)
-                self._write_state("skipped", "duplicate_trigger", depends_on)
-                return False, "duplicate_trigger"
+                updated_at = _parse_utc_ts(current.get("updated_at"))
+                if updated_at is not None:
+                    age = (datetime.now(timezone.utc) - updated_at).total_seconds()
+                    if age > stale_secs:
+                        self._append_event("running", "failed", "stale_running_reclaimed", depends_on, True)
+                        # continue to claim a fresh run below
+                    else:
+                        self._append_event("running", "skipped", "duplicate_trigger", depends_on, True)
+                        self._write_state("skipped", "duplicate_trigger", depends_on)
+                        return False, "duplicate_trigger"
+                else:
+                    self._append_event("running", "skipped", "duplicate_trigger", depends_on, True)
+                    self._write_state("skipped", "duplicate_trigger", depends_on)
+                    return False, "duplicate_trigger"
             self._append_event(str(current.get("state") or "none"), "queued", "queued", depends_on, True)
             self._write_state("queued", "queued", depends_on)
             self._append_event("queued", "running", "running", depends_on, True)

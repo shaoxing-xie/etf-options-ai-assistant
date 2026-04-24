@@ -7,7 +7,7 @@ cd /home/xie/etf-options-ai-assistant
 python3 scripts/triage_cron_signal_inspection.py --days 14
 ```
 
-脚本读取 `~/.openclaw/cron/runs/etf-signal-risk-inspection-*.jsonl`，按窗口内 `status=error` 的 `error`+`summary` 文本做启发式分类：
+脚本读取 `~/.openclaw/cron/runs/etf-signal-risk-inspection-(morning|midday|afternoon)-*.jsonl`（文件名前缀仍为 `etf-signal-risk-inspection`），按窗口内 `status=error` 的 `error`+`summary` 文本做启发式分类：
 
 - **llm-like**：含 `403`、`All models failed`、`timeout`、`quota` 等 → 优先检查模型网关、API Key、超时、单轮 token/工具负载。
 - **dingtalk/delivery-like**：含 `钉钉`、`关键词`、`310000`、`dingtalk` 等 → 优先检查 `OPENCLAW_DINGTALK_*`、`DINGTALK_KEYWORD` 与机器人后台。

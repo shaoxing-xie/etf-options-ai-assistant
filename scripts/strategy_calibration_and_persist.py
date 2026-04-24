@@ -30,7 +30,7 @@ def _read_json(path: Path) -> dict[str, Any]:
 def main() -> int:
     trade_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     run_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
-    depends_on = ["pre-market-sentiment-check"]
+    depends_on: list[str] = []
     session_type = str(os.environ.get("ORCH_SESSION_TYPE") or "").strip().lower()
     is_manual_session = session_type == "manual"
 

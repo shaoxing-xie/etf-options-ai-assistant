@@ -20,6 +20,8 @@ class ApiRoutes:
             return self.svc.get_market_data_config_text(), 200
         if path == "/api/config/analytics":
             return self.svc.get_analytics_config_text(), 200
+        if path == "/api/config/rotation":
+            return self.svc.get_rotation_config_text(), 200
         if path == "/api/ohlcv":
             symbol = (query.get("symbol") or ["510300"])[0]
             lookback_days = int((query.get("lookback_days") or ["180"])[0])
@@ -117,6 +119,13 @@ class ApiRoutes:
         if path == "/api/semantic/ops_events":
             trade_date = (query.get("trade_date") or [""])[0]
             return self.svc.get_semantic_ops_events(str(trade_date)), 200, {}
+        if path == "/api/semantic/ops_run_detail":
+            task_id = (query.get("task_id") or [""])[0]
+            try:
+                limit = int((query.get("limit") or ["80"])[0])
+            except Exception:
+                limit = 80
+            return self.svc.get_semantic_ops_run_detail(str(task_id), limit=limit), 200, {}
         if path == "/api/semantic/trade_dates":
             return self.svc.get_semantic_trade_dates(), 200, {}
         if path == "/api/semantic/research_metrics":
@@ -146,6 +155,15 @@ class ApiRoutes:
         if path == "/api/semantic/task_dependency_health":
             trade_date = (query.get("trade_date") or [""])[0]
             return self.svc.get_semantic_task_dependency_health(str(trade_date)), 200, {}
+        if path == "/api/semantic/rotation_latest":
+            trade_date = (query.get("trade_date") or [""])[0]
+            return self.svc.get_semantic_rotation_latest(str(trade_date)), 200, {}
+        if path == "/api/semantic/rotation_heatmap":
+            trade_date = (query.get("trade_date") or [""])[0]
+            return self.svc.get_semantic_rotation_heatmap(str(trade_date)), 200, {}
+        if path == "/api/semantic/etf_share_dashboard":
+            trade_date = (query.get("trade_date") or [""])[0]
+            return self.svc.get_semantic_etf_share_dashboard(str(trade_date)), 200, {}
         if path == "/api/ops/events":
             trade_date = (query.get("trade_date") or [""])[0]
             return self.svc.get_ops_events(str(trade_date)), 200, {"X-Deprecated": "true", "X-Replacement": "/api/semantic/ops_events"}
@@ -169,6 +187,12 @@ class ApiRoutes:
             if not isinstance(text, str):
                 return {"success": False, "message": "missing text"}, 400
             resp = self.svc.save_analytics_config_text(text)
+            return resp, 200 if resp.get("success") else 400
+        if path == "/api/config/rotation/save":
+            text = body.get("text")
+            if not isinstance(text, str):
+                return {"success": False, "message": "missing text"}, 400
+            resp = self.svc.save_rotation_config_text(text)
             return resp, 200 if resp.get("success") else 400
         if path == "/api/workspaces/save":
             name = str(body.get("name", "")).strip()

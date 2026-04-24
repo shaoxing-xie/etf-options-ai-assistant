@@ -18,7 +18,7 @@ from src.orchestration.task_state_manager import TaskStateManager
 def main() -> int:
     trade_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     run_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
-    depends_on = ["nightly-stock-screening", "intraday-tail-screening", "position-tracking"]
+    depends_on: list[str] = []
     session_type = str(os.environ.get("ORCH_SESSION_TYPE") or "").strip().lower()
     is_manual_session = session_type == "manual"
 

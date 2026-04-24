@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import re
 from datetime import datetime
+import json
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 try:
@@ -342,6 +344,28 @@ def _focus_bullets(
     return (f1, f2, f3)
 
 
+def _load_rotation_latest(now: datetime) -> Dict[str, Any]:
+    trade_date = now.strftime("%Y-%m-%d")
+    p = Path(__file__).resolve().parents[2] / "data" / "semantic" / "rotation_latest" / f"{trade_date}.json"
+    if not p.is_file():
+        return {"quality_status": "degraded", "reason": "rotation_semantic_missing", "top5": []}
+    try:
+        obj = json.loads(p.read_text(encoding="utf-8"))
+    except Exception:
+        return {"quality_status": "degraded", "reason": "rotation_semantic_parse_failed", "top5": []}
+    if not isinstance(obj, dict):
+        return {"quality_status": "degraded", "reason": "rotation_semantic_invalid", "top5": []}
+    meta = obj.get("_meta") if isinstance(obj.get("_meta"), dict) else {}
+    data = obj.get("data") if isinstance(obj.get("data"), dict) else {}
+    top5 = data.get("top5") if isinstance(data.get("top5"), list) else []
+    return {
+        "quality_status": str(meta.get("quality_status") or "degraded"),
+        "reason": "",
+        "top5": [x for x in top5 if isinstance(x, dict)][:5],
+        "environment": data.get("environment") if isinstance(data.get("environment"), dict) else {},
+    }
+
+
 def _action_line(pct: Optional[float]) -> str:
     if pct is None:
         return "数据不足"
@@ -548,6 +572,22 @@ def build_inspection_report(
 
     f1, f2, f3 = _focus_bullets(hs_pct, gem_pct, zz_pct, True)
     report["focus1"], report["focus2"], report["focus3"] = f1, f2, f3
+    rotation = _load_rotation_latest(now)
+    report["rotation_quality_status"] = str(rotation.get("quality_status") or "degraded")
+    report["rotation_degrade_reason"] = str(rotation.get("reason") or "")
+    report["rotation_top5"] = rotation.get("top5") if isinstance(rotation.get("top5"), list) else []
+    report["rotation_environment"] = rotation.get("environment") if isinstance(rotation.get("environment"), dict) else {}
+    top5 = report["rotation_top5"]
+    if top5:
+        top_codes = []
+        for row in top5[:3]:
+            code = str(row.get("symbol") or row.get("etf_code") or "").strip()
+            if code:
+                top_codes.append(code)
+        if top_codes:
+            report["focus1"] = f"轮动推荐TOP：{', '.join(top_codes)}"
+    elif report["rotation_quality_status"] != "ok":
+        report["focus1"] = "轮动语义层降级，当前快报按宽基风险快照输出"
 
     etf_specs = (
         ("510300", "510300_price", "510300_change", "510300_position", "510300_resist", "510300_support", "510300_action"),

@@ -382,6 +382,25 @@ def _build_message(phase: str, report: Dict[str, Any], run_status: str, degrade_
         f"| 参考仓位占比 / 仓位标志 | {d('position_risk_snapshot', '数据不足') if d('position_risk_snapshot', '数据不足').lower() != 'ok' else '数据不足'} |\n\n"
         f"{reason_line}"
     )
+    rotation_top = report.get("rotation_top5") if isinstance(report.get("rotation_top5"), list) else []
+    rotation_quality = _clean_text(report.get("rotation_quality_status"), "degraded")
+    if rotation_top:
+        rows = []
+        for row in rotation_top[:5]:
+            if not isinstance(row, dict):
+                continue
+            code = _clean_text(row.get("symbol") or row.get("etf_code"), "")
+            score = row.get("score") if row.get("score") is not None else row.get("total_score")
+            score_text = "数据不足"
+            if isinstance(score, (int, float)):
+                score_text = f"{float(score):.2f}"
+            if code:
+                rows.append(f"- {code}（综合分 {score_text}）")
+        if rows:
+            msg += "轮动推荐池（L4语义）\n\n" + "\n".join(rows) + "\n\n"
+    elif rotation_quality != "ok":
+        r_reason = _clean_text(report.get("rotation_degrade_reason"), "rotation_latest 缺失")
+        msg += f"轮动推荐池（L4语义）\n\n- 当前不可用（{r_reason}），已降级为宽基风险快照口径。\n\n"
     tail_enabled = bool(report.get("tail_section_enabled"))
     tail = report.get("tail_advice") if isinstance(report.get("tail_advice"), dict) else {}
     if tail_enabled and tail:

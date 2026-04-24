@@ -1853,6 +1853,9 @@ def _format_tail_session_report(
     non_trading = bool(report_data.get("non_trading_calendar_day"))
     trade_date = str(report_data.get("trade_date") or report_data.get("date") or "").strip()
     monitor_ctx = report_data.get("monitor_context") if isinstance(report_data.get("monitor_context"), dict) else {}
+    monitor_point = str(monitor_ctx.get("monitor_point") or "").upper()
+    template_mode = str(monitor_ctx.get("template_mode") or "").strip().lower()
+    quick_mode = bool(template_mode == "quick" or monitor_point in {"M2", "M3", "M4", "M5", "M6"})
     monitor_label = str(monitor_ctx.get("monitor_label") or "").strip()
     subtitle = "## 📊 交易时段多角度建议报告" if not non_trading else "## 📊 多角度建议（非交易日复盘口径）"
     if monitor_label:
@@ -1867,6 +1870,8 @@ def _format_tail_session_report(
     risk_gate = analysis.get("risk_gate") if isinstance(analysis.get("risk_gate"), dict) else {}
     range_prediction = analysis.get("range_prediction") if isinstance(analysis.get("range_prediction"), dict) else {}
     monitor_projection = analysis.get("monitor_projection") if isinstance(analysis.get("monitor_projection"), dict) else {}
+    deviation_proxy = analysis.get("deviation_proxy") if isinstance(analysis.get("deviation_proxy"), dict) else {}
+    pattern_alerts = analysis.get("pattern_alerts") if isinstance(analysis.get("pattern_alerts"), list) else []
 
     lines.append("### 一、时点快照")
     if monitor_ctx:
@@ -1908,6 +1913,47 @@ def _format_tail_session_report(
         lines.append(f"- 安全缓冲区间：[{_fmt_num(safe[0], 4)}, {_fmt_num(safe[1], 4)}]（宽度 {range_prediction.get('safe_width_pct', 'N/A')}%）")
     lines.append(f"- 区间置信度：{_fmt_num(signal_board.get('confidence'), 2) or 'N/A'}")
     lines.append("")
+
+    if quick_mode:
+        lines.append("### 四、偏离代理与门禁")
+        lines.append(
+            f"- 偏离代理：理论 {_fmt_pct(deviation_proxy.get('expected_pct')) or 'N/A'} / 实际 {_fmt_pct(deviation_proxy.get('actual_pct')) or 'N/A'} / 偏离 {_fmt_pct(deviation_proxy.get('deviation_pct')) or 'N/A'}"
+        )
+        lines.append(f"- 偏离趋势：{deviation_proxy.get('deviation_trend') or 'N/A'}")
+        lines.append(f"- RiskGate 动作：{risk_gate.get('action_state') or 'N/A'}")
+        hits = risk_gate.get("gates_triggered") if isinstance(risk_gate.get("gates_triggered"), list) else []
+        if hits:
+            lines.append(f"- 触发规则：{', '.join(str(x) for x in hits)}")
+        lines.append("")
+
+        lines.append("### 五、差异规律提醒")
+        if pattern_alerts:
+            for alert in pattern_alerts[:3]:
+                if isinstance(alert, dict):
+                    lines.append(
+                        f"- [{alert.get('rule_id') or 'R?'}|{alert.get('severity') or 'N/A'}] {alert.get('message') or ''}（证据：{alert.get('evidence') or 'N/A'}）"
+                    )
+        else:
+            lines.append("- 当前未触发显著差异规律提醒。")
+        lines.append("")
+
+        lines.append("### 六、简版操作建议")
+        options = analysis.get("decision_options") if isinstance(analysis.get("decision_options"), dict) else {}
+        l1 = _tail_option_line("保守", options.get("conservative"))
+        l2 = _tail_option_line("中性", options.get("neutral"))
+        l3 = _tail_option_line("积极", options.get("aggressive"))
+        if l1:
+            lines.append(l1)
+        if l2:
+            lines.append(l2)
+        if l3:
+            lines.append(l3)
+        lines.append("")
+        lines.append("### 七、用户决策声明")
+        lines.append(f"- {analysis.get('user_decision_note') or '本系统仅提供多视角信息，不替代你的最终交易决策。'}")
+        lines.append("---")
+        lines.append(f"*分析完成时间：{now}*")
+        return title, _dingtalk_trim("\n".join(lines).strip())
 
     lines.append("### 四、时点专项预测")
     proj_label = str(monitor_projection.get("projection_label") or "分时区间预测")
@@ -1954,6 +2000,10 @@ def _format_tail_session_report(
     lines.append(
         f"- SignalBoard：方向分 {_fmt_num(signal_board.get('direction_score'), 2) or 'N/A'}，强度分 {_fmt_num(signal_board.get('strength_score'), 2) or 'N/A'}，期货状态 {signal_board.get('futures_status') or 'N/A'}"
     )
+    if signal_board.get("futures_symbol"):
+        lines.append(
+            f"- 期指参考：{signal_board.get('futures_symbol')} 变动 {_fmt_pct(signal_board.get('futures_change_pct')) or 'N/A'}"
+        )
     lines.append(
         f"- RiskGate：流动性(成交额) {(_fmt_num((_safe_float(risk_gate.get('liquidity_amount')) or 0.0)/1e8, 2) + '亿') if risk_gate.get('liquidity_amount') is not None else 'N/A'}，汇率风险倍率 {_fmt_num(risk_gate.get('fx_risk_multiplier'), 2) or 'N/A'}，质量 {risk_gate.get('quality_status') or 'N/A'}"
     )
@@ -2017,6 +2067,11 @@ def _format_tail_session_report(
         lines.append("- 暂无触发的额外风险提示。")
     if amt is not None and amt <= 2e7:
         lines.append("- 尾盘成交额偏低，存在滑点与成交冲击，建议被动挂单或缩小单次交易量。")
+    if pattern_alerts:
+        lines.append("- 偏离规律提醒：")
+        for alert in pattern_alerts[:3]:
+            if isinstance(alert, dict):
+                lines.append(f"  - [{alert.get('rule_id')}] {alert.get('message') or ''}（{alert.get('evidence') or 'N/A'}）")
     lines.append("")
 
     lines.append("### 十、用户决策声明")

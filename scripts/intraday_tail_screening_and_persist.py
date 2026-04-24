@@ -35,7 +35,7 @@ except ImportError:
 
 CONFIG_PATH = ROOT / "config" / "tail_screening_scoring.yaml"
 
-TOOL_TIMEOUT_STOCK_RANK = int((os.environ.get("TAIL_SCREENING_TIMEOUT_STOCK_RANK_SEC") or "90").strip() or "90")
+TOOL_TIMEOUT_STOCK_RANK = int((os.environ.get("TAIL_SCREENING_TIMEOUT_STOCK_RANK_SEC") or "240").strip() or "240")
 TOOL_TIMEOUT_STOCK_HISTORY = int((os.environ.get("TAIL_SCREENING_TIMEOUT_STOCK_HISTORY_SEC") or "35").strip() or "35")
 TOOL_TIMEOUT_MARKET = int((os.environ.get("TAIL_SCREENING_TIMEOUT_MARKET_SEC") or "35").strip() or "35")
 TOOL_TIMEOUT_SECTOR = int((os.environ.get("TAIL_SCREENING_TIMEOUT_SECTOR_SEC") or "45").strip() or "45")
@@ -562,7 +562,54 @@ def _extract_net_inflow(row: dict[str, Any]) -> float:
 
 
 def _sector_name_from_row(row: dict[str, Any]) -> str:
-    return str(_pick_key(row, ["所属行业", "行业", "industry", "行业名称"]) or "").strip()
+    return str(
+        _pick_key(
+            row,
+            [
+                "所属行业",
+                "行业",
+                "industry",
+                "行业名称",
+                "行业板块",
+                "sector",
+                "sector_name",
+                "板块名称",
+                "所属板块",
+                "bk_name",
+            ],
+        )
+        or ""
+    ).strip()
+
+
+def _resolve_sector_name(
+    code: str,
+    *,
+    rt: dict[str, Any] | None = None,
+    hist: dict[str, Any] | None = None,
+    industry_map: dict[str, str] | None = None,
+    rank_row: dict[str, Any] | None = None,
+) -> str:
+    """Merge industry/sector hints for tail pools (watchlist-driven paths often omit row industry)."""
+    if rank_row and isinstance(rank_row, dict):
+        s = _sector_name_from_row(rank_row)
+        if s:
+            return s
+    if industry_map:
+        s = str(industry_map.get(code) or "").strip()
+        if s:
+            return s
+    if isinstance(rt, dict):
+        s = _sector_name_from_row(rt)
+        if s:
+            return s
+    if isinstance(hist, dict):
+        raw_last = hist.get("raw_last")
+        if isinstance(raw_last, dict):
+            s = _sector_name_from_row(raw_last)
+            if s:
+                return s
+    return ""
 
 
 def _history_features(code: str) -> dict[str, Any]:
@@ -748,12 +795,14 @@ def _market_proxy_day_pct(cfg: dict[str, Any]) -> tuple[float | None, dict[str, 
 
 def _resolve_rank_rows(max_candidates: int) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     diagnostics: dict[str, Any] = {"candidate_source": "stock_rank", "main_source_ok": False}
+    max_candidates = max(300, int(max_candidates or 0))
     try:
         stock_rank = _run_tool_retry(
             "tool_fetch_a_share_fund_flow",
             {"query_kind": "stock_rank", "rank_window": "immediate", "limit": max_candidates},
-            timeout_sec=TOOL_TIMEOUT_STOCK_RANK,
-            retries=1,
+            timeout_sec=max(240, TOOL_TIMEOUT_STOCK_RANK),
+            retries=2,
+            retry_sleep_sec=2.0,
         )
     except Exception as e:
         stock_rank = {"success": False, "error_code": "STOCK_RANK_TIMEOUT", "error_message": str(e)}
@@ -769,8 +818,10 @@ def _resolve_rank_rows(max_candidates: int) -> tuple[list[dict[str, Any]], dict[
     if rows:
         diagnostics["main_source_ok"] = True
         return rows[:max_candidates], diagnostics
-    # Fallback candidate source: realtime universe proxy.
-    wl = _load_watchlist_symbols(max(max_candidates * 2, 80))
+    # Fallback candidate source: full HS300 realtime proxy (no truncation-to-watchlist).
+    wl = _load_hs300_symbols_full()
+    if not wl:
+        wl = _load_watchlist_symbols(max(max_candidates, 300))
     rt_map = _fetch_realtime_many(wl)
     proxy_rows: list[dict[str, Any]] = []
     for code in wl:
@@ -796,7 +847,7 @@ def _resolve_rank_rows(max_candidates: int) -> tuple[list[dict[str, Any]], dict[
     if proxy_rows:
         diagnostics["candidate_source"] = "realtime_proxy"
         diagnostics["fallback_used"] = True
-        diagnostics["realtime_proxy"] = {"success": True, "count": len(proxy_rows)}
+        diagnostics["realtime_proxy"] = {"success": True, "count": len(proxy_rows), "universe": "hs300_full"}
         return proxy_rows[:max_candidates], diagnostics
     if wl:
         weak_rows = [
@@ -839,6 +890,30 @@ def _load_watchlist_symbols(limit: int) -> list[str]:
         if len(out) >= limit:
             break
     return out
+
+
+def _load_hs300_symbols_full() -> list[str]:
+    """Load full HS300 constituents (no truncation)."""
+    try:
+        from plugins.data_collection.stock.reference_p1 import tool_fetch_index_constituents
+
+        res = tool_fetch_index_constituents("000300", max_rows=500)
+        rows = res.get("data") if isinstance(res, dict) else []
+        out: list[str] = []
+        if isinstance(rows, list):
+            for row in rows:
+                if not isinstance(row, dict):
+                    continue
+                code = str(row.get("成分券代码") or row.get("品种代码") or row.get("code") or "").strip()
+                if code.isdigit():
+                    code = code.zfill(6)
+                if len(code) == 6 and code.isdigit():
+                    out.append(code)
+        if out:
+            return list(dict.fromkeys(out))
+    except Exception:
+        pass
+    return []
 
 
 def _is_st_name(name: str) -> bool:
@@ -1076,6 +1151,7 @@ def _run_pool_fund_flow(
     eff: dict[str, Any],
     gates: dict[str, Any],
     candidate_source: str = "stock_rank",
+    industry_by_code: dict[str, str] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     trace: dict[str, Any] = {
         "status": "ok",
@@ -1110,6 +1186,8 @@ def _run_pool_fund_flow(
         net_inflow = _extract_net_inflow(row)
         proxy_flow_used = False
         sector_name = _sector_name_from_row(row)
+        if not sector_name:
+            sector_name = _resolve_sector_name(code, rt=None, hist=hist, industry_map=industry_by_code, rank_row=row)
         nm = name or code
         if not _hard_gate_ok(name=nm, listed_days=listed_days, amount=amount, pct_chg=pct, gates=gates):
             trace["hard_gate_reject_count"] = int(trace.get("hard_gate_reject_count") or 0) + 1
@@ -1192,6 +1270,7 @@ def _run_pool_tail_grab(
     watchlist: list[str],
     eff: dict[str, Any],
     gates: dict[str, Any],
+    industry_by_code: dict[str, str] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     tg = eff.get("tail_grab") or {}
     max_sym = int(tg.get("max_symbols") or 30)
@@ -1263,6 +1342,7 @@ def _run_pool_tail_grab(
         listed_days = int(_safe_float(hist.get("listed_days"), 0))
         rt = _fetch_realtime_one(code) or {}
         nm = _resolve_stock_name(code, rt=rt, hist=hist)
+        sec_nm = _resolve_sector_name(code, rt=rt, hist=hist, industry_map=industry_by_code)
         used_proxy = False
         if last30 is None:
             if allow_proxy:
@@ -1286,7 +1366,7 @@ def _run_pool_tail_grab(
             {
                 "symbol": code,
                 "name": nm,
-                "sector_name": "",
+                "sector_name": sec_nm,
                 "paradigm": "tail_grab",
                 "paradigm_score": adj,
                 "raw_paradigm_score": raw,
@@ -1306,7 +1386,7 @@ def _run_pool_tail_grab(
         row_obj = {
             "symbol": code,
             "name": nm,
-            "sector_name": "",
+            "sector_name": sec_nm,
             "paradigm": "tail_grab",
             "paradigm_score": adj,
             "raw_paradigm_score": raw,
@@ -1354,6 +1434,7 @@ def _run_pool_oversold(
     watchlist: list[str],
     eff: dict[str, Any],
     gates: dict[str, Any],
+    industry_by_code: dict[str, str] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     trace = {"status": "ok", "count": 0, "degraded_history": 0, "scoring_reject_count": 0, "hard_gate_reject_count": 0}
     pconf = eff["paradigms"].get("oversold_bounce", {}) if isinstance(eff["paradigms"], dict) else {}
@@ -1386,6 +1467,7 @@ def _run_pool_oversold(
         if not hist.get("ok"):
             continue
         nm = _resolve_stock_name(code, rt=rt, hist=hist)
+        sec_nm = _resolve_sector_name(code, rt=rt, hist=hist, industry_map=industry_by_code)
         if hist.get("degraded"):
             trace["degraded_history"] = int(trace.get("degraded_history") or 0) + 1
         vol_ratio = _safe_float(hist.get("volume_ratio"), 0.0)
@@ -1404,7 +1486,7 @@ def _run_pool_oversold(
             {
                 "symbol": code,
                 "name": nm,
-                "sector_name": "",
+                "sector_name": sec_nm,
                 "paradigm": "oversold_bounce",
                 "paradigm_score": adj,
                 "raw_paradigm_score": raw,
@@ -1423,7 +1505,7 @@ def _run_pool_oversold(
         row_obj = {
             "symbol": code,
             "name": nm,
-            "sector_name": "",
+            "sector_name": sec_nm,
             "paradigm": "oversold_bounce",
             "paradigm_score": adj,
             "raw_paradigm_score": raw,
@@ -1801,7 +1883,9 @@ def _attach_northbound_soft_tags(recommended: list[dict[str, Any]]) -> dict[str,
     return tr
 
 
-def _build_rescue_pick(watchlist: list[str], gates: dict[str, Any]) -> dict[str, Any] | None:
+def _build_rescue_pick(
+    watchlist: list[str], gates: dict[str, Any], industry_by_code: dict[str, str] | None = None
+) -> dict[str, Any] | None:
     """When all pools are empty under degraded data, pick one conservative oversold-style fallback."""
     rmap = _fetch_realtime_many(watchlist[:30])
     best: dict[str, Any] | None = None
@@ -1812,6 +1896,7 @@ def _build_rescue_pick(watchlist: list[str], gates: dict[str, Any]) -> dict[str,
             continue
         hist = _history_features(code)
         nm = _resolve_stock_name(code, rt=rt, hist=hist)
+        sec_nm = _resolve_sector_name(code, rt=rt, hist=hist, industry_map=industry_by_code)
         pct = _safe_float(rt.get("change_percent"))
         amount = _safe_float(rt.get("amount"))
         if not hist.get("ok"):
@@ -1832,7 +1917,7 @@ def _build_rescue_pick(watchlist: list[str], gates: dict[str, Any]) -> dict[str,
             best = {
                 "symbol": code,
                 "name": nm,
-                "sector_name": "",
+                "sector_name": sec_nm,
                 "paradigm_score": int(raw),
                 "raw_paradigm_score": int(raw),
                 "composite_score": float(int(raw)),
@@ -1895,6 +1980,73 @@ def _build_forced_pick(watchlist: list[str], gates: dict[str, Any]) -> dict[str,
                 "display_order": 1,
             }
     return best
+
+
+def _is_full_degraded_forced(
+    paradigm_trace: dict[str, Any],
+    source_diagnostics: dict[str, Any],
+    summary_hint: dict[str, Any] | None = None,
+) -> tuple[bool, str]:
+    """识别“全链路降级+四池forced_top10”的不可用结果。"""
+    pids = PARADIGM_ORDER
+    forced_all = all(bool((paradigm_trace.get(pid) or {}).get("forced_top10")) for pid in pids)
+    degraded_all = all(
+        str((paradigm_trace.get(pid) or {}).get("status") or "").strip().lower() in {"degraded", "ok", "empty"}
+        and (bool((paradigm_trace.get(pid) or {}).get("forced_top10")) or int((paradigm_trace.get(pid) or {}).get("degraded_history") or 0) > 0)
+        for pid in pids
+    )
+    stock_rank = source_diagnostics.get("stock_rank") if isinstance(source_diagnostics.get("stock_rank"), dict) else {}
+    stock_rank_failed = str(stock_rank.get("error_code") or "") == "UPSTREAM_FETCH_FAILED"
+    main_source_ok = bool(source_diagnostics.get("main_source_ok"))
+    candidate_source = str(source_diagnostics.get("candidate_source") or "")
+    degraded_mode = bool((summary_hint or {}).get("degraded_mode"))
+    bad = bool(forced_all and degraded_all and (degraded_mode or (not main_source_ok) or stock_rank_failed))
+    if not bad:
+        return False, ""
+    reason = (
+        "full_degraded_forced_top10:"
+        f"candidate_source={candidate_source or 'unknown'},"
+        f"main_source_ok={main_source_ok},"
+        f"stock_rank_error={stock_rank.get('error_code') or 'none'}"
+    )
+    return True, reason
+
+
+def _build_upstream_health(
+    source_diag: dict[str, Any],
+    sector_trace: dict[str, Any],
+    market_proxy_trace: dict[str, Any],
+) -> dict[str, Any]:
+    stock_rank = source_diag.get("stock_rank") if isinstance(source_diag.get("stock_rank"), dict) else {}
+    stock_rank_ok = bool(stock_rank.get("success")) and int(stock_rank.get("count") or 0) > 0
+    sector_ok = bool(sector_trace.get("ok")) and int(sector_trace.get("count") or 0) > 0
+    market_chain = market_proxy_trace.get("chain") if isinstance(market_proxy_trace.get("chain"), list) else []
+    market_ok = bool(market_chain) and not bool(market_proxy_trace.get("error"))
+    source_main_ok = bool(source_diag.get("main_source_ok"))
+    candidate_source = str(source_diag.get("candidate_source") or "")
+    overall_ok = bool(source_main_ok and stock_rank_ok and sector_ok and market_ok)
+    return {
+        "overall_ok": overall_ok,
+        "candidate_source": candidate_source,
+        "source_main_ok": source_main_ok,
+        "stock_rank": {
+            "ok": stock_rank_ok,
+            "count": int(stock_rank.get("count") or 0),
+            "error_code": stock_rank.get("error_code"),
+            "error_message": stock_rank.get("error_message"),
+            "source": stock_rank.get("source"),
+        },
+        "sector_rank": {
+            "ok": sector_ok,
+            "count": int(sector_trace.get("count") or 0),
+            "error": sector_trace.get("error"),
+        },
+        "market_proxy": {
+            "ok": market_ok,
+            "chain": market_chain,
+            "error": market_proxy_trace.get("error") or market_proxy_trace.get("index_error"),
+        },
+    }
 
 
 def run_tail_screening(max_candidates: int, notify_mode: str) -> dict[str, Any]:
@@ -1973,20 +2125,20 @@ def run_tail_screening(max_candidates: int, notify_mode: str) -> dict[str, Any]:
     candidate_source = str(source_diag.get("candidate_source") or "stock_rank")
     if source_diag.get("main_source_ok"):
         paradigm_pools["fund_flow_follow"], p_trace["fund_flow_follow"] = _run_pool_fund_flow(
-            rank_rows, sector_strength, eff, gates, candidate_source=candidate_source
+            rank_rows, sector_strength, eff, gates, candidate_source=candidate_source, industry_by_code=code_industry
         )
     else:
         if rank_rows:
             paradigm_pools["fund_flow_follow"], p_trace["fund_flow_follow"] = _run_pool_fund_flow(
-                rank_rows, sector_strength, eff, gates, candidate_source=candidate_source
+                rank_rows, sector_strength, eff, gates, candidate_source=candidate_source, industry_by_code=code_industry
             )
             p_trace["fund_flow_follow"]["status"] = "degraded" if paradigm_pools["fund_flow_follow"] else "empty"
             p_trace["fund_flow_follow"]["reason"] = "stock_rank_failed_use_realtime_proxy"
         else:
             p_trace["fund_flow_follow"] = {"status": "empty", "reason": "stock_rank_failed"}
 
-    paradigm_pools["tail_grab"], p_trace["tail_grab"] = _run_pool_tail_grab(wl, eff, gates)
-    paradigm_pools["oversold_bounce"], p_trace["oversold_bounce"] = _run_pool_oversold(wl, eff, gates)
+    paradigm_pools["tail_grab"], p_trace["tail_grab"] = _run_pool_tail_grab(wl, eff, gates, code_industry)
+    paradigm_pools["oversold_bounce"], p_trace["oversold_bounce"] = _run_pool_oversold(wl, eff, gates, code_industry)
     paradigm_pools["sector_rotation"], p_trace["sector_rotation"] = _run_pool_sector_rotation(
         wl, code_industry, sector_strength, mpx, eff, gates
     )
@@ -1995,7 +2147,7 @@ def run_tail_screening(max_candidates: int, notify_mode: str) -> dict[str, Any]:
     rescue_used = False
     forced_used = False
     if not recommended and not any(paradigm_pools.values()):
-        rescue = _build_rescue_pick(wl, gates)
+        rescue = _build_rescue_pick(wl, gates, code_industry)
         if rescue:
             recommended = [rescue]
             rescue_used = True
@@ -2039,6 +2191,27 @@ def run_tail_screening(max_candidates: int, notify_mode: str) -> dict[str, Any]:
         no_candidate_reason = "推荐池为空（周频控或综合合并后无标的）。"
 
     stage = "recommend" if recommended else "empty"
+    upstream_health = _build_upstream_health(
+        source_diag if isinstance(source_diag, dict) else {},
+        sector_trace if isinstance(sector_trace, dict) else {},
+        mpx_trace if isinstance(mpx_trace, dict) else {},
+    )
+    degraded_gate_hint = {
+        "degraded_mode": any(
+            (p_trace.get(p) or {}).get("status") == "degraded" or int((p_trace.get(p) or {}).get("degraded_history") or 0) > 0
+            for p in PARADIGM_ORDER
+        )
+    }
+    full_degraded_err, full_degraded_reason = _is_full_degraded_forced(
+        p_trace,
+        source_diag if isinstance(source_diag, dict) else {},
+        degraded_gate_hint,
+    )
+    if full_degraded_err:
+        # 全降级强行补位视为不可用，拒绝给出推荐，交由运维链路告警处理。
+        recommended = []
+        stage = "error"
+        no_candidate_reason = full_degraded_reason
 
     ct5 = int(merge_meta.get("composite_top5_count") or 0) if recommended else 0
     pfo = 0
@@ -2087,6 +2260,8 @@ def run_tail_screening(max_candidates: int, notify_mode: str) -> dict[str, Any]:
                 (p_trace.get(p) or {}).get("status") == "degraded" or int((p_trace.get(p) or {}).get("degraded_history") or 0) > 0
                 for p in PARADIGM_ORDER
             ),
+            "full_degraded_error": full_degraded_err,
+            "full_degraded_reason": full_degraded_reason if full_degraded_err else None,
             "degraded_counts": {
                 p: int((p_trace.get(p) or {}).get("degraded_history") or 0) for p in PARADIGM_ORDER
             },
@@ -2094,6 +2269,7 @@ def run_tail_screening(max_candidates: int, notify_mode: str) -> dict[str, Any]:
             "forced_used": forced_used,
             "no_candidate_reason": no_candidate_reason,
             "applied_profile": applied_profile,
+            "upstream_health": upstream_health,
         },
         "tool_trace": {
             "notify_mode": notify_mode,
@@ -2106,6 +2282,7 @@ def run_tail_screening(max_candidates: int, notify_mode: str) -> dict[str, Any]:
             "market_proxy_pct": mpx,
             "sector_rank_trace": sector_trace,
             "source_diagnostics": source_diag,
+            "upstream_health": upstream_health,
             "northbound_trace": northbound_trace,
             "paradigm_trace": p_trace,
             "config_path": str(CONFIG_PATH) if CONFIG_PATH.is_file() else None,
@@ -2132,6 +2309,16 @@ def _persist_new_data_layer(result: dict[str, Any]) -> None:
     run_id = str(result.get("run_id") or datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S"))
     degraded = bool((result.get("summary") or {}).get("degraded_mode"))
     quality_status = "degraded" if degraded else "ok"
+    summ = result.get("summary") if isinstance(result.get("summary"), dict) else {}
+    full_degraded_err = bool(summ.get("full_degraded_error"))
+    recs = result.get("recommended") if isinstance(result.get("recommended"), list) else []
+    st = str(result.get("stage") or "")
+    # Chart 时间轴：有有效推荐且非全池故障时标 ok，避免「范式池曾用 proxy」导致每条都显示数据降级
+    timeline_quality = (
+        "ok"
+        if (len(recs) > 0 and st == "recommend" and not full_degraded_err)
+        else quality_status
+    )
     write_contract_json(
         ROOT / "data" / "decisions" / "recommendations" / f"tail_{trade_date}.json",
         payload=result,
@@ -2163,7 +2350,7 @@ def _persist_new_data_layer(result: dict[str, Any]) -> None:
             run_id=run_id,
             data_layer="L4",
             trade_date=trade_date,
-            quality_status=quality_status,
+            quality_status=timeline_quality,
             lineage_refs=[str(ROOT / "data" / "decisions" / "recommendations" / f"tail_{trade_date}.json")],
             source_tools=["intraday_tail_screening_and_persist.py"],
         ),
@@ -2213,7 +2400,8 @@ def notify(result: dict[str, Any], mode: str = "prod") -> dict[str, Any]:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--max-candidates", type=int, default=50)
+    # Tail screening uses full HS300 candidate scope by default.
+    ap.add_argument("--max-candidates", type=int, default=300)
     ap.add_argument("--notify-mode", default="prod")
     ap.add_argument("--notify", action="store_true")
     args = ap.parse_args()
@@ -2223,43 +2411,56 @@ def main() -> int:
 
     run_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
     trade_date = _today_shanghai()
-    depends_on = ["pre-market-sentiment-check", "extreme-sentiment-monitor", "nightly-stock-screening"]
-    session_type = str(os.environ.get("ORCH_SESSION_TYPE") or "").strip().lower()
-    is_manual_session = session_type == "manual"
-    trigger_source = str((os.environ.get("ORCH_TRIGGER_SOURCE") or "cron")).strip().lower()
-    manager = TaskStateManager(
-        root=ROOT,
-        task_id="intraday-tail-screening",
-        trade_date=trade_date,
-        run_id=run_id,
-        trigger_source=trigger_source,
-        trigger_window="intraday-30m",
-    )
-    claimed, claim_reason = manager.claim_execution(depends_on=depends_on)
-    if not claimed:
-        print(json.dumps({"success": True, "message": claim_reason, "trade_date": trade_date}, ensure_ascii=False))
-        return 0
-
-    if not is_manual_session:
-        wait = manager.wait_for_dependencies(depends_on, timeout_seconds=60, poll_seconds=1.0)
-        if not wait.satisfied:
-            manager.finish(to_state="skipped", reason=wait.reason, depends_on=depends_on, condition_met=False)
-            print(json.dumps({"success": True, "message": wait.reason, "missing": wait.missing}, ensure_ascii=False))
-            return 0
-
-        cond_eval = DependencyEngine().evaluate(
-            _load_orchestration_context(),
-            ["is_trading_day", "emergency_pause_active", "sentiment_dispersion_low"],
+    depends_on: list[str] = []
+    skip_inner_orch = str(os.environ.get("ORCH_INNER_SKIP_ORCH_STATE") or "").strip().lower() in ("1", "true", "yes", "on")
+    manager: TaskStateManager | None = None
+    if not skip_inner_orch:
+        raw_session_type = str(os.environ.get("ORCH_SESSION_TYPE") or "").strip().lower()
+        session_type = raw_session_type
+        # Recovery guard: if state says succeeded but today's artifact is missing,
+        # switch to a distinct idempotency scope so the task can rebuild outputs.
+        # This applies to both cron default and manual reruns.
+        today_artifact = ROOT / "data" / "tail_screening" / f"{trade_date}.json"
+        if not today_artifact.is_file() and "-recovery" not in raw_session_type:
+            base = raw_session_type if raw_session_type else "auto"
+            session_type = f"{base}-recovery"
+        # `run_intraday_tail_screening_cron.sh` may set ORCH_SESSION_TYPE=manual:YYYYMMDDHHMM for idempotency.
+        is_manual_session = raw_session_type == "manual" or raw_session_type.startswith("manual:")
+        trigger_source = str((os.environ.get("ORCH_TRIGGER_SOURCE") or "cron")).strip().lower()
+        manager = TaskStateManager(
+            root=ROOT,
+            task_id="intraday-tail-screening",
+            trade_date=trade_date,
+            run_id=run_id,
+            trigger_source=trigger_source,
+            trigger_window="intraday-30m",
+            session_type=session_type,
         )
-        if not cond_eval.passed:
-            reason = f"condition_not_met:{','.join(cond_eval.failed_conditions)}"
-            manager.finish(to_state="skipped", reason=reason, depends_on=depends_on, condition_met=False)
-            print(json.dumps({"success": True, "message": reason, "details": cond_eval.details}, ensure_ascii=False))
+        claimed, claim_reason = manager.claim_execution(depends_on=depends_on)
+        if not claimed:
+            print(json.dumps({"success": True, "message": claim_reason, "trade_date": trade_date}, ensure_ascii=False))
             return 0
+
+        if not is_manual_session:
+            wait = manager.wait_for_dependencies(depends_on, timeout_seconds=60, poll_seconds=1.0)
+            if not wait.satisfied:
+                manager.finish(to_state="skipped", reason=wait.reason, depends_on=depends_on, condition_met=False)
+                print(json.dumps({"success": True, "message": wait.reason, "missing": wait.missing}, ensure_ascii=False))
+                return 0
+
+            cond_eval = DependencyEngine().evaluate(
+                _load_orchestration_context(),
+                ["is_trading_day", "emergency_pause_active", "sentiment_dispersion_low"],
+            )
+            if not cond_eval.passed:
+                reason = f"condition_not_met:{','.join(cond_eval.failed_conditions)}"
+                manager.finish(to_state="skipped", reason=reason, depends_on=depends_on, condition_met=False)
+                print(json.dumps({"success": True, "message": reason, "details": cond_eval.details}, ensure_ascii=False))
+                return 0
 
     abnormal: list[str] = []
     try:
-        result = run_tail_screening(max_candidates=max(10, min(args.max_candidates, 100)), notify_mode=args.notify_mode)
+        result = run_tail_screening(max_candidates=max(10, min(args.max_candidates, 300)), notify_mode=args.notify_mode)
         paths = persist_result(result)
     except Exception as e:  # noqa: BLE001
         alert = _send_feishu_abnormal(
@@ -2268,7 +2469,8 @@ def main() -> int:
             mode=args.notify_mode,
         )
         print(json.dumps({"success": False, "error": str(e), "abnormal_notify": alert}, ensure_ascii=False, indent=2))
-        manager.finish(to_state="failed", reason=f"run_failed:{type(e).__name__}", depends_on=depends_on, condition_met=True)
+        if manager is not None:
+            manager.finish(to_state="failed", reason=f"run_failed:{type(e).__name__}", depends_on=depends_on, condition_met=True)
         return 1
 
     notify_resp = {"success": True, "message": "not requested"}
@@ -2284,6 +2486,8 @@ def main() -> int:
         abnormal.append(f"stage=skip reason={result.get('skip_reason')}")
     if stage == "empty":
         abnormal.append(f"stage=empty reason={summary.get('no_candidate_reason')}")
+    if stage == "error":
+        abnormal.append(f"stage=error reason={summary.get('full_degraded_reason') or summary.get('no_candidate_reason')}")
     if args.notify and not bool(notify_resp.get("success")):
         abnormal.append(f"notify_failed={notify_resp.get('error') or notify_resp.get('message')}")
 
@@ -2310,12 +2514,13 @@ def main() -> int:
             indent=2,
         )
     )
-    manager.finish(
-        to_state="succeeded",
-        reason="completed",
-        depends_on=depends_on,
-        condition_met=True,
-    )
+    if manager is not None:
+        manager.finish(
+            to_state="succeeded",
+            reason="completed",
+            depends_on=depends_on,
+            condition_met=True,
+        )
     return 0
 
 

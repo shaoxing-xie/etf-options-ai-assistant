@@ -37,6 +37,7 @@ ROOT = _repo_root_for_data()
 ALERTS_PATH = ROOT / "config" / "alerts.yaml"
 MARKET_DATA_PATH = ROOT / "config" / "domains" / "market_data.yaml"
 ANALYTICS_PATH = ROOT / "config" / "domains" / "analytics.yaml"
+ROTATION_CONFIG_PATH = ROOT / "config" / "rotation_config.yaml"
 FEATURE_FLAGS_PATH = ROOT / "config" / "feature_flags.json"
 
 
@@ -210,6 +211,33 @@ class ApiServices:
         except Exception as e:
             return {"success": False, "message": f"save analytics.yaml failed: {e}"}
 
+    def get_rotation_config_text(self) -> dict[str, Any]:
+        if not ROTATION_CONFIG_PATH.exists():
+            return {"success": True, "message": "ok", "data": {"path": str(ROTATION_CONFIG_PATH), "text": ""}}
+        try:
+            return {
+                "success": True,
+                "message": "ok",
+                "data": {"path": str(ROTATION_CONFIG_PATH), "text": ROTATION_CONFIG_PATH.read_text(encoding="utf-8")},
+            }
+        except Exception as e:
+            return {"success": False, "message": f"read rotation_config.yaml failed: {e}"}
+
+    def save_rotation_config_text(self, text: str) -> dict[str, Any]:
+        try:
+            ROTATION_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+            if ROTATION_CONFIG_PATH.exists():
+                ts = datetime.now().strftime("%Y%m%d-%H%M%S")
+                backup = ROTATION_CONFIG_PATH.with_name(f"{ROTATION_CONFIG_PATH.name}.bak.{ts}")
+                try:
+                    backup.write_text(ROTATION_CONFIG_PATH.read_text(encoding="utf-8"), encoding="utf-8")
+                except Exception:
+                    pass
+            ROTATION_CONFIG_PATH.write_text(text, encoding="utf-8")
+            return {"success": True, "message": "ok", "data": {"path": str(ROTATION_CONFIG_PATH)}}
+        except Exception as e:
+            return {"success": False, "message": f"save rotation_config.yaml failed: {e}"}
+
     def get_screening_summary(self) -> dict[str, Any]:
         if self._prefer_new():
             return {"success": True, "message": "ok", "data": self._semantic.dashboard()}
@@ -278,9 +306,25 @@ class ApiServices:
     def get_semantic_ops_events(self, trade_date: str = "") -> dict[str, Any]:
         return {"success": True, "message": "ok", "data": self._semantic.ops_events(trade_date)}
 
+    def get_semantic_ops_run_detail(self, task_id: str = "", limit: int = 80) -> dict[str, Any]:
+        data = self._semantic.ops_run_detail(task_id=str(task_id or ""), limit=int(limit or 80))
+        return {"success": True, "message": "ok", "data": data}
+
     def get_semantic_trade_dates(self) -> dict[str, Any]:
         dates = self._semantic.semantic_trade_dates()
         return {"success": True, "message": "ok", "data": dates}
+
+    def get_semantic_rotation_latest(self, trade_date: str = "") -> dict[str, Any]:
+        data = self._semantic.rotation_latest(trade_date)
+        return {"success": True, "message": "ok", "data": data}
+
+    def get_semantic_rotation_heatmap(self, trade_date: str = "") -> dict[str, Any]:
+        data = self._semantic.rotation_heatmap(trade_date)
+        return {"success": True, "message": "ok", "data": data}
+
+    def get_semantic_etf_share_dashboard(self, trade_date: str = "") -> dict[str, Any]:
+        data = self._semantic.etf_share_dashboard(trade_date)
+        return {"success": True, "message": "ok", "data": data}
 
     def get_semantic_research_metrics(self, trade_date: str = "", window: int = 5) -> dict[str, Any]:
         data = self._semantic.research_metrics(trade_date, window=window)

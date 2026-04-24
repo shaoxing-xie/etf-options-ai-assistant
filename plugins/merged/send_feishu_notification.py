@@ -166,6 +166,27 @@ def _send_via_webhook(webhook_url: str, text: str) -> Dict[str, Any]:
         return {"success": False, "error": str(e)}
 
 
+def _resolve_env_template(value: Any) -> str:
+    """
+    Resolve simple ${VAR} / ${VAR:-default} templates used in YAML config.
+    If value is not a string or not a template, returns str(value).
+    """
+    import os
+    import re
+
+    if value is None:
+        return ""
+    if not isinstance(value, str):
+        return str(value)
+    s = value.strip()
+    m = re.fullmatch(r"\$\{([A-Z0-9_]+)(?::-([^}]*))?\}", s)
+    if not m:
+        return s
+    var = m.group(1)
+    default = m.group(2) if m.group(2) is not None else ""
+    return str(os.environ.get(var, default) or "").strip()
+
+
 def tool_send_feishu_notification(
     notification_type: str,
     message: Optional[str] = None,
@@ -245,8 +266,9 @@ def tool_send_feishu_notification(
 
     # 4) 发送：优先 webhook（无需 chat_id）
     notification_cfg = (config or {}).get("notification", {}) if isinstance(config, dict) else {}
-    webhook = webhook_url or notification_cfg.get("feishu_webhook")
-    if webhook:
+    webhook_raw = webhook_url or notification_cfg.get("feishu_webhook")
+    webhook = _resolve_env_template(webhook_raw)
+    if webhook and webhook.startswith("http"):
         send_result = _send_via_webhook(webhook, text)
         # 成功发送后记录冷却 key
         try:
@@ -268,7 +290,7 @@ def tool_send_feishu_notification(
     # 5) 若未配置 webhook，返回结构化失败（工具仍可调用，便于定时任务上报）
     return {
         "success": False,
-        "message": "未配置飞书 webhook（notification.feishu_webhook），无法发送通知",
+        "message": "未配置有效飞书 webhook（notification.feishu_webhook / FEISHU_WEBHOOK_URL），无法发送通知",
         "notification_type": notification_type,
         "text": text,
         "channel": None,

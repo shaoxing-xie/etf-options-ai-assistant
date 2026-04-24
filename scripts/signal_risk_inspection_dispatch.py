@@ -44,18 +44,20 @@ def _now_sh(debug_now: str | None) -> datetime:
 
 def _decide(now_sh: datetime, *, force: bool) -> DispatchDecision:
     h = int(now_sh.hour)
-    m = int(now_sh.minute)
 
-    # Original schedules:
-    # - morning: 15,45 9 * * 1-5
-    # - midday:  15,45 10-11 * * 1-5
-    # - afternoon: 0,30 13-14 * * 1-5
-    if h == 9 and m in (15, 45):
-        return DispatchDecision(True, "morning", "matched schedule: morning")
-    if h in (10, 11) and m in (15, 45):
-        return DispatchDecision(True, "midday", "matched schedule: midday")
-    if h in (13, 14) and m in (0, 30):
-        return DispatchDecision(True, "afternoon", "matched schedule: afternoon")
+    # Current merged cron schedule in jobs.json:
+    # - 0,15,30,45 9-11,13-14 * * 1-5
+    # This dispatcher maps the tick into a semantic phase.
+    #
+    # Cron runs can start a few minutes late when the queue is busy, so
+    # matching only exact minute marks (0/15/30/45) causes false skips.
+    # Once we're in a scheduled hour, treat it as in-window.
+    if h == 9:
+        return DispatchDecision(True, "morning", "matched schedule hour: morning")
+    if h in (10, 11):
+        return DispatchDecision(True, "midday", "matched schedule hour: midday")
+    if h in (13, 14):
+        return DispatchDecision(True, "afternoon", "matched schedule hour: afternoon")
     if force:
         # Default force phase: pick the closest semantic segment by hour.
         if h <= 9:

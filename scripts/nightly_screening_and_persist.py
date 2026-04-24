@@ -17,6 +17,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Set
+from zoneinfo import ZoneInfo
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -26,6 +27,17 @@ from src.data_layer import MetaEnvelope, write_contract_json
 from src.feature_flags import legacy_write_allowed
 from src.orchestration.dependency_engine import DependencyEngine
 from src.orchestration.task_state_manager import TaskStateManager
+
+def _semantic_trade_date() -> str:
+    """与 orchestration / persist 对齐：优先 ORCH_TRADE_DATE、TRADE_DATE，否则上海日历日，再退回 UTC。"""
+    env = (os.environ.get("ORCH_TRADE_DATE") or os.environ.get("TRADE_DATE") or "").strip()
+    if env:
+        return env
+    try:
+        return datetime.now(ZoneInfo("Asia/Shanghai")).date().isoformat()
+    except Exception:
+        return datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
 
 def _run_tool(name: str, args: dict) -> dict:
     exe = sys.executable
@@ -205,15 +217,16 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--universe", default="hs300")
     ap.add_argument("--top-n", type=int, default=15)
-    ap.add_argument("--max-universe-size", type=int, default=50)
+    # 0 means full index constituents (no truncation) for index universes.
+    ap.add_argument("--max-universe-size", type=int, default=0)
     args = ap.parse_args()
 
     if str(ROOT) not in sys.path:
         sys.path.insert(0, str(ROOT))
 
     run_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
-    trade_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    depends_on = ["pre-market-sentiment-check", "strategy-calibration", "extreme-sentiment-monitor"]
+    trade_date = _semantic_trade_date()
+    depends_on: list[str] = []
     session_type = str(os.environ.get("ORCH_SESSION_TYPE") or "").strip().lower()
     is_manual_session = session_type == "manual"
     trigger_source = str((os.environ.get("ORCH_TRIGGER_SOURCE") or "cron")).strip().lower()  # type: ignore[name-defined]
@@ -333,7 +346,7 @@ def _load_orchestration_context() -> Dict[str, Any]:
 
 
 def _persist_new_data_layer(*, screen: Dict[str, Any], fin: Dict[str, Any], artifact: Dict[str, Any]) -> None:
-    trade_date = str((artifact or {}).get("run_date") or datetime.now(timezone.utc).strftime("%Y-%m-%d"))
+    trade_date = str((artifact or {}).get("run_date") or _semantic_trade_date())
     run_id = str((fin or {}).get("run_id") or datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S"))
     quality_status = "degraded" if bool((screen or {}).get("degraded")) else "ok"
 

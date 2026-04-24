@@ -31,13 +31,19 @@ function setView(view) {
 function setConfigSubview(name) {
   const market = qs("config-market");
   const analytics = qs("config-analytics");
+  const rotation = qs("config-rotation");
   const isMarket = name === "market";
+  const isAnalytics = name === "analytics";
+  const isRotation = name === "rotation";
   if (market) market.classList.toggle("active", isMarket);
-  if (analytics) analytics.classList.toggle("active", !isMarket);
+  if (analytics) analytics.classList.toggle("active", isAnalytics);
+  if (rotation) rotation.classList.toggle("active", isRotation);
   const t1 = qs("subtab-market");
   const t2 = qs("subtab-analytics");
+  const t3 = qs("subtab-rotation");
   if (t1) t1.setAttribute("aria-selected", String(isMarket));
-  if (t2) t2.setAttribute("aria-selected", String(!isMarket));
+  if (t2) t2.setAttribute("aria-selected", String(isAnalytics));
+  if (t3) t3.setAttribute("aria-selected", String(isRotation));
 }
 
 function showBootError(message) {
@@ -462,6 +468,7 @@ function collectYamlFromCards(container) {
 
 let marketLoaded = false;
 let analyticsLoaded = false;
+let rotationLoaded = false;
 
 async function loadMarketConfig() {
   const r = await jget("/api/config/market_data");
@@ -503,6 +510,28 @@ async function saveAnalyticsConfig() {
   await jpost("/api/config/analytics/save", { text: String(text ?? "") });
 }
 
+async function loadRotationConfig() {
+  const r = await jget("/api/config/rotation");
+  const text = (r.data || {}).text ?? "";
+  const api = yamlApi();
+  const doc = api.load(String(text || ""));
+  const container = qs("rotationCards");
+  const docsByKey = {
+    pool: "初选池与多源合并配置（静态/环境变量/观察池）。",
+    three_factor_v2: "三维共振权重与情绪门闸配置。",
+    indicator_migration: "评分引擎路由（primary/shadow/rollback）。",
+    filters: "基础过滤阈值（相关性/均线/回撤等）。",
+  };
+  renderYamlCards({ container, doc, docsByKey });
+  rotationLoaded = true;
+}
+
+async function saveRotationConfig() {
+  const container = qs("rotationCards");
+  const text = collectYamlFromCards(container);
+  await jpost("/api/config/rotation/save", { text: String(text ?? "") });
+}
+
 // tab handlers
 qs("tab-chart")?.addEventListener("click", () => setView("chart"));
 qs("tab-config")?.addEventListener("click", () => setView("config"));
@@ -516,11 +545,17 @@ qs("subtab-analytics")?.addEventListener("click", async () => {
   setConfigSubview("analytics");
   if (!analyticsLoaded) await loadAnalyticsConfig();
 });
+qs("subtab-rotation")?.addEventListener("click", async () => {
+  setConfigSubview("rotation");
+  if (!rotationLoaded) await loadRotationConfig();
+});
 
 qs("btnMarketLoad")?.addEventListener("click", loadMarketConfig);
 qs("btnMarketSave")?.addEventListener("click", saveMarketConfig);
 qs("btnAnalyticsLoad")?.addEventListener("click", loadAnalyticsConfig);
 qs("btnAnalyticsSave")?.addEventListener("click", saveAnalyticsConfig);
+qs("btnRotationLoad")?.addEventListener("click", loadRotationConfig);
+qs("btnRotationSave")?.addEventListener("click", saveRotationConfig);
 
 export { setView };
 

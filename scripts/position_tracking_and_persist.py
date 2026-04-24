@@ -44,7 +44,7 @@ def _run_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
 def main() -> int:
     trade_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     run_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
-    depends_on = ["nightly-stock-screening"]
+    depends_on: list[str] = []
     session_type = str(os.environ.get("ORCH_SESSION_TYPE") or "").strip().lower()
     is_manual_session = session_type == "manual"
 

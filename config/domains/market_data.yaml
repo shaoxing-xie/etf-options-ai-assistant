@@ -152,13 +152,13 @@ tushare:
 iopv_fallback:
   manual_iopv_overrides:
     '513300':
-      iopv: 2.2493
+      iopv: 2.2901
       source: manual_after_14_00
-      updated_date: '2026-04-22'
+      updated_date: '2026-04-24'
     '513880':
-      iopv: 1.8604
+      iopv: 1.852
       source: manual_after_14_00
-      updated_date: '2026-04-22'
+      updated_date: '2026-04-24'
 wide_inspection_overnight_refs:
   sources:
     a50_futures:

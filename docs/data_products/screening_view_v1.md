@@ -13,6 +13,7 @@
 - `candidates.nightly / candidates.tail`
 - `performance_context / effect_stats`
 - `tail_paradigm_pools`
+- `tail_source`（可选，API 读取时由 `data/tail_screening` 合并，便于 UI 展示 run_id/summary；落盘 JSON 可无此键）
 - `task_execution_monitor`
 - `sector_rotation_heatmap`
 - `_meta.quality_status / lineage_refs`

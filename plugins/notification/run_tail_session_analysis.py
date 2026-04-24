@@ -201,10 +201,10 @@ def _build_monitor_projection(
     mapping: Dict[str, Tuple[str, List[Tuple[str, float]]]] = {
         "M1": ("今日全天区间", [("day_low", low), ("day_high", high), ("day_center", center)]),
         "M2": ("早盘剩余区间", [("morning_low", low), ("morning_high", high), ("morning_close_ref", center)]),
-        "M3": ("午盘开盘区间", [("afternoon_open_low", low), ("afternoon_open_high", high), ("key_mid", center)]),
+        "M3": ("收官前结构", [("am_close_low", low), ("am_close_high", high), ("noon_open_ref", center)]),
         "M4": ("午盘完整区间", [("afternoon_low", low), ("afternoon_high", high), ("afternoon_center", center)]),
-        "M5": ("下午剩余区间", [("pm_low", low), ("pm_high", high), ("close_ref", center)]),
-        "M6": ("尾盘前区间", [("tail_low", low), ("tail_high", high), ("tail_center", center)]),
+        "M5": ("下午剩余区间", [("pm_remaining_low", low), ("pm_remaining_high", high), ("t0_takeprofit_ref", center)]),
+        "M6": ("尾盘前区间", [("close_window_low", low), ("close_window_high", high), ("overnight_risk_ref", center)]),
         "M7": ("次日开盘区间", [("next_open_low", center - span * 0.35), ("next_open_high", center + span * 0.35), ("next_open_ref", center)]),
     }
     label, rows = mapping.get(mp, ("分时区间预测", [("range_low", low), ("range_high", high), ("range_center", center)]))
@@ -234,12 +234,13 @@ def _safe_step(
         return None
 
 
-def _load_tail_cfg() -> Dict[str, Any]:
+def _load_tail_cfg(market_profile: str = "nikkei_513880") -> Dict[str, Any]:
     try:
         from src.config_loader import load_system_config
 
         cfg = load_system_config(use_cache=True)
-        seg = cfg.get("nikkei_tail_session")
+        seg_key = "nasdaq_tail_session_513300" if market_profile == "nasdaq_513300" else "nikkei_tail_session"
+        seg = cfg.get(seg_key)
         return seg if isinstance(seg, dict) else {}
     except Exception as e:
         logger.warning("tail_runner load config failed: %s", e)
@@ -427,6 +428,255 @@ def _fetch_yf_index_closes(symbol: str, lookback_days: int = 120) -> List[float]
         return []
 
 
+def _fetch_nikkei_futures_snapshot() -> Dict[str, Any]:
+    """
+    期指参考层（非强依赖）：
+    - 优先 NIY=F（JPY 计价）
+    - 备选 NKD=F（USD 计价）
+    失败时返回 unavailable，不影响主流程。
+    """
+    symbols = ("NIY=F", "NKD=F")
+    try:
+        import yfinance as yf  # type: ignore
+    except Exception as e:
+        return {"status": "unavailable", "reason": f"import_error:{e}"}
+
+    for sym in symbols:
+        try:
+            t = yf.Ticker(sym)
+            fi = getattr(t, "fast_info", {}) or {}
+            last = _safe_float(fi.get("lastPrice"))
+            prev = _safe_float(fi.get("previousClose"))
+            day_high = _safe_float(fi.get("dayHigh"))
+            day_low = _safe_float(fi.get("dayLow"))
+            if last is None:
+                hist = t.history(period="2d", interval="1h")
+                if hist is not None and not getattr(hist, "empty", True):
+                    last = _safe_float(hist["Close"].iloc[-1])
+                    if len(hist) >= 2:
+                        prev = _safe_float(hist["Close"].iloc[-2])
+                    if day_high is None:
+                        day_high = _safe_float(hist["High"].max())
+                    if day_low is None:
+                        day_low = _safe_float(hist["Low"].min())
+            if last is None:
+                continue
+            change_pct = ((last - prev) / prev * 100.0) if (prev is not None and prev != 0) else None
+            return {
+                "status": "ok",
+                "symbol": sym,
+                "price": last,
+                "prev_close": prev,
+                "change_pct": change_pct,
+                "day_high": day_high,
+                "day_low": day_low,
+                "exchange": str(fi.get("exchange") or ""),
+                "currency": str(fi.get("currency") or ""),
+            }
+        except Exception:
+            continue
+    return {"status": "unavailable", "reason": "all_symbols_failed"}
+
+
+def _fetch_nq_futures_snapshot() -> Dict[str, Any]:
+    try:
+        import yfinance as yf  # type: ignore
+    except Exception as e:
+        return {"status": "unavailable", "reason": f"import_error:{e}"}
+    try:
+        ticker = yf.Ticker("NQ=F")
+        fi = getattr(ticker, "fast_info", {}) or {}
+        last = _safe_float(fi.get("lastPrice"))
+        prev = _safe_float(fi.get("previousClose"))
+        if last is None:
+            hist = ticker.history(period="2d", interval="15m")
+            if hist is not None and not getattr(hist, "empty", True):
+                last = _safe_float(hist["Close"].iloc[-1])
+                if len(hist) >= 2:
+                    prev = _safe_float(hist["Close"].iloc[-2])
+        if last is None:
+            return {"status": "unavailable", "reason": "no_quote"}
+        change_pct = ((last - prev) / prev * 100.0) if (prev is not None and prev != 0) else None
+        return {"status": "ok", "symbol": "NQ=F", "price": last, "prev_close": prev, "change_pct": change_pct}
+    except Exception as e:
+        return {"status": "unavailable", "reason": f"query_error:{e}"}
+
+
+def _nasdaq_futures_weight(monitor_point: str) -> float:
+    mapping = {
+        "M1": 0.20,
+        "M2": 0.35,
+        "M3": 0.50,
+        "M4": 0.60,
+        "M5": 0.75,
+        "M6": 0.90,
+        "M7": 1.0,
+    }
+    return float(mapping.get(str(monitor_point or "M7").upper(), 1.0))
+
+
+def _resolve_action_from_deviation(
+    deviation_pct: Optional[float],
+    nq_futures_15m_pct: Optional[float],
+    tug_of_war_pct: Optional[float],
+) -> Tuple[str, List[str]]:
+    hits: List[str] = []
+    if deviation_pct is not None:
+        if deviation_pct > 2.0:
+            hits.append("R1")
+        elif deviation_pct > 0.5:
+            hits.append("R2")
+        elif deviation_pct < -2.0:
+            hits.append("R3")
+    if tug_of_war_pct is not None and abs(tug_of_war_pct) >= 1.0:
+        hits.append("R4")
+    if nq_futures_15m_pct is not None and abs(nq_futures_15m_pct) > 1.0:
+        hits.append("R5")
+
+    if "R1" in hits:
+        return "WAIT", hits
+    if "R5" in hits:
+        return "WAIT", hits
+    if "R4" in hits:
+        return "WAIT", hits
+    if "R2" in hits:
+        return "GO_LIGHT", hits
+    if "R3" in hits:
+        return "GO_LIGHT", hits
+    return "GO", hits
+
+
+def _build_nikkei_pattern_alerts(
+    monitor_point: str,
+    deviation_pct: Optional[float],
+    action_state: str,
+    used_futures_fallback: bool,
+) -> List[Dict[str, Any]]:
+    alerts: List[Dict[str, Any]] = []
+    mp = str(monitor_point or "").upper()
+    if deviation_pct is not None and deviation_pct > 2.0:
+        alerts.append(
+            {
+                "rule_id": "R1",
+                "severity": "high",
+                "recommended_action": action_state,
+                "evidence": f"deviation_pct={deviation_pct:.2f}% > 2.00%",
+                "message": "ETF相对日经指数偏离过大，溢价风险升高，暂停追高。",
+            }
+        )
+    elif deviation_pct is not None and deviation_pct > 0.5:
+        alerts.append(
+            {
+                "rule_id": "R2",
+                "severity": "medium",
+                "recommended_action": action_state,
+                "evidence": f"0.50% < deviation_pct={deviation_pct:.2f}% <= 2.00%",
+                "message": "ETF相对指数轻度偏高，建议降仓或分批执行。",
+            }
+        )
+    elif deviation_pct is not None and deviation_pct < -2.0:
+        alerts.append(
+            {
+                "rule_id": "R3",
+                "severity": "medium",
+                "recommended_action": action_state,
+                "evidence": f"deviation_pct={deviation_pct:.2f}% < -2.00%",
+                "message": "ETF相对指数出现折价，关注修复机会但避免重仓。",
+            }
+        )
+    if mp == "M2" and deviation_pct is not None and deviation_pct > 1.5 and len(alerts) < 3:
+        alerts.append(
+            {
+                "rule_id": "JP_M2",
+                "severity": "medium",
+                "recommended_action": action_state,
+                "evidence": f"M2 deviation_pct={deviation_pct:.2f}%",
+                "message": "开盘偏离较大，警惕情绪透支导致回撤。",
+            }
+        )
+    if mp == "M6" and deviation_pct is not None and deviation_pct > 2.0 and len(alerts) < 3:
+        alerts.append(
+            {
+                "rule_id": "JP_M6",
+                "severity": "high",
+                "recommended_action": "EXIT_REDUCE",
+                "evidence": f"M6 deviation_pct={deviation_pct:.2f}%",
+                "message": "尾盘仍高偏离，建议减仓/不留隔夜，防范溢价回落。",
+            }
+        )
+    if used_futures_fallback and len(alerts) < 3:
+        alerts.append(
+            {
+                "rule_id": "JP_FALLBACK",
+                "severity": "medium",
+                "recommended_action": action_state,
+                "evidence": "nikkei_spot_unavailable -> futures_fallback",
+                "message": "日经指数实时不可用，当前基于期指代理判断，建议保守执行。",
+            }
+        )
+    return alerts[:3]
+
+
+def _build_nasdaq_pattern_alerts(
+    deviation_pct: Optional[float],
+    tug_of_war_pct: Optional[float],
+    nq_futures_15m_pct: Optional[float],
+    action_state: str,
+) -> List[Dict[str, Any]]:
+    alerts: List[Dict[str, Any]] = []
+    if deviation_pct is not None and deviation_pct > 2.0:
+        alerts.append(
+            {
+                "rule_id": "R1",
+                "severity": "high",
+                "recommended_action": action_state,
+                "evidence": f"deviation_pct={deviation_pct:.2f}% > 2.00%",
+                "message": "显著溢价代理，暂停新增（WAIT）",
+            }
+        )
+    elif deviation_pct is not None and deviation_pct > 0.5:
+        alerts.append(
+            {
+                "rule_id": "R2",
+                "severity": "medium",
+                "recommended_action": action_state,
+                "evidence": f"0.50% < deviation_pct={deviation_pct:.2f}% <= 2.00%",
+                "message": "轻度溢价代理，降仓执行（GO_LIGHT）",
+            }
+        )
+    elif deviation_pct is not None and deviation_pct < -2.0:
+        alerts.append(
+            {
+                "rule_id": "R3",
+                "severity": "medium",
+                "recommended_action": action_state,
+                "evidence": f"deviation_pct={deviation_pct:.2f}% < -2.00%",
+                "message": "折价代理，关注分批修复（轻仓）",
+            }
+        )
+    if tug_of_war_pct is not None and abs(tug_of_war_pct) >= 1.0 and len(alerts) < 3:
+        alerts.append(
+            {
+                "rule_id": "R4",
+                "severity": "medium",
+                "recommended_action": action_state,
+                "evidence": f"abs(intraday_pct-overnight_proxy_pct)={abs(tug_of_war_pct):.2f}% >= 1.00%",
+                "message": "隔夜-日间拉锯，警惕修正",
+            }
+        )
+    if nq_futures_15m_pct is not None and abs(nq_futures_15m_pct) > 1.0 and len(alerts) < 3:
+        alerts.append(
+            {
+                "rule_id": "R5",
+                "severity": "high",
+                "recommended_action": action_state,
+                "evidence": f"abs(nq_futures_15m_pct)={abs(nq_futures_15m_pct):.2f}% > 1.00%",
+                "message": "期指波动过大，暂停新增建议（WAIT优先）",
+            }
+        )
+    return alerts[:3]
+
+
 def _layer_cycle(ma25_dev: Optional[float], rsi14: Optional[float], close: Optional[float], ma25: Optional[float]) -> Dict[str, Any]:
     regime = "震荡"
     if close is not None and ma25 is not None:
@@ -562,7 +812,7 @@ def build_tail_session_report_data(
     monitor_bundle: Optional[str] = None,
 ) -> Tuple[Dict[str, Any], List[Dict[str, str]]]:
     errors: List[Dict[str, str]] = []
-    cfg = _load_tail_cfg()
+    cfg = _load_tail_cfg(market_profile)
     market_cfg = _load_market_data_cfg()
     mode = fetch_mode if fetch_mode in ("production", "test") else "production"
     if market_profile == "nasdaq_513300":
@@ -582,9 +832,12 @@ def build_tail_session_report_data(
     safe = open_safe_step if callable(open_safe_step) else _safe_step
 
     monitor_ctx = _resolve_monitor_context(monitor_point, monitor_bundle)
+    mp = str(monitor_ctx.get("monitor_point") or "M7")
+    monitor_ctx["template_mode"] = "full" if mp in {"M1", "M7"} else "quick"
     rd: Dict[str, Any] = {
         "report_type": "tail_session",
         "runner_version": "tail_session_analysis_v1",
+        "market_profile": market_profile,
         "monitor_context": monitor_ctx,
     }
     now = _now_sh()
@@ -737,26 +990,27 @@ def build_tail_session_report_data(
     streak, day_ret, streak_ret = _calc_streak_and_return(closes)
     index_close = close
     index_day_ret_pct = day_ret
-    if market_profile == "nasdaq_513300" and isinstance(overnight, dict):
+    if market_profile in {"nasdaq_513300", "nikkei_513880"} and isinstance(overnight, dict):
         spot_rows = overnight.get("data")
         if isinstance(spot_rows, list):
-            ixic_row = next(
+            target_code = "^IXIC" if market_profile == "nasdaq_513300" else "^N225"
+            target_row = next(
                 (
                     x
                     for x in spot_rows
-                    if isinstance(x, dict) and str(x.get("code") or "").strip().upper() == "^IXIC"
+                    if isinstance(x, dict) and str(x.get("code") or "").strip().upper() == target_code
                 ),
                 None,
             )
-            if isinstance(ixic_row, dict):
-                ixic_price = _safe_float(ixic_row.get("price"))
-                if ixic_price is None:
-                    ixic_price = _safe_float(ixic_row.get("latest_price"))
-                ixic_ret = _safe_float(ixic_row.get("change_pct"))
-                if not hist_rows and ixic_price is not None:
-                    index_close = ixic_price
-                if not hist_rows and ixic_ret is not None:
-                    index_day_ret_pct = ixic_ret
+            if isinstance(target_row, dict):
+                idx_price = _safe_float(target_row.get("price"))
+                if idx_price is None:
+                    idx_price = _safe_float(target_row.get("latest_price"))
+                idx_ret = _safe_float(target_row.get("change_pct"))
+                if not hist_rows and idx_price is not None:
+                    index_close = idx_price
+                if idx_ret is not None:
+                    index_day_ret_pct = idx_ret
 
     iopv_source = "realtime" if (iopv_val is not None and premium_pct is not None) else "unavailable"
     manual_iopv = _resolve_manual_iopv(market_cfg, etf_code=etf_code, trade_date=rd["trade_date"])
@@ -769,13 +1023,52 @@ def build_tail_session_report_data(
         iopv_val = _safe_float(iopv_est_pack.get("iopv_est"))
         premium_pct = _safe_float(iopv_est_pack.get("premium_est"))
         iopv_source = "estimated"
+    if market_profile in {"nasdaq_513300", "nikkei_513880"}:
+        # 513300 以偏离代理门禁为主，不依赖 IOPV 口径
+        iopv_val = None
+        premium_pct = None
+        iopv_source = "proxy_deviation"
 
     manager_notice = bool((cfg.get("risk_notice_state") or {}).get("manager_premium_notice", False))
+    resolved_mp = str(monitor_ctx.get("monitor_point") or "M7")
+    overnight_proxy_pct = _safe_float(index_day_ret_pct)
+    etf_actual_pct = _safe_float((rt_row or {}).get("change_pct"))
+    if etf_actual_pct is None and latest_price is not None and hist_close not in (None, 0):
+        etf_actual_pct = (latest_price - float(hist_close)) / float(hist_close) * 100.0
+    futures_ref = _fetch_nikkei_futures_snapshot() if market_profile == "nikkei_513880" else _fetch_nq_futures_snapshot()
+    futures_change_pct = _safe_float(futures_ref.get("change_pct"))
+    futures_weight = _nasdaq_futures_weight(resolved_mp) if market_profile == "nasdaq_513300" else 0.0
+    beta_track = float((cfg.get("deviation_proxy") or {}).get("beta_track", 0.95)) if isinstance(cfg.get("deviation_proxy"), dict) else 0.95
+    fx_adj_pct = float((cfg.get("deviation_proxy") or {}).get("fx_adj_pct", 0.0)) if isinstance(cfg.get("deviation_proxy"), dict) else 0.0
+    etf_expected_pct: Optional[float] = None
+    deviation_pct: Optional[float] = None
+    deviation_trend = "sideways"
+    used_futures_fallback = False
+    if market_profile == "nasdaq_513300" and overnight_proxy_pct is not None:
+        etf_expected_pct = (overnight_proxy_pct + futures_weight * float(futures_change_pct or 0.0)) * beta_track + fx_adj_pct
+        if etf_actual_pct is not None:
+            deviation_pct = etf_actual_pct - etf_expected_pct
+            if deviation_pct > 0.3:
+                deviation_trend = "expanding"
+            elif deviation_pct < -0.3:
+                deviation_trend = "converging"
+    elif market_profile == "nikkei_513880":
+        if overnight_proxy_pct is not None:
+            etf_expected_pct = overnight_proxy_pct
+        elif futures_change_pct is not None:
+            etf_expected_pct = futures_change_pct
+            used_futures_fallback = True
+        if etf_expected_pct is not None and etf_actual_pct is not None:
+            deviation_pct = etf_actual_pct - etf_expected_pct
+            if deviation_pct > 0.3:
+                deviation_trend = "expanding"
+            elif deviation_pct < -0.3:
+                deviation_trend = "converging"
+
     layer_cycle = _layer_cycle(ma25_dev, rsi14, close, ma25)
-    # 513880 六时点方案下，溢价不作为核心门槛，这里保留入参兼容但传 None。
     layer_timing = _layer_timing(streak, None, rsi14, ma25_dev, cfg)
     layer_risk = _layer_risk(None, amount, manager_notice, cfg)
-    if iopv_source in ("estimated", "unavailable"):
+    if market_profile not in {"nasdaq_513300", "nikkei_513880"} and iopv_source in ("estimated", "unavailable"):
         gate_hits = list(layer_risk.get("gate_hits") or [])
         gate_tag = "iopv_estimated_only" if iopv_source == "estimated" else "iopv_unavailable"
         if gate_tag not in gate_hits:
@@ -802,10 +1095,12 @@ def build_tail_session_report_data(
         },
         cfg,
     )
-    if iopv_source == "estimated":
+    if market_profile != "nasdaq_513300" and iopv_source == "estimated":
         risk_notices.insert(0, "IOPV/溢价率当前为估算值，仅可作风险参考，建议保守执行。")
-    if iopv_source == "unavailable":
+    if market_profile != "nasdaq_513300" and iopv_source == "unavailable":
         risk_notices.insert(0, "IOPV/溢价率当前不可用，已自动进入保守门禁（仅允许持有/减仓/观望）。")
+    if market_profile == "nikkei_513880" and used_futures_fallback:
+        risk_notices.insert(0, "日经指数实时数据不可用，当前使用日经期指代理，建议保守执行。")
     tech_cfg = cfg.get("technical_thresholds") if isinstance(cfg.get("technical_thresholds"), dict) else {}
     ma_over = float(tech_cfg.get("ma25_dev_overheat", 5.0))
     rsi_over = float(tech_cfg.get("rsi_overbought", 70))
@@ -829,17 +1124,44 @@ def build_tail_session_report_data(
     }
     range_pred = _predict_intraday_bands(latest_price, closes, cfg)
     monitor_projection = _build_monitor_projection(str(monitor_ctx.get("monitor_point") or "M7"), latest_price, range_pred)
+    tug_of_war_pct = None
+    if etf_actual_pct is not None and overnight_proxy_pct is not None:
+        tug_of_war_pct = etf_actual_pct - overnight_proxy_pct
+    action_state = _classify_action_state(layer_risk.get("gate_hits") or [], float(range_pred.get("confidence") or 0.0))
+    pattern_alerts: List[Dict[str, Any]] = []
+    if market_profile == "nasdaq_513300":
+        action_state, rule_hits = _resolve_action_from_deviation(deviation_pct, futures_change_pct, tug_of_war_pct)
+        gate_hits = list(layer_risk.get("gate_hits") or [])
+        for rid in rule_hits:
+            if rid not in gate_hits:
+                gate_hits.append(rid)
+        layer_risk["gate_hits"] = gate_hits
+        pattern_alerts = _build_nasdaq_pattern_alerts(deviation_pct, tug_of_war_pct, futures_change_pct, action_state)
+    elif market_profile == "nikkei_513880":
+        action_state, rule_hits = _resolve_action_from_deviation(deviation_pct, futures_change_pct, tug_of_war_pct)
+        gate_hits = list(layer_risk.get("gate_hits") or [])
+        for rid in rule_hits:
+            if rid not in gate_hits:
+                gate_hits.append(rid)
+        if used_futures_fallback and "JP_FALLBACK" not in gate_hits:
+            gate_hits.append("JP_FALLBACK")
+        layer_risk["gate_hits"] = gate_hits
+        pattern_alerts = _build_nikkei_pattern_alerts(resolved_mp, deviation_pct, action_state, used_futures_fallback)
     signal_board = {
         "direction_score": round((index_day_ret_pct or 0.0), 4),
         "strength_score": round(abs(index_day_ret_pct or 0.0) + abs(streak or 0) * 0.2, 4),
         "confidence": range_pred.get("confidence", 0.0),
-        "futures_status": "unknown",
+        "futures_status": str(futures_ref.get("status") or "unavailable"),
+        "futures_symbol": futures_ref.get("symbol"),
+        "futures_change_pct": _safe_float(futures_ref.get("change_pct")),
+        "overnight_ndx_pct": overnight_proxy_pct,
+        "nq_futures_15m_pct": futures_change_pct if market_profile == "nasdaq_513300" else None,
+        "nikkei_index_pct": overnight_proxy_pct if market_profile == "nikkei_513880" else None,
         "monitor_point": monitor_ctx.get("monitor_point"),
         "target_window": monitor_ctx.get("target_window"),
         "predicted_band": range_pred.get("core_range"),
         "predicted_band_width_pct": range_pred.get("core_width_pct"),
     }
-    action_state = _classify_action_state(layer_risk.get("gate_hits") or [], float(range_pred.get("confidence") or 0.0))
     risk_gate = {
         "liquidity_amount": amount,
         "fx_risk_multiplier": 1.0,
@@ -873,13 +1195,27 @@ def build_tail_session_report_data(
         "action_paths": action_paths,
         "range_prediction": range_pred,
         "monitor_projection": monitor_projection,
+        "deviation_proxy": {
+            "expected_pct": etf_expected_pct,
+            "actual_pct": etf_actual_pct,
+            "deviation_pct": deviation_pct,
+            "deviation_trend": deviation_trend,
+            "beta_track": beta_track if market_profile == "nasdaq_513300" else None,
+            "futures_weight": futures_weight if market_profile == "nasdaq_513300" else None,
+            "expected_source": "nikkei_index_spot" if (market_profile == "nikkei_513880" and not used_futures_fallback) else ("nikkei_futures_fallback" if market_profile == "nikkei_513880" else "overnight_plus_futures"),
+        },
+        "pattern_alerts": pattern_alerts,
+        "futures_reference": futures_ref,
         "monitor_context": monitor_ctx,
     }
-    run_id = f"nikkei-{now.strftime('%Y%m%d-%H%M%S')}-{monitor_ctx.get('monitor_point')}"
+    profile_prefix = "nasdaq" if market_profile == "nasdaq_513300" else "nikkei"
+    run_id = f"{profile_prefix}-{now.strftime('%Y%m%d-%H%M%S')}-{monitor_ctx.get('monitor_point')}"
+    schema_name = "nasdaq_513300_monitor_event" if market_profile == "nasdaq_513300" else "nikkei_513880_monitor_event"
+    semantic_dataset = "nasdaq_513300_intraday_dashboard_view" if market_profile == "nasdaq_513300" else "nikkei_513880_intraday_dashboard_view"
     rd["_meta"] = {
-        "schema_name": "nikkei_513880_monitor_event",
+        "schema_name": schema_name,
         "schema_version": "1.0.0",
-        "task_id": f"etf-nikkei-{monitor_ctx.get('monitor_point', 'M7').lower()}-513880",
+        "task_id": f"etf-{profile_prefix}-{monitor_ctx.get('monitor_point', 'M7').lower()}-{'513300' if market_profile == 'nasdaq_513300' else '513880'}",
         "run_id": run_id,
         "data_layer": "L3",
         "generated_at": rd["generated_at"],
@@ -893,13 +1229,14 @@ def build_tail_session_report_data(
         "quality_status": risk_gate.get("quality_status", "ok"),
     }
     rd["semantic_view"] = {
-        "dataset": "nikkei_513880_intraday_dashboard_view",
+        "dataset": semantic_dataset,
         "monitor_point": monitor_ctx.get("monitor_point"),
         "target_window": monitor_ctx.get("target_window"),
         "core_range": range_pred.get("core_range"),
         "safe_range": range_pred.get("safe_range"),
         "projection_label": monitor_projection.get("projection_label"),
         "action_paths": action_paths,
+        "deviation_proxy": rd.get("analysis", {}).get("deviation_proxy") if isinstance(rd.get("analysis"), dict) else None,
     }
     td_reasons = layer_timing.get("reasons") if isinstance(layer_timing.get("reasons"), list) else []
     if "过热/连续上涨" in td_reasons:
