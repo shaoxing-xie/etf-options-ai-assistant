@@ -31,6 +31,26 @@ _INSPECTION_STATUS_RE = re.compile(r"(?m)^INSPECTION_RUN_STATUS:\s*(?P<status>.+
 DEFAULT_DINGTALK_MAX_CHARS_HARD_CEILING = 20000
 
 
+_CONFIG_ENV_LOADED = False
+
+
+def _ensure_config_env_loaded() -> None:
+    """
+    确保已加载项目根与 ~/.openclaw/.env。
+
+    - cron / OpenClaw agentTurn 环境通常已注入，但本地脚本/单测/临时 python -c 可能未加载；
+    - 这里采用与 tavily_client 同类的“轻量兜底”：导入 config_loader 触发副作用加载 env。
+    """
+    global _CONFIG_ENV_LOADED
+    if _CONFIG_ENV_LOADED:
+        return
+    _CONFIG_ENV_LOADED = True
+    try:
+        import src.config_loader  # noqa: F401  (side-effect: load .env)
+    except Exception:
+        pass
+
+
 def _dingtalk_max_chars_hard_ceiling() -> int:
     """钉钉单条正文硬顶：防止配置误写极大值；默认 20000（高于常见 4k 说法，仍以接口实测为准）。"""
     try:
@@ -99,6 +119,7 @@ _INSPECTION_SECTION_NORMALIZE = {
 
 
 def _get_env(name: str) -> Optional[str]:
+    _ensure_config_env_loaded()
     v = os.environ.get(name)
     if v is None:
         return None

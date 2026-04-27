@@ -5,6 +5,7 @@ import re
 import ast
 import urllib.request
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 from pathlib import Path
 from typing import Any
 
@@ -837,6 +838,31 @@ class SemanticReader:
             "run_date": run_date,
         }
 
+    def _tail_screening_data_quality(self, trade_date: str) -> dict[str, Any]:
+        """拆分尾盘任务质量：执行成功与数据降级分开呈现。"""
+        td = str(trade_date or "").strip()
+        tail_obj = self._tail.read_by_date(td) if validate_screening_date_key(td) else None
+        if not isinstance(tail_obj, dict):
+            tail_obj = self._tail.read_latest() or {}
+        if not isinstance(tail_obj, dict) or not tail_obj:
+            return {"status": "unknown", "reasons": ["tail_result_missing"]}
+        summary = tail_obj.get("summary") if isinstance(tail_obj.get("summary"), dict) else {}
+        tool_trace = tail_obj.get("tool_trace") if isinstance(tail_obj.get("tool_trace"), dict) else {}
+        reasons: list[str] = []
+        if bool(summary.get("degraded_mode")):
+            reasons.append("degraded_mode")
+        upstream = summary.get("upstream_health") if isinstance(summary.get("upstream_health"), dict) else {}
+        if upstream:
+            if not bool(upstream.get("overall_ok")):
+                reasons.append("upstream_health_not_ok")
+            sector = upstream.get("sector_rank") if isinstance(upstream.get("sector_rank"), dict) else {}
+            if not bool(sector.get("ok")):
+                reasons.append("sector_rank_unavailable")
+        north = tool_trace.get("northbound_trace") if isinstance(tool_trace.get("northbound_trace"), dict) else {}
+        if str(north.get("status") or "").strip().lower() == "degraded":
+            reasons.append("northbound_unavailable")
+        return {"status": ("degraded" if reasons else "ok"), "reasons": reasons}
+
     def _tail_screening_run_guard_error(self, finished_row: dict[str, Any]) -> dict[str, Any]:
         """识别 cron finished.status=ok 但 summary 已包含硬错误哨兵的情况。"""
         if not isinstance(finished_row, dict):
@@ -897,14 +923,19 @@ class SemanticReader:
         collection: list[dict[str, Any]] = []
         task_health: list[dict[str, Any]] = []
         tail_domain_error = self._tail_screening_domain_error(td or _today_utc())
+        tail_data_quality = self._tail_screening_data_quality(td or _today_utc())
         for job in jobs:
             task_id = str(job.get("id") or "")
             payload = job.get("payload") if isinstance(job.get("payload"), dict) else {}
             tools = payload.get("toolsAllow") if isinstance(payload.get("toolsAllow"), list) else []
             state = job.get("state") if isinstance(job.get("state"), dict) else {}
             consecutive = state.get("consecutiveErrors")
+            try:
+                consecutive_n = int(consecutive) if consecutive is not None else None
+            except Exception:
+                consecutive_n = None
             status = state.get("lastRunStatus") or state.get("lastStatus")
-            quality_status = "degraded" if (isinstance(consecutive, int) and consecutive > 0) else "ok"
+            quality_status = "degraded" if (isinstance(consecutive_n, int) and consecutive_n > 0) else "ok"
             row = {
                 "task_id": task_id,
                 "name": str(job.get("name") or ""),
@@ -913,7 +944,7 @@ class SemanticReader:
                 "last_run_status": status,
                 "last_run_at_ms": state.get("lastRunAtMs"),
                 "next_run_at_ms": state.get("nextRunAtMs"),
-                "consecutive_errors": consecutive,
+                "consecutive_errors": consecutive_n if consecutive_n is not None else consecutive,
                 "tools_allow": tools,
                 "quality_status": quality_status,
                 "lineage_refs": [lineage],
@@ -923,6 +954,7 @@ class SemanticReader:
             if not run_status and row["enabled"]:
                 run_status = "never-ran"
             run_error = str(last_finished.get("error") or state.get("lastError") or "")
+            run_summary = str(last_finished.get("summary") or "")
             run_log_path = str(self._ops_runs_dir() / f"{task_id}.jsonl")
             row["last_run_status"] = run_status or row.get("last_run_status")
             row["last_run_at_ms"] = last_finished.get("ts") or row.get("last_run_at_ms")
@@ -958,7 +990,23 @@ class SemanticReader:
                 row["monitor_group"] = nasdaq_execution_audit_jobs[task_id]
                 row["status"] = run_status or "unknown"
 
-            health_quality = "degraded" if run_status == "error" or (isinstance(consecutive, int) and consecutive > 0) else "ok"
+            pseudo_error = "ERROR_NO_DELIVERY_TOOL_CALL" in run_summary
+            noop = any(x in run_summary for x in ("duplicate_trigger", "already-running", "noop"))
+            tail_data_degraded = (
+                task_id == "intraday-tail-screening"
+                and str(tail_data_quality.get("status") or "") == "degraded"
+            )
+            if pseudo_error:
+                health_quality = "error"
+            elif isinstance(consecutive_n, int) and consecutive_n > 0:
+                health_quality = "degraded"
+            elif run_status == "error":
+                health_quality = "error"
+            else:
+                health_quality = "ok"
+            run_quality = "error" if (run_status == "error" or pseudo_error) else ("noop" if noop else "ok_full")
+            if run_quality == "ok_full" and tail_data_degraded:
+                run_quality = "ok_degraded"
             task_health.append(
                 {
                     "task_id": task_id,
@@ -967,11 +1015,24 @@ class SemanticReader:
                     "schedule": self._schedule_label(job.get("schedule") if isinstance(job.get("schedule"), dict) else {}),
                     "last_run_status": run_status,
                     "quality_status": health_quality,
-                    "consecutive_errors": consecutive,
+                    "consecutive_errors": consecutive_n if consecutive_n is not None else consecutive,
                     "last_run_at_ms": last_finished.get("ts") or state.get("lastRunAtMs"),
                     "next_run_at_ms": state.get("nextRunAtMs"),
                     "duration_ms": last_finished.get("durationMs") or state.get("lastDurationMs"),
                     "error": run_error,
+                    "summary": run_summary,
+                    "run_quality": run_quality,
+                    "execution_status": "error" if run_quality == "error" else ("ok" if run_quality.startswith("ok_") or run_quality == "ok_full" else run_quality),
+                    "data_quality_status": (
+                        str(tail_data_quality.get("status") or "unknown")
+                        if task_id == "intraday-tail-screening"
+                        else ("degraded" if health_quality == "degraded" else "ok")
+                    ),
+                    "data_quality_reasons": (
+                        list(tail_data_quality.get("reasons") or [])
+                        if task_id == "intraday-tail-screening"
+                        else []
+                    ),
                     "repair_hint": self._repair_hint(run_error),
                     "domain_error_code": tail_domain_error.get("error_code")
                     if task_id == "intraday-tail-screening" and bool(tail_domain_error.get("is_error"))
@@ -998,6 +1059,7 @@ class SemanticReader:
                     [x for x in [str(task_health[-1].get("error") or ""), str(tail_guard_error.get("error") or "")] if x]
                 )
                 task_health[-1]["error"] = merged_err
+                task_health[-1]["execution_status"] = "error"
             elif task_id == "intraday-tail-screening" and bool(tail_domain_error.get("is_error")):
                 task_health[-1]["quality_status"] = "degraded"
                 task_health[-1]["last_run_status"] = "error:data_degraded"
@@ -1423,5 +1485,54 @@ class SemanticReader:
                 "trade_date": td,
                 "quality_status": "ok" if not unhealthy_tasks else "degraded",
                 "lineage_refs": [f"data/decisions/orchestration/events/{td}.jsonl"],
+            },
+        }
+
+    def _shanghai_today(self) -> str:
+        return datetime.now(ZoneInfo("Asia/Shanghai")).strftime("%Y-%m-%d")
+
+    def global_market_snapshot(self, trade_date: str) -> dict[str, Any]:
+        td = (trade_date or "").strip() or self._shanghai_today()
+        snap = _read_json(self.root / "data" / "semantic" / "global_market_snapshot" / f"{td}.json")
+        if isinstance(snap, dict) and snap.get("groups"):
+            return snap
+        return {
+            "trade_date": td,
+            "fetched_at": "",
+            "summary": {"overall_quality": "degraded", "note": "missing_semantic_file"},
+            "groups": [],
+            "_meta": {
+                "schema_name": "global_market_snapshot_v1",
+                "schema_version": "1.0.0",
+                "task_id": "global-market-snapshot",
+                "run_id": "",
+                "data_layer": "L4",
+                "generated_at": datetime.now(timezone.utc).isoformat(),
+                "trade_date": td,
+                "quality_status": "degraded",
+                "lineage_refs": [],
+            },
+        }
+
+    def qdii_futures_snapshot(self, trade_date: str) -> dict[str, Any]:
+        td = (trade_date or "").strip() or self._shanghai_today()
+        snap = _read_json(self.root / "data" / "semantic" / "qdii_futures_snapshot" / f"{td}.json")
+        if isinstance(snap, dict) and snap.get("groups"):
+            return snap
+        return {
+            "trade_date": td,
+            "fetched_at": "",
+            "summary": {"overall_quality": "degraded", "note": "missing_semantic_file"},
+            "groups": [],
+            "_meta": {
+                "schema_name": "qdii_futures_snapshot_v1",
+                "schema_version": "1.0.0",
+                "task_id": "qdii-futures-aggregation",
+                "run_id": "",
+                "data_layer": "L4",
+                "generated_at": datetime.now(timezone.utc).isoformat(),
+                "trade_date": td,
+                "quality_status": "degraded",
+                "lineage_refs": [],
             },
         }

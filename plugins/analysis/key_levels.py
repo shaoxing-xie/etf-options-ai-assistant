@@ -11,6 +11,7 @@ from typing import Any, Dict, List, Optional
 def tool_compute_index_key_levels(
     index_code: str = "000300",
     lookback_days: int = 120,
+    max_gap_pct: float = 0.035,
 ) -> Dict[str, Any]:
     """
     基于最近日线计算 2～3 个支撑位与压力位。
@@ -52,19 +53,31 @@ def tool_compute_index_key_levels(
         floor100 = (int(last) // 100) * 100
         ceil100 = ((int(last) + 99) // 100) * 100
 
-        supports: List[float] = []
-        for x in (ma20, recent_low, floor100):
-            if x < last - 1e-6 and x not in supports:
-                supports.append(round(x, 2))
-            if len(supports) >= 3:
-                break
+        def _gap_ok(x: float) -> bool:
+            if last <= 0:
+                return True
+            return abs(x - last) / last <= max(0.0, float(max_gap_pct))
 
-        resistances: List[float] = []
-        for x in (recent_high, ceil100, ma20):
-            if x > last + 1e-6 and x not in resistances:
-                resistances.append(round(x, 2))
-            if len(resistances) >= 3:
-                break
+        support_candidates = [x for x in (ma20, floor100, recent_low) if x < last - 1e-6]
+        resistance_candidates = [x for x in (ma20, ceil100, recent_high) if x > last + 1e-6]
+
+        # 先取距离昨收最近、且偏离不过大的位；避免输出远离当前价的历史极值（如 4418）
+        support_near = sorted(
+            [x for x in support_candidates if _gap_ok(x)],
+            key=lambda x: abs(last - x),
+        )
+        resistance_near = sorted(
+            [x for x in resistance_candidates if _gap_ok(x)],
+            key=lambda x: abs(x - last),
+        )
+        # 若附近无可用位，保留一个最近位，避免整段空白。
+        if not support_near and support_candidates:
+            support_near = [min(support_candidates, key=lambda x: abs(last - x))]
+        if not resistance_near and resistance_candidates:
+            resistance_near = [min(resistance_candidates, key=lambda x: abs(last - x))]
+
+        supports = [round(x, 2) for x in support_near[:3]]
+        resistances = [round(x, 2) for x in resistance_near[:3]]
 
         return {
             "success": True,
@@ -75,6 +88,7 @@ def tool_compute_index_key_levels(
                 "support": supports[:3],
                 "resistance": resistances[:3],
                 "note": "基于日线近似关键位，非精确交易价位",
+                "max_gap_pct": round(max(0.0, float(max_gap_pct)), 4),
             },
         }
     except Exception as e:

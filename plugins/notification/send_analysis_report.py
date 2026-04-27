@@ -125,8 +125,11 @@ def tool_send_analysis_report(
                     rt = outer.get("report_type")
                     break
 
-    # 兜底：如果是 etf_rotation_research 但缺少 llm_summary，发送工具自己回算，避免 N/A 退化
-    if rt == "etf_rotation_research":
+    # 兜底：如果是 etf_rotation_research 但缺少 llm_summary，历史上会在发送阶段“隐式回算”。
+    # 但该回算可能非常耗时（甚至触发在线补采/超时），反而让发送链路卡死。
+    # 因此默认禁用；仅当调用方显式允许时才启用。
+    allow_recompute = bool(kwargs.get("allow_recompute_missing_llm_summary", False))
+    if rt == "etf_rotation_research" and allow_recompute:
         has_llm = _maybe_get_llm_summary(report_data)
         if not has_llm:
             try:
@@ -154,12 +157,16 @@ def tool_send_analysis_report(
 
     is_prod = str(mode).lower() == "prod"
     if is_prod and rt == "etf_rotation_research":
+        # 约定：轮动 cron 任务“每次必发当次报告”，因此默认按每次运行生成独立 scope；
+        # 若确需“同日只发一次”，调用方可显式传 idempotency_scope="daily"。
+        scope = str(kwargs.get("idempotency_scope") or "run").strip() or "run"
         date_key = _today_key()
-        marker_path = _memory_dir() / f"etf_rotation_research_sent_{date_key}.json"
+        marker_path = _memory_dir() / f"etf_rotation_research_sent_{date_key}.{scope}.json"
         lock_path = marker_path.with_suffix(marker_path.suffix + ".lock")
+        legacy_marker_path = _memory_dir() / f"etf_rotation_research_sent_{date_key}.json"
 
         # 已发送：直接跳过（但返回 success=True，让 VERIFY_SEND 视作“已满足发送条件”）
-        if marker_path.exists():
+        if marker_path.exists() or (scope == "daily" and legacy_marker_path.exists()):
             return {"success": True, "skipped": True, "message": f"duplicate send skipped: {date_key}"}
 
         if not _try_acquire_lock(lock_path):

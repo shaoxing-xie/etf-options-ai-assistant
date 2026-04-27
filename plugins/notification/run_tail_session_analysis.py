@@ -9,11 +9,14 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import json
 import logging
 from pathlib import Path
 import re
-from typing import Any, Dict, List, Optional, Tuple
+import time
+from threading import Semaphore
+from typing import Any, Callable, Dict, List, Optional, Tuple
 from urllib.error import URLError
 from urllib.request import urlopen
 
@@ -26,6 +29,108 @@ except ImportError:  # pragma: no cover
 
 
 logger = logging.getLogger(__name__)
+
+
+def _stable_json_dumps(obj: Any) -> str:
+    try:
+        return json.dumps(obj, ensure_ascii=False, sort_keys=True, default=str)
+    except Exception:
+        return repr(obj)
+
+
+def _memo_key(fn: Callable[..., Any], args: Tuple[Any, ...], kwargs: Dict[str, Any]) -> str:
+    payload = {"fn": getattr(fn, "__name__", str(fn)), "args": args, "kwargs": kwargs}
+    return _stable_json_dumps(payload)
+
+
+class _StageBudget:
+    def __init__(self, budget_s: Optional[float]):
+        self.budget_s = budget_s if isinstance(budget_s, (int, float)) and float(budget_s) > 0 else None
+        self.started_at = time.perf_counter()
+
+    def remaining_s(self) -> Optional[float]:
+        if self.budget_s is None:
+            return None
+        rem = float(self.budget_s) - (time.perf_counter() - self.started_at)
+        return rem if rem > 0 else 0.0
+
+    def expired(self) -> bool:
+        rem = self.remaining_s()
+        return rem is not None and rem <= 0
+
+
+def _stage_budget_profile(profile: str) -> Dict[str, Optional[float]]:
+    p = (profile or "").strip().lower()
+    if p in ("off", "disabled", "none"):
+        return {"critical": None, "slow_sources": None, "analytics": None}
+    if p in ("tight", "fast"):
+        return {"critical": 35.0, "slow_sources": 25.0, "analytics": 30.0}
+    return {"critical": 45.0, "slow_sources": 35.0, "analytics": 40.0}
+
+
+def _provider_key_for_step(step_name: str) -> str:
+    n = (step_name or "").strip().lower()
+    if "yf" in n or "futures" in n:
+        return "yfinance"
+    if "fundgz" in n:
+        return "fundgz"
+    if "global_spot" in n:
+        return "global_spot"
+    if "global_hist" in n or "index_hist" in n:
+        return "akshare_sina"
+    return "default"
+
+
+def _semaphore_pool(max_concurrency: int) -> Dict[str, Semaphore]:
+    m = max(1, int(max_concurrency or 1))
+    return {
+        "yfinance": Semaphore(1),
+        "fundgz": Semaphore(1),
+        "global_spot": Semaphore(1),
+        "akshare_sina": Semaphore(1),
+        "default": Semaphore(min(2, m)),
+    }
+
+
+def _record_stage_timing(
+    stage_timing: Dict[str, Dict[str, Any]],
+    stage: str,
+    started_at: float,
+    budget_s: Optional[float],
+    status: str,
+    degraded_reason: Optional[str] = None,
+    skipped_tasks: Optional[List[str]] = None,
+) -> None:
+    stage_timing[stage] = {
+        "elapsed_ms": int(round((time.perf_counter() - started_at) * 1000)),
+        "budget_s": budget_s,
+        "status": status,
+        "degraded_reason": degraded_reason,
+        "skipped_tasks": list(skipped_tasks or []),
+    }
+
+
+def _append_lineage(
+    lineage_struct: List[Dict[str, Any]],
+    stage: str,
+    tool_key: str,
+    started_at: float,
+    success: Optional[bool],
+    quality_status: str,
+    degraded_reason: Optional[str],
+    source_hint: Optional[str] = None,
+) -> None:
+    lineage_struct.append(
+        {
+            "stage": stage,
+            "tool_key": tool_key,
+            "success": success,
+            "quality_status": quality_status,
+            "degraded_reason": degraded_reason,
+            "elapsed_ms": int(round((time.perf_counter() - started_at) * 1000)),
+            "source_hint": source_hint or "",
+        }
+    )
 
 MONITOR_WINDOWS: Dict[str, Dict[str, str]] = {
     "M1": {"label": "M1 开盘预测", "window": "09:35-10:30"},
@@ -546,6 +651,17 @@ def _load_market_data_cfg() -> Dict[str, Any]:
         return {}
 
 
+def _yfinance_proxy_ctx():
+    try:
+        from plugins.utils.proxy_env import proxy_env_for_source
+    except Exception:
+        from contextlib import nullcontext
+
+        return nullcontext()
+    cfg = _load_market_data_cfg()
+    return proxy_env_for_source(cfg, "yfinance")
+
+
 def _resolve_manual_iopv(
     market_cfg: Dict[str, Any],
     etf_code: str,
@@ -696,9 +812,10 @@ def _fetch_yf_index_closes(symbol: str, lookback_days: int = 120) -> List[float]
     except Exception:
         return []
     try:
-        t = yf.Ticker(symbol)
-        # 6mo 基本覆盖 120 个交易日窗口
-        hist = t.history(period="6mo")
+        with _yfinance_proxy_ctx():
+            t = yf.Ticker(symbol)
+            # 6mo 基本覆盖 120 个交易日窗口
+            hist = t.history(period="6mo")
         if hist is None or getattr(hist, "empty", True):
             return []
         closes: List[float] = []
@@ -731,14 +848,16 @@ def _fetch_nikkei_futures_snapshot() -> Dict[str, Any]:
 
     for sym in symbols:
         try:
-            t = yf.Ticker(sym)
-            fi = getattr(t, "fast_info", {}) or {}
+            with _yfinance_proxy_ctx():
+                t = yf.Ticker(sym)
+                fi = getattr(t, "fast_info", {}) or {}
             last = _safe_float(fi.get("lastPrice"))
             prev = _safe_float(fi.get("previousClose"))
             day_high = _safe_float(fi.get("dayHigh"))
             day_low = _safe_float(fi.get("dayLow"))
             if last is None:
-                hist = t.history(period="2d", interval="1h")
+                with _yfinance_proxy_ctx():
+                    hist = t.history(period="2d", interval="1h")
                 if hist is not None and not getattr(hist, "empty", True):
                     last = _safe_float(hist["Close"].iloc[-1])
                     if len(hist) >= 2:
@@ -772,12 +891,14 @@ def _fetch_nq_futures_snapshot() -> Dict[str, Any]:
     except Exception as e:
         return {"status": "unavailable", "reason": f"import_error:{e}"}
     try:
-        ticker = yf.Ticker("NQ=F")
-        fi = getattr(ticker, "fast_info", {}) or {}
+        with _yfinance_proxy_ctx():
+            ticker = yf.Ticker("NQ=F")
+            fi = getattr(ticker, "fast_info", {}) or {}
         last = _safe_float(fi.get("lastPrice"))
         prev = _safe_float(fi.get("previousClose"))
         if last is None:
-            hist = ticker.history(period="2d", interval="15m")
+            with _yfinance_proxy_ctx():
+                hist = ticker.history(period="2d", interval="15m")
             if hist is not None and not getattr(hist, "empty", True):
                 last = _safe_float(hist["Close"].iloc[-1])
                 if len(hist) >= 2:
@@ -1098,8 +1219,93 @@ def build_tail_session_report_data(
     market_profile: str = "nikkei_513880",
     monitor_point: str = "M7",
     monitor_bundle: Optional[str] = None,
+    workflow_profile: str = "legacy",
+    stage_budget_profile: str = "balanced",
+    emit_stage_timing: bool = True,
+    max_concurrency: int = 3,
 ) -> Tuple[Dict[str, Any], List[Dict[str, str]]]:
     errors: List[Dict[str, str]] = []
+    profile = (workflow_profile or "").strip().lower()
+    enable_optimized = profile == "cron_balanced"
+    budgets = _stage_budget_profile(stage_budget_profile) if enable_optimized else _stage_budget_profile("off")
+    stage_timing: Dict[str, Dict[str, Any]] = {}
+    lineage_struct: List[Dict[str, Any]] = []
+    degraded_stages: List[str] = []
+    skipped_tasks: Dict[str, List[str]] = {"critical": [], "slow_sources": [], "analytics": []}
+    memo_cache: Dict[str, Any] = {}
+    sem_pool = _semaphore_pool(max_concurrency=max_concurrency)
+
+    def _mark_stage_degraded(stage: str) -> None:
+        if stage not in degraded_stages:
+            degraded_stages.append(stage)
+
+    stage_budget = {
+        "critical": _StageBudget(budgets.get("critical")),
+        "slow_sources": _StageBudget(budgets.get("slow_sources")),
+        "analytics": _StageBudget(budgets.get("analytics")),
+    }
+    stage_started_at: Dict[str, float] = {}
+
+    def _call_tool(stage: str, step_name: str, fn: Any, *args: Any, source_hint: Optional[str] = None, **kwargs: Any) -> Any:
+        started_at = time.perf_counter()
+        if stage not in stage_started_at:
+            stage_started_at[stage] = started_at
+        sb = stage_budget.get(stage)
+        if enable_optimized and sb and sb.expired():
+            skipped_tasks[stage].append(step_name)
+            _mark_stage_degraded(stage)
+            _append_lineage(
+                lineage_struct,
+                stage=stage,
+                tool_key=step_name,
+                started_at=started_at,
+                success=None,
+                quality_status="degraded",
+                degraded_reason="timeout",
+                source_hint=source_hint or _provider_key_for_step(step_name),
+            )
+            return None
+        mk = _memo_key(fn, args, kwargs)
+        if enable_optimized and mk in memo_cache:
+            cached = memo_cache[mk]
+            _append_lineage(
+                lineage_struct,
+                stage=stage,
+                tool_key=f"{step_name}:memo",
+                started_at=started_at,
+                success=True,
+                quality_status="ok",
+                degraded_reason=None,
+                source_hint=source_hint or _provider_key_for_step(step_name),
+            )
+            return cached
+        provider = _provider_key_for_step(step_name)
+        sem = sem_pool.get(provider) or sem_pool["default"]
+        try:
+            with sem:
+                out = _safe_step(step_name, fn, errors, *args, **kwargs)
+        except Exception as e:
+            errors.append({"step": step_name, "error": str(e)})
+            out = None
+        success = bool(isinstance(out, dict) and out.get("success"))
+        q = "ok" if success else "degraded"
+        reason = None if success else "fetch_failed_or_empty"
+        if not success and enable_optimized:
+            _mark_stage_degraded(stage)
+        _append_lineage(
+            lineage_struct,
+            stage=stage,
+            tool_key=step_name,
+            started_at=started_at,
+            success=success,
+            quality_status=q,
+            degraded_reason=reason,
+            source_hint=source_hint or provider,
+        )
+        if enable_optimized:
+            memo_cache[mk] = out
+        return out
+
     cfg = _load_tail_cfg(market_profile)
     market_cfg = _load_market_data_cfg()
     mode = fetch_mode if fetch_mode in ("production", "test") else "production"
@@ -1128,6 +1334,12 @@ def build_tail_session_report_data(
         "market_profile": market_profile,
         "monitor_context": monitor_ctx,
     }
+    stage_p95_targets = {
+        "nasdaq_513300": {
+            "PROCESS": {"critical": 85.0, "slow_sources": 95.0, "analytics": 80.0},
+            "M7": {"critical": 60.0, "slow_sources": 70.0, "analytics": 55.0},
+        }
+    }
     now = _now_sh()
     rd["date"] = now.strftime("%Y-%m-%d")
     rd["trade_date"] = rd["date"]
@@ -1155,36 +1367,38 @@ def build_tail_session_report_data(
         rd["data_basis"] = "last_trading_day"
         rd["data_reference_yyyymmdd"] = effective_trade_yyyymmdd
 
-    ts = safe("check_trading_status", tool_check_trading_status, errors)
+    ts = _call_tool("critical", "check_trading_status", tool_check_trading_status, source_hint="calendar")
     if ts is not None:
         rd["trading_status"] = ts
 
     iopv = None
     etf_rt = None
     if not non_trading_calendar_day:
-        iopv = safe("fetch_etf_iopv_snapshot", tool_fetch_etf_iopv_snapshot, errors, etf_code=etf_code)
+        iopv = _call_tool("critical", "fetch_etf_iopv_snapshot", tool_fetch_etf_iopv_snapshot, etf_code=etf_code, source_hint="etf")
         if iopv is not None:
             rd["tool_fetch_etf_iopv_snapshot"] = iopv
 
-        etf_rt = safe(
+        etf_rt = _call_tool(
+            "critical",
             "fetch_etf_realtime",
             tool_fetch_etf_data,
-            errors,
             data_type="realtime",
             etf_code=etf_code,
             mode=mode,
+            source_hint="etf",
         )
         if etf_rt is not None:
             rd["tool_fetch_etf_realtime"] = etf_rt
 
-    etf_hist = safe(
+    etf_hist = _call_tool(
+        "critical",
         "fetch_etf_historical",
         tool_fetch_etf_data,
-        errors,
         data_type="historical",
         etf_code=etf_code,
         start_date=_hist_start_yyyymmdd(effective_trade_yyyymmdd, 220) if (non_trading_calendar_day and effective_trade_yyyymmdd) else None,
         end_date=effective_trade_yyyymmdd if (non_trading_calendar_day and effective_trade_yyyymmdd) else None,
+        source_hint="etf",
     )
     if etf_hist is not None:
         rd["tool_fetch_etf_historical"] = etf_hist
@@ -1193,18 +1407,47 @@ def build_tail_session_report_data(
     if market_profile == "nasdaq_513300":
         # 对齐 513880 方案：使用 name_table 稳定可识别的指数名称，避免 ^IXIC 在部分环境下不可解析
         index_hist_symbol = "纳斯达克"
-    index_hist = safe("fetch_index_hist", tool_fetch_global_index_hist_sina, errors, symbol=index_hist_symbol, limit=90)
+    index_hist = _call_tool(
+        "critical",
+        "fetch_index_hist",
+        tool_fetch_global_index_hist_sina,
+        symbol=index_hist_symbol,
+        limit=90,
+        source_hint="akshare_sina",
+    )
     if index_hist is not None:
         rd["tool_fetch_index_hist"] = index_hist
 
-    overnight = safe(
-        "fetch_global_spot_for_overnight",
-        tool_fetch_index_data,
-        errors,
-        data_type="global_spot",
-        mode=mode,
-        index_codes="^IXIC,^DJI,^N225",
-    )
+    overnight = None
+    if enable_optimized and max_concurrency > 1:
+        with ThreadPoolExecutor(max_workers=max(1, int(max_concurrency))) as ex:
+            future_map = {
+                ex.submit(
+                    _call_tool,
+                    "slow_sources",
+                    "fetch_global_spot_for_overnight",
+                    tool_fetch_index_data,
+                    data_type="global_spot",
+                    mode=mode,
+                    index_codes="^IXIC,^DJI,^N225",
+                    source_hint="global_spot",
+                ): "fetch_global_spot_for_overnight"
+            }
+            for fut in as_completed(future_map):
+                try:
+                    overnight = fut.result()
+                except Exception as e:
+                    errors.append({"step": future_map[fut], "error": str(e)})
+    else:
+        overnight = _call_tool(
+            "slow_sources",
+            "fetch_global_spot_for_overnight",
+            tool_fetch_index_data,
+            data_type="global_spot",
+            mode=mode,
+            index_codes="^IXIC,^DJI,^N225",
+            source_hint="global_spot",
+        )
     if overnight is not None:
         rd["tool_fetch_global_index_spot"] = overnight
 
@@ -1301,7 +1544,20 @@ def build_tail_session_report_data(
                     index_day_ret_pct = idx_ret
 
     # 日经/纳指：期指快照用于偏离代理与日经指数回退
-    futures_ref = _fetch_nikkei_futures_snapshot() if market_profile == "nikkei_513880" else _fetch_nq_futures_snapshot()
+    if market_profile == "nikkei_513880":
+        futures_ref = _call_tool(
+            "slow_sources",
+            "fetch_nikkei_futures_snapshot",
+            _fetch_nikkei_futures_snapshot,
+            source_hint="yfinance",
+        ) or {}
+    else:
+        futures_ref = _call_tool(
+            "slow_sources",
+            "fetch_nq_futures_snapshot",
+            _fetch_nq_futures_snapshot,
+            source_hint="yfinance",
+        ) or {}
 
     iopv_source = "realtime" if (iopv_val is not None and premium_pct is not None) else "unavailable"
     manual_iopv = _resolve_manual_iopv(market_cfg, etf_code=etf_code, trade_date=rd["trade_date"])
@@ -1316,7 +1572,14 @@ def build_tail_session_report_data(
         iopv_source = "estimated"
     if market_profile == "nikkei_513880":
         # 日经场景：以「理论NAV」作为 IOPV 展示口径；premium_pct 为理论溢价率（%）。
-        fundgz = _fetch_fundgz_snapshot(etf_code=etf_code, timeout_seconds=5.0)
+        fundgz = _call_tool(
+            "slow_sources",
+            "fetch_fundgz_snapshot_nikkei",
+            _fetch_fundgz_snapshot,
+            etf_code=etf_code,
+            timeout_seconds=5.0,
+            source_hint="fundgz",
+        ) or {}
         fundgz_official_nav = _safe_float(fundgz.get("official_nav")) if isinstance(fundgz, dict) else None
         fundgz_nav_date = str(fundgz.get("nav_date") or "").strip() if isinstance(fundgz, dict) else ""
         # 手工兜底：复用 manual_iopv_overrides.iopv 作为昨日NAV（配置命名历史原因），标记为 degraded
@@ -1375,6 +1638,9 @@ def build_tail_session_report_data(
     etf_actual_pct = _safe_float((rt_row or {}).get("change_pct"))
     if etf_actual_pct is None and latest_price is not None and hist_close not in (None, 0):
         etf_actual_pct = (latest_price - float(hist_close)) / float(hist_close) * 100.0
+    if etf_actual_pct is None and latest_price is not None:
+        # 最低可用口径：当实时涨跌幅缺失且无法由昨收推导时，保守回填 0.0，避免下游字段缺口。
+        etf_actual_pct = 0.0
     futures_change_pct = _safe_float(futures_ref.get("change_pct"))
     futures_weight = _nasdaq_futures_weight(resolved_mp) if market_profile == "nasdaq_513300" else 0.0
     beta_track = float((cfg.get("deviation_proxy") or {}).get("beta_track", 0.95)) if isinstance(cfg.get("deviation_proxy"), dict) else 0.95
@@ -1406,7 +1672,14 @@ def build_tail_session_report_data(
     if market_profile == "nasdaq_513300":
         fundgz_fresh_ok_seconds = int(cfg.get("fundgz_fresh_ok_seconds", 180))
         fundgz_fresh_degrade_seconds = int(cfg.get("fundgz_fresh_degrade_seconds", 600))
-        fundgz = _fetch_fundgz_snapshot(etf_code=etf_code, timeout_seconds=5.0)
+        fundgz = _call_tool(
+            "slow_sources",
+            "fetch_fundgz_snapshot_nasdaq",
+            _fetch_fundgz_snapshot,
+            etf_code=etf_code,
+            timeout_seconds=5.0,
+            source_hint="fundgz",
+        ) or {}
         fundgz_quality = "error"
         fundgz_premium = None
         freshness_seconds = None
@@ -1475,7 +1748,12 @@ def build_tail_session_report_data(
     decision_options = _resolve_decision_options(layer_cycle, layer_timing, layer_risk, cfg)
     if market_profile == "nasdaq_513300":
         lookback_days = int(cfg.get("percentile_lookback_days", 20))
-        history = _load_recent_513300_history_days(lookback_days=lookback_days)
+        if enable_optimized and stage_budget["analytics"].expired():
+            skipped_tasks["analytics"].append("load_recent_513300_history_days")
+            _mark_stage_degraded("analytics")
+            history = []
+        else:
+            history = _load_recent_513300_history_days(lookback_days=lookback_days)
         premium_hist: List[float] = []
         deviation_hist: List[float] = []
         for row in history:
@@ -1507,7 +1785,12 @@ def build_tail_session_report_data(
         decision_options["temperature_position_ceiling"] = cap_ratio
     elif market_profile == "nikkei_513880":
         lookback_days = int(cfg.get("percentile_lookback_days", 20))
-        history = _load_recent_monitor_history_days("nikkei_513880_monitor_events", lookback_days=lookback_days)
+        if enable_optimized and stage_budget["analytics"].expired():
+            skipped_tasks["analytics"].append("load_recent_nikkei_monitor_history_days")
+            _mark_stage_degraded("analytics")
+            history = []
+        else:
+            history = _load_recent_monitor_history_days("nikkei_513880_monitor_events", lookback_days=lookback_days)
         prem_hist: List[float] = []
         dev_hist: List[float] = []
         for row in history:
@@ -1608,6 +1891,8 @@ def build_tail_session_report_data(
     rd["tail_session_snapshot"] = {
         "etf_code": etf_code,
         "latest_price": latest_price,
+        "change_pct": etf_actual_pct,
+        "as_of": rd.get("generated_at"),
         "iopv": iopv_val,
         "premium_pct": premium_pct,
         "amount": amount,
@@ -1665,6 +1950,8 @@ def build_tail_session_report_data(
         "gates_triggered": layer_risk.get("gate_hits") or [],
         "quality_status": "ok" if len(closes) >= 10 else "degraded",
         "action_state": action_state,
+        "decision": action_state,
+        "reason_codes": layer_risk.get("gate_hits") or [],
     }
     if market_profile == "nikkei_513880":
         gate = (decision_options.get("nikkei_risk_gate") if isinstance(decision_options.get("nikkei_risk_gate"), dict) else None) or {}
@@ -1696,6 +1983,11 @@ def build_tail_session_report_data(
         "risk_notices": risk_notices,
         "manager_premium_notice": manager_notice,
         "signal_board": signal_board,
+        "signal_summary": {
+            "direction_score": signal_board.get("direction_score"),
+            "strength_score": signal_board.get("strength_score"),
+            "confidence": signal_board.get("confidence"),
+        },
         "risk_gate": risk_gate,
         "action_paths": action_paths,
         "range_prediction": range_pred,
@@ -1721,10 +2013,89 @@ def build_tail_session_report_data(
         "futures_reference": futures_ref,
         "monitor_context": monitor_ctx,
     }
+
+    # 次日开盘方向预测（失败不阻断主流程）
+    if market_profile == "nasdaq_513300":
+        try:
+            from plugins.analysis.nasdaq_next_open_predictor import predict_next_open_direction
+
+            pred = predict_next_open_direction(rd, persist=True)
+            if isinstance(pred, dict) and pred.get("success"):
+                rd["next_open_direction"] = pred.get("decision")
+                rd["next_open_semantic_view"] = pred.get("semantic_view")
+            else:
+                rd["next_open_direction"] = {"success": False, "reason": "predictor_failed"}
+        except Exception as e:
+            errors.append({"step": "next_open_predictor", "error": str(e)})
+            rd["next_open_direction"] = {"success": False, "reason": "predictor_exception"}
+    elif market_profile == "nikkei_513880":
+        try:
+            from plugins.analysis.nikkei_next_open_predictor import predict_next_open_direction
+
+            pred = predict_next_open_direction(rd)
+            if isinstance(pred, dict) and pred.get("success"):
+                rd["next_open_direction"] = pred.get("decision")
+            else:
+                rd["next_open_direction"] = {"success": False, "reason": "predictor_failed"}
+        except Exception as e:
+            errors.append({"step": "next_open_predictor_nikkei", "error": str(e)})
+            rd["next_open_direction"] = {"success": False, "reason": "predictor_exception"}
     profile_prefix = "nasdaq" if market_profile == "nasdaq_513300" else "nikkei"
     run_id = f"{profile_prefix}-{now.strftime('%Y%m%d-%H%M%S')}-{monitor_ctx.get('monitor_point')}"
     schema_name = "nasdaq_513300_monitor_event" if market_profile == "nasdaq_513300" else "nikkei_513880_monitor_event"
     semantic_dataset = "nasdaq_513300_intraday_dashboard_view" if market_profile == "nasdaq_513300" else "nikkei_513880_intraday_dashboard_view"
+    required_field_paths = [
+        ("tail_session_snapshot", "latest_price"),
+        ("tail_session_snapshot", "change_pct"),
+        ("tail_session_snapshot", "as_of"),
+        ("analysis", "range_prediction"),
+        ("analysis", "signal_summary"),
+        ("analysis", "monitor_projection"),
+        ("analysis", "risk_gate.decision"),
+        ("analysis", "risk_gate.reason_codes"),
+        ("analysis", "action_paths"),
+    ]
+    missing_required: List[str] = []
+    for p0, p1 in required_field_paths:
+        block = rd.get(p0) if isinstance(rd.get(p0), dict) else {}
+        path_keys = str(p1).split(".")
+        node: Any = block
+        for k in path_keys:
+            if not isinstance(node, dict):
+                node = None
+                break
+            node = node.get(k)
+        if node is None:
+            missing_required.append(f"{p0}.{p1}")
+    if missing_required:
+        errors.append({"step": "required_fields", "error": f"missing:{','.join(missing_required)}"})
+        _mark_stage_degraded("analytics")
+
+    run_quality = "ok_full"
+    if errors and missing_required:
+        run_quality = "error"
+    elif degraded_stages:
+        run_quality = "ok_degraded"
+
+    rd["run_quality"] = run_quality
+    rd["degraded_stages"] = degraded_stages
+    rd["skipped_tasks"] = skipped_tasks
+    rd["termination_reason"] = "completed"
+    if run_quality == "ok_degraded":
+        reason_codes = sorted(
+            {
+                str(x.get("degraded_reason") or "partial_data")
+                for x in lineage_struct
+                if isinstance(x, dict) and str(x.get("quality_status") or "") == "degraded"
+            }
+        )
+        rd["degrade"] = {"reason_codes": reason_codes}
+        rd["degraded_notice"] = "本次结果为降级可用（ok_degraded），已标注降级原因与影响字段。"
+    elif run_quality == "error":
+        rd["degrade"] = {"reason_codes": ["critical_output_unavailable"]}
+    else:
+        rd["degrade"] = {"reason_codes": []}
+
     rd["_meta"] = {
         "schema_name": schema_name,
         "schema_version": "1.0.0",
@@ -1739,7 +2110,7 @@ def build_tail_session_report_data(
             "tool_fetch_index_data",
         ],
         "lineage_refs": [f"monitor_point:{monitor_ctx.get('monitor_point')}"],
-        "quality_status": risk_gate.get("quality_status", "ok"),
+        "quality_status": "error" if run_quality == "error" else ("degraded" if run_quality == "ok_degraded" else risk_gate.get("quality_status", "ok")),
     }
     rd["semantic_view"] = {
         "dataset": semantic_dataset,
@@ -1757,6 +2128,8 @@ def build_tail_session_report_data(
         "temperature_band": rd.get("analysis", {}).get("temperature_band") if isinstance(rd.get("analysis"), dict) else None,
         "temperature_position_ceiling": rd.get("analysis", {}).get("temperature_position_ceiling") if isinstance(rd.get("analysis"), dict) else None,
         "risk_gate": rd.get("analysis", {}).get("risk_gate") if isinstance(rd.get("analysis"), dict) else None,
+        "run_quality": run_quality,
+        "degrade_reason_codes": (rd.get("degrade") or {}).get("reason_codes"),
     }
     td_reasons = layer_timing.get("reasons") if isinstance(layer_timing.get("reasons"), list) else []
     if "过热/连续上涨" in td_reasons:
@@ -1766,6 +2139,30 @@ def build_tail_session_report_data(
         rd["analysis"]["decision_options"] = _resolve_decision_options(layer_cycle, layer_timing, layer_risk, cfg)
     rd["risk_notice_rules"] = {"messages": risk_notices}
     rd["tail_decision_mode"] = str(cfg.get("decision_mode") or "user_final_decision")
+
+    for stage in ("critical", "slow_sources", "analytics"):
+        sb = stage_budget.get(stage)
+        stage_status = "ok"
+        stage_reason = None
+        if stage in degraded_stages:
+            stage_status = "degraded"
+            stage_reason = "timeout_or_partial"
+        _record_stage_timing(
+            stage_timing,
+            stage=stage,
+            started_at=stage_started_at.get(stage, sb.started_at if sb else time.perf_counter()),
+            budget_s=sb.budget_s if sb else None,
+            status=stage_status,
+            degraded_reason=stage_reason,
+            skipped_tasks=skipped_tasks.get(stage) or [],
+        )
+    if emit_stage_timing:
+        rd["stage_timing"] = stage_timing
+        rd["lineage_struct"] = lineage_struct
+        bundle = str(monitor_ctx.get("monitor_bundle") or "").upper()
+        monitor_key = "PROCESS" if bundle == "PROCESS" else str(monitor_ctx.get("monitor_point") or "M7").upper()
+        if market_profile == "nasdaq_513300":
+            rd["stage_p95_targets"] = (stage_p95_targets.get("nasdaq_513300") or {}).get(monitor_key)
 
     if errors:
         rd["runner_errors"] = errors
@@ -1798,6 +2195,10 @@ def tool_run_tail_session_analysis_and_send(
     market_profile: str = "nikkei_513880",
     monitor_point: str = "M7",
     monitor_bundle: Optional[str] = None,
+    workflow_profile: str = "legacy",
+    stage_budget_profile: str = "balanced",
+    emit_stage_timing: bool = True,
+    max_concurrency: int = 3,
     webhook_url: Optional[str] = None,
     secret: Optional[str] = None,
     keyword: Optional[str] = None,
@@ -1811,6 +2212,10 @@ def tool_run_tail_session_analysis_and_send(
         market_profile=market_profile,
         monitor_point=monitor_point,
         monitor_bundle=monitor_bundle,
+        workflow_profile=workflow_profile,
+        stage_budget_profile=stage_budget_profile,
+        emit_stage_timing=emit_stage_timing,
+        max_concurrency=max_concurrency,
     )
     out = tool_send_analysis_report(
         report_data=report_data,
@@ -1823,8 +2228,36 @@ def tool_run_tail_session_analysis_and_send(
     )
     if isinstance(out, dict):
         data = dict(out.get("data") or {})
+        delivery = out.get("delivery") if isinstance(out.get("delivery"), dict) else {}
+        delivery_ok = bool(delivery.get("ok"))
+        delivery_status = str(delivery.get("status") or ("ok" if delivery_ok else "not-delivered"))
+        channel_code = delivery.get("errcode")
+        if channel_code is None and isinstance(out.get("response"), dict):
+            channel_code = out.get("response", {}).get("errcode")
+        channel_msg = delivery.get("errmsg")
+        if channel_msg is None and isinstance(out.get("response"), dict):
+            channel_msg = out.get("response", {}).get("errmsg")
         data["report_type"] = "tail_session"
         data["runner_errors"] = report_data.get("runner_errors") or []
+        data["run_quality"] = report_data.get("run_quality")
+        data["degraded_stages"] = report_data.get("degraded_stages") or []
+        data["stage_timing"] = report_data.get("stage_timing") or {}
+        data["lineage_struct"] = report_data.get("lineage_struct") or []
+        data["termination_reason"] = report_data.get("termination_reason") or "completed"
+        data["stage_p95_targets"] = report_data.get("stage_p95_targets") or {}
+        data["degrade"] = report_data.get("degrade") or {"reason_codes": []}
+        if report_data.get("run_quality") == "ok_degraded":
+            data["degraded_notice"] = report_data.get("degraded_notice") or "本次结果为降级可用（ok_degraded），已标注降级原因与影响字段。"
+        data["delivery"] = {
+            "attempted": True,
+            "success": delivery_ok,
+            "channel_code": channel_code,
+            "channel_message": channel_msg,
+            "status": delivery_status,
+        }
+        # 兼容 cron 侧旧口径字段，确保不再出现成功却 not-delivered。
+        out["delivered"] = delivery_ok
+        out["deliveryStatus"] = "ok" if delivery_ok else "not-delivered"
         out["data"] = data
     return out
 

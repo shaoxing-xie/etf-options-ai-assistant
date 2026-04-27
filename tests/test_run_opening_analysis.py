@@ -183,3 +183,20 @@ def test_safe_step_records_error() -> None:
     r = m._safe_step("boom_step", boom, errors)
     assert r is None
     assert errors == [{"step": "boom_step", "error": "x"}]
+
+
+def test_build_opening_marks_analysis_health_degraded_when_analysis_missing(
+    patch_opening_chain: None,
+) -> None:
+    from plugins.notification.run_opening_analysis import build_opening_report_data
+
+    with patch(
+        "plugins.merged.analyze_market.tool_analyze_market",
+        return_value={"success": False, "message": "analysis unavailable", "data": None},
+    ):
+        rd, _errs = build_opening_report_data(fetch_mode="production")
+
+    ah = rd.get("analysis_health")
+    assert isinstance(ah, dict)
+    assert ah.get("status") == "degraded"
+    assert "analysis_tool_failed" in str(ah.get("reason") or "")

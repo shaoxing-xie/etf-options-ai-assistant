@@ -4,6 +4,7 @@ import json
 import os
 import time
 from datetime import datetime
+from zoneinfo import ZoneInfo
 from pathlib import Path
 from typing import Any
 
@@ -349,6 +350,39 @@ class ApiServices:
     def get_semantic_task_dependency_health(self, trade_date: str = "") -> dict[str, Any]:
         data = self._semantic.task_dependency_health(trade_date)
         return {"success": True, "message": "ok", "data": data}
+
+    def get_semantic_global_market_snapshot(self, trade_date: str = "", refresh: bool = False) -> tuple[dict[str, Any], int]:
+        from apps.chart_console.api.market_snapshot_build import build_global_market_snapshot, persist_snapshot
+
+        td = str(trade_date or "").strip() or datetime.now(ZoneInfo("Asia/Shanghai")).strftime("%Y-%m-%d")
+        path = ROOT / "data" / "semantic" / "global_market_snapshot" / f"{td}.json"
+        try:
+            if refresh or not path.is_file():
+                doc = build_global_market_snapshot(td)
+                persist_snapshot(ROOT, "global_market_snapshot", td, doc)
+        except Exception as e:
+            return {"success": False, "message": f"build_failed:{e}", "data": self._semantic.global_market_snapshot(td)}, 500
+        data = self._semantic.global_market_snapshot(td)
+        return {"success": True, "message": "ok", "data": data}, 200
+
+    def get_semantic_qdii_futures_snapshot(self, trade_date: str = "", refresh: bool = False) -> tuple[dict[str, Any], int]:
+        from apps.chart_console.api.market_snapshot_build import (
+            build_qdii_futures_snapshot,
+            persist_qdii_futures_l3_events,
+            persist_snapshot,
+        )
+
+        td = str(trade_date or "").strip() or datetime.now(ZoneInfo("Asia/Shanghai")).strftime("%Y-%m-%d")
+        path = ROOT / "data" / "semantic" / "qdii_futures_snapshot" / f"{td}.json"
+        try:
+            if refresh or not path.is_file():
+                doc = build_qdii_futures_snapshot(td)
+                persist_snapshot(ROOT, "qdii_futures_snapshot", td, doc)
+                persist_qdii_futures_l3_events(ROOT, td, doc)
+        except Exception as e:
+            return {"success": False, "message": f"build_failed:{e}", "data": self._semantic.qdii_futures_snapshot(td)}, 500
+        data = self._semantic.qdii_futures_snapshot(td)
+        return {"success": True, "message": "ok", "data": data}, 200
 
     def record_fallback_event(self, primary_url: str, fallback_url: str, reason: str = "") -> dict[str, Any]:
         now = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")

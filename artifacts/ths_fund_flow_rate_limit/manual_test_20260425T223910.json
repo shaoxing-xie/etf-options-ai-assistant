@@ -1,0 +1,193 @@
+{
+  "_meta": {
+    "schema_name": "ths_fund_flow_rate_limit_manual_test_v1",
+    "schema_version": "1.0.0",
+    "generated_at": "2026-04-25T23:07:15.932165",
+    "task_id": "manual-ths-fund-flow-rate-limit",
+    "quality_status": "ok"
+  },
+  "settings": {
+    "rounds": 1,
+    "retries": 3,
+    "backoff_first": 1.0,
+    "backoff_max": 8.0,
+    "batch_sizes": [
+      5,
+      10
+    ],
+    "sleep_seconds": [
+      1.0,
+      2.0
+    ]
+  },
+  "rows": [
+    {
+      "period": "pre_open",
+      "batch_size": 5,
+      "sleep_seconds": 1.0,
+      "request_total": 5,
+      "success_count": 4,
+      "rate_limit_count": 0,
+      "non_retryable_count": 1,
+      "retry_count": 0,
+      "final_success_after_retry": 0,
+      "avg_latency_ms": 15440,
+      "p95_latency_ms": 22230,
+      "success_rate": 0.8
+    },
+    {
+      "period": "pre_open",
+      "batch_size": 5,
+      "sleep_seconds": 2.0,
+      "request_total": 5,
+      "success_count": 3,
+      "rate_limit_count": 0,
+      "non_retryable_count": 2,
+      "retry_count": 0,
+      "final_success_after_retry": 0,
+      "avg_latency_ms": 12284,
+      "p95_latency_ms": 25041,
+      "success_rate": 0.6
+    },
+    {
+      "period": "pre_open",
+      "batch_size": 10,
+      "sleep_seconds": 1.0,
+      "request_total": 10,
+      "success_count": 6,
+      "rate_limit_count": 0,
+      "non_retryable_count": 4,
+      "retry_count": 0,
+      "final_success_after_retry": 0,
+      "avg_latency_ms": 18152,
+      "p95_latency_ms": 25069,
+      "success_rate": 0.6
+    },
+    {
+      "period": "pre_open",
+      "batch_size": 10,
+      "sleep_seconds": 2.0,
+      "request_total": 10,
+      "success_count": 4,
+      "rate_limit_count": 0,
+      "non_retryable_count": 6,
+      "retry_count": 0,
+      "final_success_after_retry": 0,
+      "avg_latency_ms": 18330,
+      "p95_latency_ms": 25042,
+      "success_rate": 0.4
+    },
+    {
+      "period": "intraday",
+      "batch_size": 5,
+      "sleep_seconds": 1.0,
+      "request_total": 5,
+      "success_count": 3,
+      "rate_limit_count": 0,
+      "non_retryable_count": 2,
+      "retry_count": 0,
+      "final_success_after_retry": 0,
+      "avg_latency_ms": 18418,
+      "p95_latency_ms": 25029,
+      "success_rate": 0.6
+    },
+    {
+      "period": "intraday",
+      "batch_size": 5,
+      "sleep_seconds": 2.0,
+      "request_total": 5,
+      "success_count": 4,
+      "rate_limit_count": 0,
+      "non_retryable_count": 1,
+      "retry_count": 0,
+      "final_success_after_retry": 0,
+      "avg_latency_ms": 19268,
+      "p95_latency_ms": 23853,
+      "success_rate": 0.8
+    },
+    {
+      "period": "intraday",
+      "batch_size": 10,
+      "sleep_seconds": 1.0,
+      "request_total": 10,
+      "success_count": 6,
+      "rate_limit_count": 0,
+      "non_retryable_count": 4,
+      "retry_count": 0,
+      "final_success_after_retry": 0,
+      "avg_latency_ms": 18024,
+      "p95_latency_ms": 25069,
+      "success_rate": 0.6
+    },
+    {
+      "period": "intraday",
+      "batch_size": 10,
+      "sleep_seconds": 2.0,
+      "request_total": 10,
+      "success_count": 7,
+      "rate_limit_count": 0,
+      "non_retryable_count": 3,
+      "retry_count": 0,
+      "final_success_after_retry": 0,
+      "avg_latency_ms": 18709,
+      "p95_latency_ms": 25056,
+      "success_rate": 0.7
+    },
+    {
+      "period": "after_close",
+      "batch_size": 5,
+      "sleep_seconds": 1.0,
+      "request_total": 5,
+      "success_count": 3,
+      "rate_limit_count": 0,
+      "non_retryable_count": 2,
+      "retry_count": 0,
+      "final_success_after_retry": 0,
+      "avg_latency_ms": 15873,
+      "p95_latency_ms": 25018,
+      "success_rate": 0.6
+    },
+    {
+      "period": "after_close",
+      "batch_size": 5,
+      "sleep_seconds": 2.0,
+      "request_total": 5,
+      "success_count": 2,
+      "rate_limit_count": 0,
+      "non_retryable_count": 3,
+      "retry_count": 0,
+      "final_success_after_retry": 0,
+      "avg_latency_ms": 14281,
+      "p95_latency_ms": 25032,
+      "success_rate": 0.4
+    },
+    {
+      "period": "after_close",
+      "batch_size": 10,
+      "sleep_seconds": 1.0,
+      "request_total": 10,
+      "success_count": 5,
+      "rate_limit_count": 0,
+      "non_retryable_count": 5,
+      "retry_count": 0,
+      "final_success_after_retry": 0,
+      "avg_latency_ms": 19117,
+      "p95_latency_ms": 25069,
+      "success_rate": 0.5
+    },
+    {
+      "period": "after_close",
+      "batch_size": 10,
+      "sleep_seconds": 2.0,
+      "request_total": 10,
+      "success_count": 7,
+      "rate_limit_count": 0,
+      "non_retryable_count": 3,
+      "retry_count": 0,
+      "final_success_after_retry": 0,
+      "avg_latency_ms": 14636,
+      "p95_latency_ms": 25054,
+      "success_rate": 0.7
+    }
+  ]
+}

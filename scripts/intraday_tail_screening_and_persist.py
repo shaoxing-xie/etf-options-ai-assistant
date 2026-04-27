@@ -725,22 +725,34 @@ def _history_features(code: str) -> dict[str, Any]:
 
 def _sector_strength_full(limit: int) -> tuple[dict[str, float], dict[str, Any]]:
     trace: dict[str, Any] = {"ok": False}
-    try:
-        sector = _run_tool(
-            "tool_fetch_a_share_fund_flow",
-            {"query_kind": "sector_rank", "sector_type": "industry", "rank_window": "immediate", "limit": limit},
-            timeout_sec=TOOL_TIMEOUT_SECTOR,
-        )
-    except Exception as e:
-        return {}, {"ok": False, "error": str(e)}
-    recs = _tool_records(sector)
+    attempts: list[dict[str, Any]] = []
+    recs: list[dict[str, Any]] = []
+    sector: dict[str, Any] = {}
+    for i, lim in enumerate((limit, min(limit, 30))):
+        try:
+            sector = _run_tool(
+                "tool_fetch_a_share_fund_flow",
+                {"query_kind": "sector_rank", "sector_type": "industry", "rank_window": "immediate", "limit": lim},
+                timeout_sec=TOOL_TIMEOUT_SECTOR,
+            )
+        except Exception as e:
+            attempts.append({"attempt": i + 1, "limit": lim, "ok": False, "error": str(e)})
+            continue
+        recs = _tool_records(sector)
+        attempts.append({"attempt": i + 1, "limit": lim, "ok": bool(recs), "success": sector.get("success")})
+        if recs:
+            break
+        # Upstream occasionally returns success=true but empty records; one retry helps.
+        time.sleep(0.8)
+    if not attempts:
+        return {}, {"ok": False, "error": "sector_rank_not_attempted"}
     out: dict[str, float] = {}
     for r in recs:
         name = str(_pick_key(r, ["名称", "行业名称", "板块名称", "name"]) or "").strip()
         change = _safe_float(_pick_key(r, ["涨跌幅", "涨跌幅%", "涨幅"]))
         if name:
             out[name] = change
-    trace = {"ok": bool(out), "count": len(out), "success": sector.get("success")}
+    trace = {"ok": bool(out), "count": len(out), "success": sector.get("success"), "attempts": attempts}
     return out, trace
 
 
@@ -1303,26 +1315,38 @@ def _run_pool_tail_grab(
             trace["errors"].append("total_timeout_sec_exceeded")
             break
         trace["symbol_attempts"] = int(trace.get("symbol_attempts") or 0) + 1
-        try:
-            mr = _run_tool(
-                "tool_fetch_stock_minute",
-                {
-                    "stock_code": code,
-                    "period": "1",
-                    "lookback_days": 1,
-                    "mode": "production",
-                },
-                timeout_sec=int(per_sym_t) + TOOL_TIMEOUT_MINUTE,
-            )
-        except Exception as e:
-            trace["errors"].append(f"{code}:{e}")
+        mr: dict[str, Any] | None = None
+        minute_ok = False
+        minute_err = ""
+        # Minute endpoint has cold-start/occasional tail latency; retry once before downgrade.
+        for attempt in range(2):
+            try:
+                mr = _run_tool(
+                    "tool_fetch_stock_minute",
+                    {
+                        "stock_code": code,
+                        "period": "1",
+                        "lookback_days": 1,
+                        "mode": "production",
+                    },
+                    timeout_sec=int(per_sym_t) + TOOL_TIMEOUT_MINUTE + (6 if attempt == 1 else 0),
+                )
+            except Exception as e:
+                minute_err = str(e)
+                if attempt == 0:
+                    time.sleep(0.6)
+                continue
+            if isinstance(mr, dict) and mr.get("success"):
+                minute_ok = True
+                break
+            minute_err = str((mr or {}).get("message") or "minute_fail")
+            if attempt == 0:
+                time.sleep(0.6)
+        if not minute_ok:
+            trace["errors"].append(f"{code}:{minute_err or 'minute_fail'}")
             trace["symbol_failures"] = int(trace.get("symbol_failures") or 0) + 1
             continue
-        if not mr.get("success"):
-            trace["errors"].append(f"{code}:minute_fail")
-            trace["symbol_failures"] = int(trace.get("symbol_failures") or 0) + 1
-            continue
-        data = mr.get("data")
+        data = (mr or {}).get("data")
         klines: list[dict[str, Any]] = []
         if isinstance(data, dict) and isinstance(data.get("klines"), list):
             klines = [x for x in data["klines"] if isinstance(x, dict)]

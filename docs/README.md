@@ -127,6 +127,7 @@
 包含常见问题、风险控制与回滚、钉钉/飞书连接排查等：
 
 - `docs/ops/常见问题库.md`
+- `docs/ops/市场数据源能力与调用建议.md`（数据源能力/限流特征/调用建议）
 - `docs/ops/RISK_CONTROL_AND_ROLLBACK.md`（若该文件不存在，以 `docs/ops/` 目录实际内容为准）
 - `docs/ops/cron_signal_inspection_triage.md`（信号+风控巡检 Cron 排错）
 - 以及其他 ops 相关文档（如交易日跳过参数清单等）

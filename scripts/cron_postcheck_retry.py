@@ -62,6 +62,9 @@ def _is_target_tool_success(tool_result_message: dict[str, Any], expected_tool: 
 
     details = tool_result_message.get("details")
     if isinstance(details, dict):
+        details_text = json.dumps(details, ensure_ascii=False)
+        if "ERROR_NO_DELIVERY_TOOL_CALL" in details_text:
+            return False
         if details.get("success") is True:
             response = details.get("response")
             if isinstance(response, dict):
@@ -72,10 +75,12 @@ def _is_target_tool_success(tool_result_message: dict[str, Any], expected_tool: 
             return False
 
     has_explicit_success = False
+    text_fragments: list[str] = []
     for item in tool_result_message.get("content") or []:
         if item.get("type") != "text":
             continue
         text = item.get("text") or ""
+        text_fragments.append(str(text))
         try:
             payload = json.loads(text)
         except Exception:
@@ -90,9 +95,73 @@ def _is_target_tool_success(tool_result_message: dict[str, Any], expected_tool: 
             return True
         if payload.get("success") is False:
             return False
-    # If no explicit success field is provided but toolResult exists and is not error,
-    # treat it as executed successfully.
-    return not has_explicit_success
+    merged_text = "\n".join(text_fragments)
+    if "ERROR_NO_DELIVERY_TOOL_CALL" in merged_text:
+        return False
+    # Strict mode for cron delivery proof: no explicit success => not pass.
+    return has_explicit_success is True
+
+
+def _safe_slug(text: str) -> str:
+    s = re.sub(r"[^A-Za-z0-9_.-]+", "_", str(text or "").strip())
+    s = s.strip("_")
+    return s or "na"
+
+
+def _extract_context_field(message: str, field: str, default: str = "na") -> str:
+    if not message:
+        return default
+    patterns = [
+        rf"{field}\s*=\s*'([^']+)'",
+        rf'{field}\s*=\s*"([^"]+)"',
+        rf"{field}\s*=\s*([A-Za-z0-9_.-]+)",
+    ]
+    for p in patterns:
+        m = re.search(p, message)
+        if m:
+            return str(m.group(1) or default)
+    return default
+
+
+def _build_compensation_key(
+    *,
+    job_id: str,
+    run_at_ms: int,
+    jobs_by_id: dict[str, dict[str, Any]],
+    timezone_name: str,
+) -> str:
+    job = jobs_by_id.get(job_id) or {}
+    payload = job.get("payload") or {}
+    message = str(payload.get("message") or "")
+    trade_date = _day_str_from_ms(run_at_ms, timezone_name)
+    monitor_point = _extract_context_field(message, "monitor_point", "na")
+    bundle = _extract_context_field(message, "monitor_bundle", "na")
+    profile = _extract_context_field(message, "workflow_profile", "legacy")
+    return (
+        f"{_safe_slug(job_id)}:"
+        f"{_safe_slug(trade_date)}:"
+        f"{_safe_slug(monitor_point)}:"
+        f"{_safe_slug(bundle)}:"
+        f"{_safe_slug(profile)}"
+    )
+
+
+def _load_jobs_by_id(jobs_json: Path) -> dict[str, dict[str, Any]]:
+    if not jobs_json.exists():
+        return {}
+    try:
+        payload = json.loads(jobs_json.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    jobs = payload.get("jobs") or []
+    out: dict[str, dict[str, Any]] = {}
+    for j in jobs:
+        if not isinstance(j, dict):
+            continue
+        jid = str(j.get("id") or "").strip()
+        if jid:
+            out[jid] = j
+    return out
 
 
 def _find_session_file(home: Path, session_id: str) -> Path | None:
@@ -561,6 +630,8 @@ def _process_job(
     max_age_minutes: int,
     retry_timeout_ms: int,
     state: dict[str, Any],
+    jobs_by_id: dict[str, dict[str, Any]],
+    timezone_name: str,
 ) -> tuple[str, str]:
     runs = _run_json(["openclaw", "cron", "runs", "--id", job_id, "--limit", "20"])
     entries = runs.get("entries") or []
@@ -584,9 +655,15 @@ def _process_job(
     if _has_target_tool_success(session_file, expected_tool=expected_tool):
         return "pass", f"{job_id}: toolResult success found for {expected_tool} ({session_file})"
 
-    state_key = f"{job_id}:{run_at_ms}"
-    if state.get(state_key, {}).get("retried") is True:
-        return "fail", f"{job_id}: tool proof missing for {expected_tool}; retry already consumed ({state_key})"
+    compensation_key = _build_compensation_key(
+        job_id=job_id,
+        run_at_ms=run_at_ms,
+        jobs_by_id=jobs_by_id,
+        timezone_name=timezone_name,
+    )
+    state_key = f"compensation:{compensation_key}"
+    if state.get(state_key, {}).get("compensation_attempted") is True:
+        return "fail", f"{job_id}: tool proof missing for {expected_tool}; compensation already consumed ({compensation_key})"
 
     retry_result = _run_json(
         [
@@ -603,11 +680,14 @@ def _process_job(
         return "skip", f"{job_id}: retry skipped because job is already running"
     state[state_key] = {
         "retried": True,
+        "compensation_attempted": True,
         "retriedAtMs": int(time.time() * 1000),
         "expectedTool": expected_tool,
+        "compensationKey": compensation_key,
+        "runAtMs": run_at_ms,
         "retryResult": retry_result,
     }
-    return "retried", f"{job_id}: RETRY_QUEUED (missing tool proof for {expected_tool})"
+    return "retried", f"{job_id}: RETRY_QUEUED (missing tool proof for {expected_tool}, key={compensation_key})"
 
 
 def _process_job_send_required(
@@ -616,6 +696,8 @@ def _process_job_send_required(
     max_age_minutes: int,
     retry_timeout_ms: int,
     state: dict[str, Any],
+    jobs_by_id: dict[str, dict[str, Any]],
+    timezone_name: str,
 ) -> tuple[str, str]:
     runs = _run_json(["openclaw", "cron", "runs", "--id", job_id, "--limit", "20"])
     entries = runs.get("entries") or []
@@ -639,9 +721,15 @@ def _process_job_send_required(
     if _has_any_target_tool_success(session_file, expected_tools=expected_send_tools):
         return "pass", f"{job_id}: send toolResult success found in {expected_send_tools} ({session_file})"
 
-    state_key = f"{job_id}:{run_at_ms}"
-    if state.get(state_key, {}).get("retried") is True:
-        return "fail", f"{job_id}: send proof missing; retry already consumed ({state_key})"
+    compensation_key = _build_compensation_key(
+        job_id=job_id,
+        run_at_ms=run_at_ms,
+        jobs_by_id=jobs_by_id,
+        timezone_name=timezone_name,
+    )
+    state_key = f"compensation:{compensation_key}"
+    if state.get(state_key, {}).get("compensation_attempted") is True:
+        return "fail", f"{job_id}: send proof missing; compensation already consumed ({compensation_key})"
 
     retry_result = _run_json(
         [
@@ -658,11 +746,14 @@ def _process_job_send_required(
         return "skip", f"{job_id}: retry skipped because job is already running"
     state[state_key] = {
         "retried": True,
+        "compensation_attempted": True,
         "retriedAtMs": int(time.time() * 1000),
         "expectedSendTools": expected_send_tools,
+        "compensationKey": compensation_key,
+        "runAtMs": run_at_ms,
         "retryResult": retry_result,
     }
-    return "retried", f"{job_id}: RETRY_QUEUED (missing send proof in {expected_send_tools})"
+    return "retried", f"{job_id}: RETRY_QUEUED (missing send proof in {expected_send_tools}, key={compensation_key})"
 
 
 def _process_job_daily_catchup(
@@ -1054,6 +1145,7 @@ def main() -> int:
     state = _load_state(state_file)
 
     discovered = _discover_single_tool_jobs(Path(args.jobs_json))
+    jobs_by_id = _load_jobs_by_id(Path(args.jobs_json))
     discovered_send_required = _discover_send_required_jobs(Path(args.jobs_json))
     discovered_analysis_jobs = _discover_analysis_jobs(Path(args.jobs_json))
     discovered_scheduled_single_jobs = _discover_scheduled_single_jobs(Path(args.jobs_json))
@@ -1113,6 +1205,8 @@ def main() -> int:
             max_age_minutes=args.max_age_minutes,
             retry_timeout_ms=args.retry_timeout_ms,
             state=state,
+            jobs_by_id=jobs_by_id,
+            timezone_name=args.timezone,
         )
         print(f"{status.upper()}: {msg}")
         if status == "fail":
@@ -1129,6 +1223,8 @@ def main() -> int:
             max_age_minutes=args.max_age_minutes,
             retry_timeout_ms=args.retry_timeout_ms,
             state=state,
+            jobs_by_id=jobs_by_id,
+            timezone_name=args.timezone,
         )
         print(f"{status.upper()}: {msg}")
         if status == "fail":

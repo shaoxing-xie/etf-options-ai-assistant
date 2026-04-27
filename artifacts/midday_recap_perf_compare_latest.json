@@ -1,0 +1,59 @@
+{
+  "baseline_runs": [
+    {
+      "runAtMs": 1776916800016,
+      "durationMs": 184375
+    },
+    {
+      "runAtMs": 1777003200015,
+      "durationMs": 55542
+    },
+    {
+      "runAtMs": 1777125119323,
+      "durationMs": 120174
+    }
+  ],
+  "baseline": {
+    "count": 3,
+    "success_rate": 1.0,
+    "p50_ms": 120174,
+    "p95_ms": 177955,
+    "max_ms": 184375,
+    "mean_ms": 120030
+  },
+  "latest": {
+    "runAtMs": 1777125407317,
+    "durationMs": 100836,
+    "status": "ok",
+    "sessionId": "f5c46266-a7de-4841-b6f9-c5f672e715a3",
+    "delivery_ok": true,
+    "run_quality": "ok_full",
+    "stage_timing": {
+      "critical": {
+        "elapsed_ms": 4677,
+        "budget_s": 45,
+        "status": "ok",
+        "degraded_reason": null
+      },
+      "slow_sources": {
+        "elapsed_ms": 24906,
+        "budget_s": 60,
+        "status": "ok",
+        "degraded_reason": null
+      },
+      "compose_send": {
+        "elapsed_ms": 0,
+        "budget_s": 30,
+        "status": "ok",
+        "degraded_reason": null
+      }
+    },
+    "quality_status": "ok"
+  },
+  "comparison": {
+    "delta_vs_baseline_p50_ms": -19338,
+    "delta_vs_baseline_mean_ms": -19194,
+    "improved_vs_p50": true,
+    "improved_vs_mean": true
+  }
+}

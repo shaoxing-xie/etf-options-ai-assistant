@@ -10,6 +10,7 @@ import re
 from datetime import datetime
 import json
 from pathlib import Path
+import time
 from typing import Any, Dict, List, Optional, Tuple
 
 try:
@@ -684,6 +685,10 @@ def tool_run_signal_risk_inspection_and_send(
     phase: str = "midday",
     mode: str = "prod",
     fetch_mode: str = "production",
+    workflow_profile: str = "legacy",
+    stage_budget_profile: str = "off",
+    emit_stage_timing: bool = False,
+    max_concurrency: int = 1,
     debug_force_tail_section: bool = False,
     debug_now: Optional[str] = None,
     webhook_url: Optional[str] = None,
@@ -697,18 +702,63 @@ def tool_run_signal_risk_inspection_and_send(
         phase: morning | midday | afternoon（与三档 Cron 对应）。
         mode: prod | test，钉钉发送模式。
         fetch_mode: production | test，透传指数/ETF 实时采集（test 跳过交易日门禁）。
+        workflow_profile: legacy | cron_balanced，巡检运行档位（预留扩展）。
+        stage_budget_profile: off | balanced，阶段预算档位（预留扩展）。
+        emit_stage_timing: 是否在返回 data 中显式输出 stage_timing。
+        max_concurrency: 兼容参数，当前单次任务内固定串行，最小值为 1。
     """
     from plugins.notification.send_signal_risk_inspection import tool_send_signal_risk_inspection
 
     if str(mode).lower() != "test":
         debug_force_tail_section = False
         debug_now = None
+    phase = (phase or "midday").strip().lower()
+    if phase not in ("morning", "midday", "afternoon"):
+        phase = "midday"
+    workflow_profile = str(workflow_profile or "legacy").strip().lower()
+    if workflow_profile not in ("legacy", "cron_balanced"):
+        workflow_profile = "legacy"
+    stage_budget_profile = str(stage_budget_profile or "off").strip().lower()
+    if stage_budget_profile not in ("off", "balanced"):
+        stage_budget_profile = "off"
+    emit_stage_timing = bool(emit_stage_timing)
+    max_concurrency = max(1, int(max_concurrency or 1))
+
+    stage_timing: Dict[str, Dict[str, Any]] = {}
+    lineage_refs: List[Dict[str, Any]] = []
+    run_id = f"signal-inspection:{phase}:{int(time.time() * 1000)}"
+    budget_profile = {
+        "morning": {"build": 50, "send": 20, "total": 90},
+        "midday": {"build": 65, "send": 25, "total": 110},
+        "afternoon": {"build": 65, "send": 25, "total": 110},
+    }
+    active_budget = budget_profile.get(phase, budget_profile["midday"])
+    t_all_start = time.perf_counter()
+
+    t_build_start = time.perf_counter()
     report = build_inspection_report(
         phase=phase,
         fetch_mode=fetch_mode,
         debug_force_tail_section=debug_force_tail_section,
         debug_now=debug_now,
     )
+    build_elapsed_ms = int((time.perf_counter() - t_build_start) * 1000)
+    stage_timing["build_report"] = {
+        "elapsed_ms": build_elapsed_ms,
+        "status": "ok",
+        "budget_s": active_budget["build"] if stage_budget_profile == "balanced" else None,
+    }
+    lineage_refs.append(
+        {
+            "stage": "build_report",
+            "tool_key": "build_inspection_report",
+            "success": True,
+            "elapsed_ms": build_elapsed_ms,
+            "source_hint": "plugins.notification.run_signal_risk_inspection",
+        }
+    )
+
+    t_send_start = time.perf_counter()
     out = tool_send_signal_risk_inspection(
         report=report,
         phase=phase,
@@ -717,9 +767,84 @@ def tool_run_signal_risk_inspection_and_send(
         secret=secret,
         keyword=keyword,
     )
+    send_elapsed_ms = int((time.perf_counter() - t_send_start) * 1000)
+    send_ok = bool(isinstance(out, dict) and out.get("success"))
+    stage_timing["send_report"] = {
+        "elapsed_ms": send_elapsed_ms,
+        "status": "ok" if send_ok else "error",
+        "budget_s": active_budget["send"] if stage_budget_profile == "balanced" else None,
+    }
+    lineage_refs.append(
+        {
+            "stage": "send_report",
+            "tool_key": "tool_send_signal_risk_inspection",
+            "success": send_ok,
+            "elapsed_ms": send_elapsed_ms,
+            "source_hint": "plugins.notification.send_signal_risk_inspection",
+        }
+    )
+    total_elapsed_ms = int((time.perf_counter() - t_all_start) * 1000)
+    stage_timing["total"] = {
+        "elapsed_ms": total_elapsed_ms,
+        "status": "ok" if send_ok else "error",
+        "budget_s": active_budget["total"] if stage_budget_profile == "balanced" else None,
+    }
+
+    degraded_reasons: List[str] = []
+    rendered_message = ""
+    coverage_ratio = 1.0
+    run_status = "error"
     if isinstance(out, dict):
         out.setdefault("data", {})
         if isinstance(out["data"], dict):
+            rendered_message = str(out["data"].get("rendered_message") or "")
+            coverage = out["data"].get("coverage")
+            if isinstance(coverage, dict):
+                coverage_ratio = float(coverage.get("ratio") or 0.0)
+                if coverage_ratio < 0.6:
+                    degraded_reasons.append(f"coverage_low:{coverage_ratio:.2f}")
             out["data"]["runner_phase"] = phase
             out["data"]["fetch_mode"] = fetch_mode
+            out["data"]["workflow_profile"] = workflow_profile
+            out["data"]["stage_budget_profile"] = stage_budget_profile
+            out["data"]["max_concurrency"] = max_concurrency
+            if emit_stage_timing:
+                out["data"]["stage_timing"] = stage_timing
+            out["data"]["lineage_refs"] = lineage_refs
+            out["data"]["run_id"] = run_id
+            out["data"]["ts"] = int(time.time() * 1000)
+    if isinstance(out, dict):
+        delivery = out.get("delivery")
+        if isinstance(delivery, dict):
+            if not bool(delivery.get("ok")) and str(mode).lower() == "prod":
+                degraded_reasons.append("delivery_not_ok")
+        m = re.search(r"INSPECTION_RUN_STATUS:\s*([a-zA-Z0-9_\\-]+)", rendered_message)
+        if m:
+            run_status = m.group(1).strip()
+        elif out.get("success"):
+            run_status = "ok"
+        if run_status != "ok":
+            degraded_reasons.append(f"inspection_status:{run_status}")
+        if not out.get("success"):
+            degraded_reasons.append("tool_return_not_success")
+        run_quality = "ok_full"
+        if not out.get("success"):
+            run_quality = "error"
+        elif degraded_reasons:
+            run_quality = "ok_degraded"
+        ack = {
+            "run_status": "ok" if run_quality != "error" else "error",
+            "run_quality": run_quality,
+            "phase": phase,
+            "degraded": bool(run_quality == "ok_degraded"),
+            "run_id": run_id,
+            "ts": int(time.time() * 1000),
+        }
+        if isinstance(out.get("data"), dict):
+            out["data"]["run_quality"] = run_quality
+            out["data"]["degraded_reasons"] = degraded_reasons
+            out["data"]["ack"] = ack
+            if emit_stage_timing:
+                out["data"]["stage_timing"] = stage_timing
+        out["ack"] = ack
     return out

@@ -702,3 +702,11 @@ def test_resolve_trend_fields_opening_from_strong_weak_counts_only() -> None:
     ot, ts = _resolve_trend_fields({}, an)
     assert ot == "偏强"
     assert ts is not None and abs(float(ts) - (1 / 3)) < 1e-6
+
+
+def test_resolve_trend_fields_derive_trend_from_report_meta_score_only() -> None:
+    """仅有 report_meta.market_sentiment_score 时，不应出现整体趋势 N/A。"""
+    an = {"report_meta": {"market_sentiment_score": -0.35}}
+    ot, ts = _resolve_trend_fields({}, an)
+    assert ot == "偏弱"
+    assert ts is not None and abs(float(ts) + 0.35) < 1e-9

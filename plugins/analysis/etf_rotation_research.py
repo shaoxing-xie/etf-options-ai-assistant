@@ -785,8 +785,9 @@ def tool_etf_rotation_research(
     top_k: int = 3,
     mode: str = "prod",
     config_path: Optional[str] = None,
-    max_runtime_seconds: float = 35.0,
+    max_runtime_seconds: float = 120.0,
     light_mode: bool = False,
+    allow_online_backfill: bool = True,
 ) -> Dict[str, Any]:
     """
     OpenClaw 工具：ETF 轮动研究（研究级）
@@ -872,6 +873,7 @@ def tool_etf_rotation_research(
             "fund_flow_score": fund_flow.get("score"),
             "northbound_score": northbound.get("score"),
         },
+        "allow_online_backfill": bool(allow_online_backfill),
     }
     pipe, timeout_warnings = _run_rotation_pipeline_with_timeout(
         symbols=symbols,

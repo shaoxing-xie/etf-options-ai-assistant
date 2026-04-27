@@ -59,6 +59,7 @@
       <div class="bar" id="topNav">
         <div class="nav" role="tablist" aria-label="Views">
           <button class="tab" id="tab-chart" role="tab" aria-selected="true" data-view="chart">图形</button>
+          <button class="tab" id="tab-global-market" role="tab" aria-selected="false" data-view="global-market">全球市场</button>
           <button class="tab" id="tab-config" role="tab" aria-selected="false" data-view="config">配置中心</button>
           <button class="tab" id="tab-research" role="tab" aria-selected="false" data-view="research">投研中心</button>
           <button class="tab" id="tab-ops" role="tab" aria-selected="false" data-view="ops">运维事件</button>
@@ -115,6 +116,37 @@
             <h4>告警事件（最近20）</h4>
             <table id="alertTable"><thead><tr><th>ts</th><th>symbol</th><th>status</th><th>rule</th></tr></thead><tbody></tbody></table>
           </div>
+        </div>
+      </section>
+
+      <section class="view" id="view-global-market" data-view="global-market">
+        <div class="bar">
+          <button type="button" id="btnGlobalMarketRefresh">手动刷新</button>
+          <span id="globalMarketStatus" class="small"></span>
+        </div>
+        <div class="panel small" style="margin-bottom:10px;">
+          数据来自 L4 语义快照 <code>/api/semantic/global_market_snapshot</code>（只读）；首次进入或点刷新会落盘到 <code>data/semantic/global_market_snapshot/</code>。
+        </div>
+        <div class="gm-block">
+          <h3>一、A股指数</h3>
+          <div id="gmCnGrid" class="gm-card-grid"></div>
+        </div>
+        <div class="gm-block">
+          <h3>二、全球指数</h3>
+          <div class="gm-two-col">
+            <div>
+              <h4>亚太市场</h4>
+              <div id="gmApacGrid" class="gm-card-grid"></div>
+            </div>
+            <div>
+              <h4>欧美市场</h4>
+              <div id="gmUsEuGrid" class="gm-card-grid"></div>
+            </div>
+          </div>
+        </div>
+        <div class="gm-block">
+          <h3>三、股指期货</h3>
+          <div id="gmFutGrid" class="gm-card-grid"></div>
         </div>
       </section>
 
@@ -509,12 +541,13 @@
             <input id="opsOnlyIssues" type="checkbox" />
             仅看异常（degraded/error）
           </label>
+          <span id="opsKpiSummary" class="small"></span>
           <span id="opsStatus" class="small"></span>
         </div>
         <div class="research-view active" id="ops-exec-view" data-subview="exec">
           <div class="screening-table-wrap">
             <table>
-              <thead><tr><th>任务ID</th><th>名称</th><th>cron</th><th>状态</th><th>质量</th><th>连续错误</th><th>工具</th></tr></thead>
+              <thead><tr><th>任务ID</th><th>名称</th><th>cron</th><th>执行状态</th><th>数据质量</th><th>run_quality</th><th>failure_code</th><th>耗时(ms)</th><th>降级原因</th><th>链路</th><th>工具</th></tr></thead>
               <tbody id="opsExecTbody"></tbody>
             </table>
           </div>
@@ -522,7 +555,7 @@
         <div class="research-view" id="ops-collect-view" data-subview="collect">
           <div class="screening-table-wrap">
             <table>
-              <thead><tr><th>任务ID</th><th>名称</th><th>cron</th><th>状态</th><th>质量</th><th>连续错误</th><th>工具</th></tr></thead>
+              <thead><tr><th>任务ID</th><th>名称</th><th>cron</th><th>执行状态</th><th>数据质量</th><th>run_quality</th><th>failure_code</th><th>耗时(ms)</th><th>降级原因</th><th>链路</th><th>工具</th></tr></thead>
               <tbody id="opsCollectTbody"></tbody>
             </table>
           </div>
@@ -530,7 +563,7 @@
         <div class="research-view" id="ops-health-view" data-subview="health">
           <div class="screening-table-wrap">
             <table>
-              <thead><tr><th>任务ID</th><th>名称</th><th>调度</th><th>状态</th><th>质量</th><th>连续错误</th><th>错误摘要</th><th>修复建议</th><th>日志定位</th></tr></thead>
+              <thead><tr><th>任务ID</th><th>名称</th><th>调度</th><th>状态</th><th>数据质量</th><th>执行状态</th><th>run_quality</th><th>failure_code</th><th>耗时(ms)</th><th>降级原因</th><th>错误摘要</th><th>修复建议</th><th>日志定位</th></tr></thead>
               <tbody id="opsHealthTbody"></tbody>
             </table>
           </div>

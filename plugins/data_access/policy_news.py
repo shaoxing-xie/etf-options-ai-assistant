@@ -62,9 +62,11 @@ def tool_fetch_policy_news(
     dom = include_domains if isinstance(include_domains, list) and include_domains else DEFAULT_FINANCE_NEWS_INCLUDE_DOMAINS
 
     # Keep query broad but scoped to policy + A-shares market impact.
+    # Add an explicit Chinese output hint to reduce English-only "answer" prose.
     query = (
         "中国 政策 要闻 影响 A股 市场 监管 央行 财政 产业政策 "
-        "盘前 重要 新闻 摘要"
+        "盘前 重要 新闻 摘要 "
+        "（请用中文概述要点，不要用英文起句）"
     )
 
     r = tavily_search_with_include_domain_fallback(

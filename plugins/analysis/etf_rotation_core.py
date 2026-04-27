@@ -532,6 +532,7 @@ def load_etf_daily_df(
     *,
     start_yyyymmdd: str,
     end_yyyymmdd: str,
+    allow_online_backfill: bool = True,
 ) -> Tuple[Optional[pd.DataFrame], Optional[str], str]:
     """
     读取 ETF 日线（联合口径）：
@@ -552,9 +553,25 @@ def load_etf_daily_df(
         skip_online_refill=True,
     )
     missing_dates = list(out.get("missing_dates") or [])
+    # 纠偏：非交易时段/非交易日手动触发时，end_date 可能落在未来或周末，
+    # read_cache_data 会把“未来日期”算入 missing_dates，进而触发不必要的在线补采（极慢且易限流）。
+    # 若缓存已包含最近有效交易日数据，则忽略 last_bar 之后的 missing_dates。
+    try:
+        df0 = out.get("df")
+        if missing_dates and df0 is not None and not getattr(df0, "empty", True):
+            last_bar = last_bar_yyyymmdd_from_df(df0)
+            if last_bar and str(last_bar).isdigit() and len(str(last_bar)) == 8:
+                missing_dates = [d for d in missing_dates if str(d) <= str(last_bar)]
+    except Exception:
+        pass
     if out.get("success") and not missing_dates:
         return out.get("df"), None, "cache"
     df = out.get("df")
+    # cache-only mode: return cache hit (even partial) and never call online sources.
+    if not allow_online_backfill:
+        if df is not None and not (hasattr(df, "empty") and df.empty):
+            return df, out.get("message") or "cache_only_partial", "cache_partial"
+        return None, out.get("message") or "cache_only_miss", "failed"
     if df is not None and not (hasattr(df, "empty") and df.empty):
         # 缓存部分命中，尝试仅补缺口区间（避免拉取过大窗口）
         try:
@@ -621,6 +638,8 @@ def _prefetch_etf_daily_frames(
     symbols: List[str],
     start_d: str,
     end_d: str,
+    *,
+    allow_online_backfill: bool = True,
 ) -> Dict[str, Tuple[Optional[pd.DataFrame], Optional[str], str]]:
     """
     并行加载各标的 ETF 日线（I/O 为主）。可通过环境变量关闭并行：
@@ -632,7 +651,12 @@ def _prefetch_etf_daily_frames(
         return {}
 
     def _one(sym: str) -> Tuple[str, Optional[pd.DataFrame], Optional[str], str]:
-        df, msg, src = load_etf_daily_df(sym, start_yyyymmdd=start_d, end_yyyymmdd=end_d)
+        df, msg, src = load_etf_daily_df(
+            sym,
+            start_yyyymmdd=start_d,
+            end_yyyymmdd=end_d,
+            allow_online_backfill=allow_online_backfill,
+        )
         return sym, df, msg, src
 
     raw = os.environ.get("ETF_ROTATION_LOAD_MAX_WORKERS", "").strip()
@@ -943,7 +967,9 @@ def run_rotation_pipeline(
     macd_f = float((config.get("alignment") or {}).get("macd_factor") or 2.0)
     fp58 = fingerprint_58_cache(config, macd_f)
 
-    prefetched = _prefetch_etf_daily_frames(symbols, start_d, end_d)
+    ri = runtime_inputs if isinstance(runtime_inputs, dict) else {}
+    allow_online_backfill = bool(ri.get("allow_online_backfill", True))
+    prefetched = _prefetch_etf_daily_frames(symbols, start_d, end_d, allow_online_backfill=allow_online_backfill)
 
     for sym in symbols:
         df, msg, src = prefetched[sym]

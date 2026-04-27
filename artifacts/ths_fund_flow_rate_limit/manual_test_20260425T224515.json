@@ -1,0 +1,65 @@
+{
+  "_meta": {
+    "schema_name": "ths_fund_flow_rate_limit_manual_test_v1",
+    "schema_version": "1.0.0",
+    "generated_at": "2026-04-25T22:49:02.720930",
+    "task_id": "manual-ths-fund-flow-rate-limit",
+    "quality_status": "ok"
+  },
+  "settings": {
+    "rounds": 1,
+    "retries": 3,
+    "backoff_first": 1.0,
+    "backoff_max": 8.0,
+    "batch_sizes": [
+      5
+    ],
+    "sleep_seconds": [
+      1.0
+    ]
+  },
+  "rows": [
+    {
+      "period": "pre_open",
+      "batch_size": 5,
+      "sleep_seconds": 1.0,
+      "request_total": 5,
+      "success_count": 2,
+      "rate_limit_count": 0,
+      "non_retryable_count": 3,
+      "retry_count": 0,
+      "final_success_after_retry": 0,
+      "avg_latency_ms": 16419,
+      "p95_latency_ms": 20031,
+      "success_rate": 0.4
+    },
+    {
+      "period": "intraday",
+      "batch_size": 5,
+      "sleep_seconds": 1.0,
+      "request_total": 5,
+      "success_count": 3,
+      "rate_limit_count": 0,
+      "non_retryable_count": 2,
+      "retry_count": 0,
+      "final_success_after_retry": 0,
+      "avg_latency_ms": 12897,
+      "p95_latency_ms": 20044,
+      "success_rate": 0.6
+    },
+    {
+      "period": "after_close",
+      "batch_size": 5,
+      "sleep_seconds": 1.0,
+      "request_total": 5,
+      "success_count": 2,
+      "rate_limit_count": 0,
+      "non_retryable_count": 3,
+      "retry_count": 0,
+      "final_success_after_retry": 0,
+      "avg_latency_ms": 13175,
+      "p95_latency_ms": 20035,
+      "success_rate": 0.4
+    }
+  ]
+}

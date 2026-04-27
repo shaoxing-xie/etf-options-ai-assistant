@@ -462,3 +462,85 @@ details.screening-details summary {
 .research-view.active {
   display: block;
 }
+
+/* 全球市场行情卡片（红涨绿跌） */
+.gm-block {
+  margin-bottom: 14px;
+}
+.gm-block h3,
+.gm-block h4 {
+  margin: 0 0 8px 0;
+  font-size: 13px;
+  color: #c8d4f5;
+}
+.gm-two-col {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+@media (max-width: 900px) {
+  .gm-two-col {
+    grid-template-columns: 1fr;
+  }
+}
+.gm-card-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
+}
+@media (max-width: 1100px) {
+  .gm-card-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+@media (max-width: 640px) {
+  .gm-card-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+.gm-card {
+  background: #101831;
+  border: 1px solid #28335f;
+  border-radius: 10px;
+  padding: 8px 10px;
+  min-height: 72px;
+}
+.gm-card .gm-name {
+  font-size: 12px;
+  color: #d6ddf5;
+  margin-bottom: 4px;
+  line-height: 1.25;
+}
+.gm-card .gm-sub {
+  font-size: 11px;
+  color: #9aa8d4;
+  margin-bottom: 4px;
+}
+.gm-card .gm-price {
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1.2;
+}
+.gm-card .gm-chg {
+  font-size: 12px;
+  margin-top: 4px;
+}
+.gm-card.quote-up .gm-name,
+.gm-card.quote-up .gm-price,
+.gm-card.quote-up .gm-chg {
+  color: #f66b6b;
+}
+.gm-card.quote-down .gm-name,
+.gm-card.quote-down .gm-price,
+.gm-card.quote-down .gm-chg {
+  color: #5fd39a;
+}
+.gm-card.quote-flat .gm-price,
+.gm-card.quote-flat .gm-chg {
+  color: #9aa8d4;
+}
+.gm-meta {
+  font-size: 11px;
+  color: #9aa8d4;
+  margin-top: 6px;
+}

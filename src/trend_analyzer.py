@@ -585,6 +585,112 @@ def analyze_daily_market_after_close(config: Optional[Dict] = None) -> Dict[str,
                             f"期望={expected_bar_date}, 实际={hs300_last_date}"
                         )
                         data_date_valid = False
+
+            # 3.1 盘后“日线落库滞后”兜底：若今日为交易日且日线仍停在 T-1，
+            # 尝试用 1分钟线合成当日收盘 bar（用于趋势强度/涨跌幅/量能等），以避免报告基于过期交易日。
+            if not data_date_valid:
+                try:
+                    from src.system_status import is_trading_day
+
+                    today_dt = tz_sh.localize(datetime.strptime(today, "%Y%m%d"))
+                    cal_today_is_trading = is_trading_day(today_dt, config)
+                except Exception:
+                    cal_today_is_trading = True
+
+                if cal_today_is_trading and expected_bar_date == today:
+                    try:
+                        from src.data_collector import fetch_index_minute_em
+
+                        def _synth_daily_from_minute(
+                            daily_df: Any, symbol: str, last_daily_yyyymmdd: Optional[str]
+                        ) -> Any:
+                            if daily_df is None or getattr(daily_df, "empty", True):
+                                return daily_df
+                            if last_daily_yyyymmdd == expected_bar_date:
+                                return daily_df
+                            mdf = fetch_index_minute_em(
+                                symbol=symbol,
+                                period="1",
+                                start_date=expected_bar_date,
+                                end_date=expected_bar_date,
+                                lookback_days=1,
+                                max_retries=2,
+                                retry_delay=1.0,
+                                fast_fail=True,
+                                force_realtime=True,
+                            )
+                            if mdf is None or getattr(mdf, "empty", True):
+                                return daily_df
+                            # 取最后一条分钟收盘作为当日 close（通常为 15:00）
+                            close_col = "收盘" if "收盘" in mdf.columns else ("close" if "close" in mdf.columns else None)
+                            open_col = "开盘" if "开盘" in mdf.columns else ("open" if "open" in mdf.columns else None)
+                            high_col = "最高" if "最高" in mdf.columns else ("high" if "high" in mdf.columns else None)
+                            low_col = "最低" if "最低" in mdf.columns else ("low" if "low" in mdf.columns else None)
+                            vol_col = "成交量" if "成交量" in mdf.columns else ("volume" if "volume" in mdf.columns else None)
+                            amt_col = "成交额" if "成交额" in mdf.columns else ("amount" if "amount" in mdf.columns else None)
+                            if close_col is None:
+                                return daily_df
+                            try:
+                                close_px = float(mdf[close_col].iloc[-1])
+                            except Exception:
+                                return daily_df
+                            try:
+                                prev_close = float(daily_df["收盘"].iloc[-1]) if "收盘" in daily_df.columns else None
+                            except Exception:
+                                prev_close = None
+                            row: Dict[str, Any] = {}
+                            # daily df date column is "日期" and is normalized to "YYYY-MM-DD"
+                            row["日期"] = f"{expected_bar_date[:4]}-{expected_bar_date[4:6]}-{expected_bar_date[6:8]}"
+                            if open_col is not None:
+                                try:
+                                    row["开盘"] = float(mdf[open_col].iloc[0])
+                                except Exception:
+                                    pass
+                            row["收盘"] = close_px
+                            if high_col is not None:
+                                try:
+                                    row["最高"] = float(mdf[high_col].max())
+                                except Exception:
+                                    pass
+                            if low_col is not None:
+                                try:
+                                    row["最低"] = float(mdf[low_col].min())
+                                except Exception:
+                                    pass
+                            if vol_col is not None:
+                                try:
+                                    row["成交量"] = float(mdf[vol_col].sum())
+                                except Exception:
+                                    pass
+                            if amt_col is not None:
+                                try:
+                                    row["成交额"] = float(mdf[amt_col].sum())
+                                except Exception:
+                                    pass
+                            if prev_close and prev_close > 0:
+                                chg = close_px - prev_close
+                                row["涨跌额"] = chg
+                                row["涨跌幅"] = (chg / prev_close) * 100.0
+                            try:
+                                import pandas as pd
+
+                                daily_df2 = pd.concat([daily_df, pd.DataFrame([row])], ignore_index=True)
+                                return daily_df2
+                            except Exception:
+                                return daily_df
+
+                        shanghai_daily = _synth_daily_from_minute(shanghai_daily, "000001", shanghai_last_date)
+                        hs300_daily = _synth_daily_from_minute(hs300_daily, "000300", hs300_last_date)
+
+                        # Re-evaluate last dates after synthesis.
+                        if shanghai_daily is not None and not shanghai_daily.empty:
+                            shanghai_last_date = _last_bar_yyyymmdd_from_index_df(shanghai_daily)
+                        if hs300_daily is not None and not hs300_daily.empty:
+                            hs300_last_date = _last_bar_yyyymmdd_from_index_df(hs300_daily)
+                        if shanghai_last_date == expected_bar_date and hs300_last_date == expected_bar_date:
+                            data_date_valid = True
+                    except Exception as e:
+                        logger.warning("分钟线合成当日日线失败（将继续使用最近可用日线）: %s", str(e)[:160])
             
             # 如果数据日期验证通过，或已经是最后一次尝试，跳出循环
             if data_date_valid or attempt >= max_attempts - 1:

@@ -65,13 +65,25 @@ def test_tool_run_tail_session_analysis_and_send_calls_sender() -> None:
         ),
     ), patch(
         "plugins.notification.send_analysis_report.tool_send_analysis_report",
-        return_value={"success": True, "data": {}},
+        return_value={
+            "success": True,
+            "delivery": {"ok": True, "status": "ok", "errcode": 0, "errmsg": "ok"},
+            "response": {"errcode": 0, "errmsg": "ok", "http_status": 200},
+            "data": {},
+        },
     ) as m_send:
         out = tool_run_tail_session_analysis_and_send(mode="test")
 
     assert out.get("success") is True
     m_send.assert_called_once()
     assert m_send.call_args.kwargs.get("mode") == "test"
+    assert out.get("delivered") is True
+    assert out.get("deliveryStatus") == "ok"
+    out_data = out.get("data") if isinstance(out.get("data"), dict) else {}
+    delivery = out_data.get("delivery") if isinstance(out_data.get("delivery"), dict) else {}
+    assert delivery.get("attempted") is True
+    assert delivery.get("success") is True
+    assert delivery.get("channel_code") == 0
 
 
 def test_build_tail_session_manual_iopv_override() -> None:
@@ -220,3 +232,77 @@ def test_build_tail_session_nikkei_theoretical_nav_as_iopv() -> None:
     assert snap.get("iopv_source") == "theoretical_nav"
     assert snap.get("iopv") is not None
     assert errs == []
+
+
+def test_build_tail_session_nikkei_m6_next_open_direction_with_degrade() -> None:
+    from plugins.notification.run_tail_session_analysis import build_tail_session_report_data
+
+    with patch(
+        "plugins.notification.run_tail_session_analysis._now_sh",
+        return_value=__import__("datetime").datetime(2026, 4, 24, 13, 45, 0),
+    ), patch(
+        "plugins.data_collection.utils.check_trading_status.tool_check_trading_status",
+        return_value={"success": True, "data": {"market_status": "open"}},
+    ), patch(
+        "plugins.data_collection.etf.fetch_realtime.tool_fetch_etf_iopv_snapshot",
+        return_value={"success": True, "data": {"code": "513880", "latest_price": 1.872, "iopv": None, "discount_pct": None}},
+    ), patch(
+        "plugins.merged.fetch_etf_data.tool_fetch_etf_data",
+        return_value={"success": True, "data": {"code": "513880", "current_price": 1.872, "amount": 98000000, "change_pct": 0.9}},
+    ), patch(
+        "plugins.data_collection.index.fetch_global_hist_sina.tool_fetch_global_index_hist_sina",
+        return_value={"success": True, "data": [{"close": 100 + i} for i in range(40)]},
+    ), patch(
+        "plugins.merged.fetch_index_data.tool_fetch_index_data",
+        side_effect=_mock_fetch_index_data,
+    ), patch(
+        "plugins.notification.run_tail_session_analysis._fetch_fundgz_snapshot",
+        return_value={"status": "ok", "official_nav": 1.85, "nav_date": "2026-04-23"},
+    ), patch(
+        "plugins.notification.run_tail_session_analysis._fetch_nikkei_futures_snapshot",
+        return_value={"status": "unavailable"},
+    ):
+        rd, errs = build_tail_session_report_data(fetch_mode="test", market_profile="nikkei_513880", monitor_point="M6")
+
+    pred = rd.get("next_open_direction") if isinstance(rd.get("next_open_direction"), dict) else {}
+    assert pred.get("direction") in {"up", "down"}
+    assert isinstance(pred.get("p_up"), float)
+    assert pred.get("confidence_level") == "low"
+    assert "PREDICTOR_NO_FUTURES_DATA" in str(pred.get("degraded_reason") or "")
+    backtest_stats = pred.get("backtest_stats") if isinstance(pred.get("backtest_stats"), dict) else {}
+    assert backtest_stats.get("required_samples") == 20
+    assert "current_samples" in backtest_stats
+    assert errs == []
+
+
+def test_build_tail_session_required_minimum_fields_present() -> None:
+    from plugins.notification.run_tail_session_analysis import build_tail_session_report_data
+
+    with patch(
+        "plugins.data_collection.utils.check_trading_status.tool_check_trading_status",
+        return_value={"success": True, "data": {"market_status": "open"}},
+    ), patch(
+        "plugins.data_collection.etf.fetch_realtime.tool_fetch_etf_iopv_snapshot",
+        return_value={"success": True, "data": {"code": "513300", "latest_price": 2.33, "iopv": None, "discount_pct": None}},
+    ), patch(
+        "plugins.merged.fetch_etf_data.tool_fetch_etf_data",
+        return_value={"success": True, "data": {"code": "513300", "current_price": 2.33, "amount": 80000000, "change_pct": 1.2}},
+    ), patch(
+        "plugins.data_collection.index.fetch_global_hist_sina.tool_fetch_global_index_hist_sina",
+        return_value={"success": True, "data": [{"close": 100 + i} for i in range(40)]},
+    ), patch(
+        "plugins.merged.fetch_index_data.tool_fetch_index_data",
+        side_effect=_mock_fetch_index_data,
+    ), patch(
+        "plugins.notification.run_tail_session_analysis._fetch_nq_futures_snapshot",
+        return_value={"status": "ok", "symbol": "NQ=F", "change_pct": 0.5},
+    ):
+        rd, _errs = build_tail_session_report_data(fetch_mode="test", market_profile="nasdaq_513300")
+
+    snap = rd.get("tail_session_snapshot") if isinstance(rd.get("tail_session_snapshot"), dict) else {}
+    risk_gate = (rd.get("analysis") or {}).get("risk_gate") if isinstance(rd.get("analysis"), dict) else {}
+    assert snap.get("change_pct") is not None
+    assert snap.get("as_of")
+    assert isinstance((rd.get("analysis") or {}).get("signal_summary"), dict)
+    assert risk_gate.get("decision") in {"GO", "GO_LIGHT", "WAIT", "EXIT_REDUCE"}
+    assert isinstance(risk_gate.get("reason_codes"), list)

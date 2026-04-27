@@ -6,6 +6,9 @@ import pandas as pd
 
 from .services import ApiServices
 
+# Bump when adding semantic HTTP routes so operators can `curl /api/health` and detect stale processes.
+CHART_CONSOLE_ROUTES_TAG = "2026-04-25_semantic_market_snapshots"
+
 
 class ApiRoutes:
     def __init__(self, services: ApiServices) -> None:
@@ -13,7 +16,17 @@ class ApiRoutes:
 
     def handle_get(self, path: str, query: dict[str, list[str]]):
         if path == "/api/health":
-            return {"success": True, "message": "ok"}, 200
+            return (
+                {
+                    "success": True,
+                    "message": "ok",
+                    "data": {
+                        "chart_console": "pro",
+                        "routes_tag": CHART_CONSOLE_ROUTES_TAG,
+                    },
+                },
+                200,
+            )
         if path == "/api/alerts/config":
             return self.svc.get_alerts_config_text(), 200
         if path == "/api/config/market_data":
@@ -164,6 +177,16 @@ class ApiRoutes:
         if path == "/api/semantic/etf_share_dashboard":
             trade_date = (query.get("trade_date") or [""])[0]
             return self.svc.get_semantic_etf_share_dashboard(str(trade_date)), 200, {}
+        if path == "/api/semantic/global_market_snapshot":
+            trade_date = (query.get("trade_date") or [""])[0]
+            refresh = str((query.get("refresh") or ["0"])[0]).lower() in ("1", "true", "yes", "on")
+            payload, code = self.svc.get_semantic_global_market_snapshot(str(trade_date), refresh=refresh)
+            return payload, code, {}
+        if path == "/api/semantic/qdii_futures_snapshot":
+            trade_date = (query.get("trade_date") or [""])[0]
+            refresh = str((query.get("refresh") or ["0"])[0]).lower() in ("1", "true", "yes", "on")
+            payload, code = self.svc.get_semantic_qdii_futures_snapshot(str(trade_date), refresh=refresh)
+            return payload, code, {}
         if path == "/api/ops/events":
             trade_date = (query.get("trade_date") or [""])[0]
             return self.svc.get_ops_events(str(trade_date)), 200, {"X-Deprecated": "true", "X-Replacement": "/api/semantic/ops_events"}

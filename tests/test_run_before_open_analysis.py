@@ -144,3 +144,20 @@ def test_tool_runner_maps_before_open_composite() -> None:
     spec = TOOL_MAP["tool_run_before_open_analysis_and_send"]
     assert spec.module_path == "notification.run_before_open_analysis"
     assert spec.function_name == "tool_run_before_open_analysis_and_send"
+
+
+def test_build_before_open_marks_analysis_health_degraded_when_analysis_missing(
+    patch_before_open_chain: None,
+) -> None:
+    from plugins.notification.run_before_open_analysis import build_before_open_report_data
+
+    with patch(
+        "plugins.analysis.trend_analysis.tool_analyze_before_open",
+        return_value={"success": False, "message": "analysis unavailable", "data": None},
+    ):
+        rd, _errs = build_before_open_report_data(fetch_mode="production")
+
+    ah = rd.get("analysis_health")
+    assert isinstance(ah, dict)
+    assert ah.get("status") == "degraded"
+    assert "analysis_tool_failed" in str(ah.get("reason") or "")

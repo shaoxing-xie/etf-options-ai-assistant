@@ -488,5 +488,12 @@ def tool_send_signal_risk_inspection(
         result["data"]["rendered_message"] = message
         result["data"]["phase"] = phase
         result["data"]["coverage"] = coverage
+        result["data"]["delivery_source_of_truth"] = "toolResult.delivery"
+        result["data"]["delivery_aux_field"] = "runs.deliveryStatus"
+        result["data"]["delivery_truth"] = {
+            "ok": bool(delivery.get("ok")) if isinstance(delivery, dict) else False,
+            "status": str(delivery.get("status") or "") if isinstance(delivery, dict) else "unknown",
+            "reason": str(delivery.get("reason") or "") if isinstance(delivery, dict) else "",
+        }
     return result
 

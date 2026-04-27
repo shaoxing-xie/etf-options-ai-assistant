@@ -1160,6 +1160,26 @@
             "description": "prod|test",
             "default": "prod"
           },
+          "workflow_profile": {
+            "type": "string",
+            "description": "legacy|cron_balanced（cron_balanced 启用阶段预算、降级与结构化观测）",
+            "default": "legacy"
+          },
+          "stage_budget_profile": {
+            "type": "string",
+            "description": "balanced|tight|off（阶段预算档位；off 表示禁用阶段预算）",
+            "default": "balanced"
+          },
+          "emit_stage_timing": {
+            "type": "boolean",
+            "description": "是否输出 data.stage_timing 与 data.lineage_struct 结构化观测字段",
+            "default": true
+          },
+          "max_concurrency": {
+            "type": "integer",
+            "description": "optional 慢源并发上限（仅 workflow_profile=cron_balanced 生效）",
+            "default": 3
+          },
           "extra_report_data": {
             "type": "object",
             "description": "可选；与 analyze 产物浅合并到 report_data 顶层。每个 tool_* 键的值须为**完整工具返回 JSON**（含 success/data/items 等）；禁止只传参数字典（如仅 index_codes），否则将跳过合并以免覆盖发送层补采。"
@@ -1390,6 +1410,26 @@
             "description": "legacy|realtime（legacy=盘前行情分析报告；realtime=开盘实盘行情报告）",
             "default": "legacy"
           },
+          "workflow_profile": {
+            "type": "string",
+            "description": "legacy|cron_balanced（cron_balanced 启用阶段预算/并发/去重与观测字段）",
+            "default": "legacy"
+          },
+          "stage_budget_profile": {
+            "type": "string",
+            "description": "balanced|tight|off（阶段预算档位；off 表示禁用阶段预算）",
+            "default": "balanced"
+          },
+          "emit_stage_timing": {
+            "type": "boolean",
+            "description": "是否输出 data.stage_timing 与 data.lineage_struct（结构化观测字段）",
+            "default": true
+          },
+          "max_concurrency": {
+            "type": "integer",
+            "description": "慢源并发上限（仅 workflow_profile=cron_balanced 生效）",
+            "default": 4
+          },
           "webhook_url": {
             "type": "string",
             "description": "可选：自定义机器人 webhook（包含 access_token）"
@@ -1431,6 +1471,26 @@
             "type": "string",
             "description": "production|test（行情采集门禁；test 可配合 debug_now）",
             "default": "production"
+          },
+          "workflow_profile": {
+            "type": "string",
+            "description": "legacy|cron_balanced（是否启用阶段预算/并发采集/观测增强）",
+            "default": "legacy"
+          },
+          "stage_budget_profile": {
+            "type": "string",
+            "description": "balanced|tight|off（阶段预算档位；off 表示禁用阶段预算）",
+            "default": "balanced"
+          },
+          "emit_stage_timing": {
+            "type": "boolean",
+            "description": "是否输出 data.stage_timing 与 data.lineage_struct（结构化观测字段）",
+            "default": true
+          },
+          "max_concurrency": {
+            "type": "integer",
+            "description": "慢源并发上限（仅 workflow_profile=cron_balanced 生效）",
+            "default": 3
           },
           "debug_now": {
             "type": "string",
@@ -1491,6 +1551,26 @@
           "monitor_bundle": {
             "type": "string",
             "description": "可选；合并监控点（例如 PROCESS 或 M1_M2 或 M4_M5_M6）"
+          },
+          "workflow_profile": {
+            "type": "string",
+            "description": "legacy|cron_balanced（是否启用阶段预算/并发节流/观测增强）",
+            "default": "legacy"
+          },
+          "stage_budget_profile": {
+            "type": "string",
+            "description": "balanced|tight|off（阶段预算档位）",
+            "default": "balanced"
+          },
+          "emit_stage_timing": {
+            "type": "boolean",
+            "description": "是否输出 stage_timing 与 lineage_struct 观测字段",
+            "default": true
+          },
+          "max_concurrency": {
+            "type": "integer",
+            "description": "慢源最大并发（仅 cron_balanced 生效）",
+            "default": 3
           },
           "webhook_url": {
             "type": "string",
@@ -1905,14 +1985,14 @@
     {
       "id": "tool_fetch_a_share_fund_flow",
       "label": "A股资金流向（统一）",
-      "description": "A 股大盘/板块/个股资金流向（东财直连优先，失败回退 AkShare；非投资建议）。 query_kind：market_history | market_flow_preferred | sector_rank | stock_rank | big_deal。",
+      "description": "A 股大盘/板块/个股资金流向（东财直连优先，失败回退 AkShare；非投资建议）。 query_kind：market_history | sector_rank | stock_rank | big_deal | main_force_rank | sector_drill | stock_history。",
       "description_short": "A 股境内资金流可查表（大盘/板块/个股）。",
       "parameters": {
         "type": "object",
         "properties": {
           "query_kind": {
             "type": "string",
-            "description": "market_history=大盘历史；market_flow_preferred=大盘（日报补采）；sector_rank=板块； stock_rank=个股排名；big_deal=东财大单净流入代理快照"
+            "description": "market_history=大盘历史；sector_rank=板块；stock_rank=个股排名； big_deal=东财大单净流入代理快照；main_force_rank=主力净流入榜；sector_drill=板块资金细分；stock_history=个股历史资金流"
           },
           "provider_preference": {
             "type": "string",

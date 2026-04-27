@@ -6,6 +6,7 @@
 
 import os
 import argparse
+import re
 from pathlib import Path
 from typing import Dict, Optional, Any, List
 from datetime import datetime
@@ -94,6 +95,7 @@ from src.logger_config import get_module_logger
 from src.signal_config_normalize import normalize_signal_generation_config
 
 logger = get_module_logger(__name__)
+_CREDENTIAL_KEY_PATTERN = re.compile(r"(api[_-]?key|token|secret|password)", re.IGNORECASE)
 
 # -------- env placeholder resolution --------
 def _resolve_env_placeholders(obj: Any) -> Any:
@@ -246,6 +248,39 @@ def merge_config(default: Dict, user: Dict) -> Dict:
             result[key] = value
     
     return result
+
+
+def _warn_missing_credentials(config: Dict[str, Any]) -> None:
+    """Warn when enabled config sections have empty credential fields."""
+
+    def _walk(node: Any, path: str, active: bool = True) -> None:
+        if not active:
+            return
+        if isinstance(node, dict):
+            enabled = node.get("enabled")
+            if isinstance(enabled, bool) and not enabled:
+                return
+            for k, v in node.items():
+                p = f"{path}.{k}" if path else str(k)
+                if _CREDENTIAL_KEY_PATTERN.search(str(k)):
+                    if v is None or (isinstance(v, str) and not v.strip()):
+                        logger.warning(
+                            "配置凭证缺失: `%s` 为空（若该数据源需启用，请检查 .env 与 config 占位符）",
+                            p,
+                        )
+                    elif isinstance(v, list):
+                        non_empty = [str(x).strip() for x in v if str(x).strip()]
+                        if not non_empty:
+                            logger.warning(
+                                "配置凭证缺失: `%s` 列表为空（若该数据源需启用，请检查 .env 与 config 占位符）",
+                                p,
+                            )
+                _walk(v, p, True)
+        elif isinstance(node, list):
+            for idx, item in enumerate(node):
+                _walk(item, f"{path}[{idx}]", True)
+
+    _walk(config, "")
 
 
 def _project_root() -> Path:
@@ -431,6 +466,7 @@ def load_system_config(config_path: Optional[str] = None, use_cache: bool = True
             user_config = load_layered_user_config(project_root)
 
         config = merge_config(default_config, user_config)
+        _warn_missing_credentials(config)
         normalize_signal_generation_config(config)
 
         try:

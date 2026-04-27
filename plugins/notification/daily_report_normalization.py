@@ -15,7 +15,7 @@ from typing import Any, Dict, List, Optional, Tuple
 _DAILY_GLOBAL_INDEX_CODES = (
     "^N225,^HSI,^KS11,^GDAXI,^STOXX50E,^FTSE,^GSPC,^IXIC,^DJI"
 )
-_MARKET_FLOW_QUERY_KINDS = frozenset({"market_history", "market_proxy_ths", "market_flow_preferred"})
+_MARKET_FLOW_QUERY_KINDS = frozenset({"market_history", "market_proxy_ths", "market_flow_preferred", "main_force_rank"})
 
 
 def _outer_extract_change_pct(row: Optional[Dict[str, Any]]) -> Optional[float]:
@@ -57,6 +57,8 @@ def _outer_hist_resp_to_index_row(code: str, resp: Dict[str, Any]) -> Optional[D
         "change": change,
         "change_pct": round(change_pct, 4),
         "timestamp": ts,
+        "as_of": ts,
+        "data_semantics": "daily_close",
         "source_detail": f"global_hist_sina;bar_date={bar_date}",
     }
 

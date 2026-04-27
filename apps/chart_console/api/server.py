@@ -17,6 +17,16 @@ from apps.chart_console.api.serializers import sanitize
 from apps.chart_console.api.services import ApiServices
 
 
+def _normalize_request_path(path: str) -> str:
+    """Collapse duplicate slashes and strip a trailing slash so routing matches common URL variants."""
+    p = path or "/"
+    while "//" in p:
+        p = p.replace("//", "/")
+    if len(p) > 1 and p.endswith("/"):
+        p = p.rstrip("/")
+    return p
+
+
 class ChartApiHandler(BaseHTTPRequestHandler):
     frontend_dir = Path(__file__).resolve().parents[1] / "frontend"
     routes = ApiRoutes(ApiServices())
@@ -69,7 +79,7 @@ class ChartApiHandler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:  # noqa: N802
         parsed = urlparse(self.path)
-        path = parsed.path
+        path = _normalize_request_path(parsed.path)
         query = parse_qs(parsed.query)
         if path.startswith("/api/"):
             out = self.routes.handle_get(path, query)
@@ -84,7 +94,7 @@ class ChartApiHandler(BaseHTTPRequestHandler):
 
     def do_HEAD(self) -> None:  # noqa: N802
         parsed = urlparse(self.path)
-        path = parsed.path
+        path = _normalize_request_path(parsed.path)
         query = parse_qs(parsed.query)
         if path.startswith("/api/"):
             out = self.routes.handle_get(path, query)
@@ -127,7 +137,7 @@ class ChartApiHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:  # noqa: N802
         parsed = urlparse(self.path)
-        path = parsed.path
+        path = _normalize_request_path(parsed.path)
         body = self._read_json()
         if path.startswith("/api/"):
             payload, code = self.routes.handle_post(path, body)

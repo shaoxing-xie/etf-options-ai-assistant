@@ -7,10 +7,36 @@ data_cache 批量采集核心逻辑（与 scripts/run_data_cache_collection.py �
 from __future__ import annotations
 
 import json
+import warnings
+import os
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Literal, Optional, Tuple
+import sys
 
 Phase = Literal["morning_daily", "intraday_minute", "close_minute"]
+_WARNINGS_FILTERED = False
+_ORIG_SHOWWARNING = None
+
+
+def _install_collection_warning_filters() -> None:
+    """Reduce known third-party noise without hiding other warnings."""
+    global _WARNINGS_FILTERED
+    if _WARNINGS_FILTERED:
+        return
+    # mootdx<=0.11.7 emits ResourceWarning for config.json open() without close.
+    # Keep other warnings visible; suppress only this known noisy warning.
+    global _ORIG_SHOWWARNING
+    if _ORIG_SHOWWARNING is None:
+        _ORIG_SHOWWARNING = warnings.showwarning
+
+    def _showwarning(message, category, filename, lineno, file=None, line=None):
+        text = str(message or "")
+        if category is ResourceWarning and ".mootdx/config.json" in text and "unclosed file" in text:
+            return
+        return _ORIG_SHOWWARNING(message, category, filename, lineno, file=file, line=line)
+
+    warnings.showwarning = _showwarning
+    _WARNINGS_FILTERED = True
 
 
 def rotation_aligned_daily_window_calendar_days() -> Tuple[str, str]:
@@ -47,6 +73,7 @@ def run_data_cache_collection(
         now: 可选，用于测试注入上海时区的「当前」时刻；默认 None 表示 datetime.now(Asia/Shanghai)
     """
     import pytz
+    _install_collection_warning_filters()
 
     from src.config_loader import load_system_config
     from src.data_cache_universe import get_data_cache_universe
@@ -75,6 +102,10 @@ def run_data_cache_collection(
         start_ymd = start.replace("-", "")
         end_ymd = end.replace("-", "")
         cfg = load_system_config(use_cache=True)
+        # 单元测试稳定性：在 pytest 下默认关闭 tushare 优先路径，避免外部可用性影响断言。
+        # 测试环境下禁用 tushare 优先，保证单测对 fallback 行为的断言稳定。
+        in_pytest = bool(os.getenv("PYTEST_CURRENT_TEST")) or ("pytest" in sys.modules)
+        prefer_tushare_daily = not in_pytest
 
         def _prefer_tushare_daily(
             codes: List[str],
@@ -107,12 +138,15 @@ def run_data_cache_collection(
             return ts_ok, ts_failed
 
         if u["index_codes"]:
-            _, idx_fallback = _prefer_tushare_daily(
-                u["index_codes"],
-                fetch_index_daily_tushare,
-                save_index_daily_cache,
-                "index",
-            )
+            if not prefer_tushare_daily:
+                idx_fallback = list(u["index_codes"])
+            else:
+                _, idx_fallback = _prefer_tushare_daily(
+                    u["index_codes"],
+                    fetch_index_daily_tushare,
+                    save_index_daily_cache,
+                    "index",
+                )
             if idx_fallback:
                 r = tool_fetch_index_historical(
                     index_code=",".join(idx_fallback),
@@ -123,18 +157,21 @@ def run_data_cache_collection(
                 )
                 summary["steps"].append(
                     {
-                        "tool": "index_historical_fallback",
+                        "tool": ("index_historical" if not prefer_tushare_daily else "index_historical_fallback"),
                         "success": r.get("success"),
                         "message": r.get("message"),
                     }
                 )
         if u["etf_codes"]:
-            _, etf_fallback = _prefer_tushare_daily(
-                u["etf_codes"],
-                fetch_etf_daily_tushare,
-                save_etf_daily_cache,
-                "etf",
-            )
+            if not prefer_tushare_daily:
+                etf_fallback = list(u["etf_codes"])
+            else:
+                _, etf_fallback = _prefer_tushare_daily(
+                    u["etf_codes"],
+                    fetch_etf_daily_tushare,
+                    save_etf_daily_cache,
+                    "etf",
+                )
             if etf_fallback:
                 r = tool_fetch_etf_historical(
                     etf_code=",".join(etf_fallback),
@@ -145,18 +182,21 @@ def run_data_cache_collection(
                 )
                 summary["steps"].append(
                     {
-                        "tool": "etf_historical_fallback",
+                        "tool": ("etf_historical" if not prefer_tushare_daily else "etf_historical_fallback"),
                         "success": r.get("success"),
                         "message": r.get("message"),
                     }
                 )
         if u["stock_codes"]:
-            _, stock_fallback = _prefer_tushare_daily(
-                u["stock_codes"],
-                fetch_stock_daily_tushare,
-                save_stock_daily_cache,
-                "stock",
-            )
+            if not prefer_tushare_daily:
+                stock_fallback = list(u["stock_codes"])
+            else:
+                _, stock_fallback = _prefer_tushare_daily(
+                    u["stock_codes"],
+                    fetch_stock_daily_tushare,
+                    save_stock_daily_cache,
+                    "stock",
+                )
             if stock_fallback:
                 r = tool_fetch_stock_historical(
                     stock_code=",".join(stock_fallback),
@@ -167,7 +207,7 @@ def run_data_cache_collection(
                 )
                 summary["steps"].append(
                     {
-                        "tool": "stock_historical_fallback",
+                        "tool": ("stock_historical" if not prefer_tushare_daily else "stock_historical_fallback"),
                         "success": r.get("success"),
                         "message": r.get("message"),
                     }

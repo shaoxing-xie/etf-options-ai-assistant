@@ -1,0 +1,31 @@
+{
+  "baseline_3d_runs": [
+    {
+      "runAtMs": 1776830477165,
+      "durationMs": 61097
+    },
+    {
+      "runAtMs": 1776916800016,
+      "durationMs": 184375
+    },
+    {
+      "runAtMs": 1777003200015,
+      "durationMs": 55542
+    }
+  ],
+  "baseline_3d": {
+    "p50_ms": 61097,
+    "p95_ms": 172047,
+    "max_ms": 184375,
+    "mean_ms": 100338
+  },
+  "latest": {
+    "runAtMs": 1777125407317,
+    "durationMs": 100836,
+    "status": "ok"
+  },
+  "comparison": {
+    "delta_vs_p50_ms": 39739,
+    "delta_vs_mean_ms": 498
+  }
+}

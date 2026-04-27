@@ -1,6 +1,15 @@
 realtime_full_fetch_cache:
   enabled: true
   ttl_seconds: 45
+network:
+  proxy:
+    default:
+      enabled: false
+      url: ''
+    per_source:
+      yfinance:
+        enabled: true
+        url: http://127.0.0.1:2080
 data_sources:
   circuit_breaker:
     enabled: true
@@ -152,13 +161,13 @@ tushare:
 iopv_fallback:
   manual_iopv_overrides:
     '513300':
-      iopv: 2.2901
+      iopv: 2.3254
       source: manual_after_14_00
-      updated_date: '2026-04-24'
+      updated_date: '2026-04-27'
     '513880':
-      iopv: 1.852
+      iopv: 1.8927
       source: manual_after_14_00
-      updated_date: '2026-04-24'
+      updated_date: '2026-04-27'
 wide_inspection_overnight_refs:
   sources:
     a50_futures:

@@ -1,4 +1,5 @@
 import { jget, jpost } from "./api.js";
+import { renderGlobalMarketPage } from "./global_market_cards.js";
 import { applyScreeningDayMarker, initCharts, renderDraw, toTs } from "./charts.js";
 
 function qs(id) {
@@ -11,21 +12,28 @@ function setView(view) {
   const screening = qs("view-screening");
   const research = qs("view-research");
   const ops = qs("view-ops");
+  const gm = qs("view-global-market");
   if (chart) chart.classList.toggle("active", view === "chart");
   if (config) config.classList.toggle("active", view === "config");
   if (screening) screening.classList.toggle("active", view === "screening");
   if (research) research.classList.toggle("active", view === "research");
   if (ops) ops.classList.toggle("active", view === "ops");
+  if (gm) gm.classList.toggle("active", view === "global-market");
   const tabChart = qs("tab-chart");
   const tabConfig = qs("tab-config");
   const tabScreening = qs("tab-screening");
   const tabResearch = qs("tab-research");
   const tabOps = qs("tab-ops");
+  const tabGm = qs("tab-global-market");
   if (tabChart) tabChart.setAttribute("aria-selected", String(view === "chart"));
   if (tabConfig) tabConfig.setAttribute("aria-selected", String(view === "config"));
   if (tabScreening) tabScreening.setAttribute("aria-selected", String(view === "screening"));
   if (tabResearch) tabResearch.setAttribute("aria-selected", String(view === "research"));
   if (tabOps) tabOps.setAttribute("aria-selected", String(view === "ops"));
+  if (tabGm) tabGm.setAttribute("aria-selected", String(view === "global-market"));
+  if (view === "global-market") {
+    loadGlobalMarketSnapshot(false).catch(() => {});
+  }
 }
 
 function setConfigSubview(name) {
@@ -532,9 +540,29 @@ async function saveRotationConfig() {
   await jpost("/api/config/rotation/save", { text: String(text ?? "") });
 }
 
+async function loadGlobalMarketSnapshot(refresh) {
+  const root = qs("view-global-market");
+  const st = qs("globalMarketStatus");
+  if (!root) return;
+  if (st) st.textContent = "加载中…";
+  const q = refresh ? "refresh=1" : "refresh=0";
+  try {
+    const r = await jget(`/api/semantic/global_market_snapshot?${q}`);
+    if (!r.success) {
+      if (st) st.textContent = r.message || "加载失败";
+      return;
+    }
+    renderGlobalMarketPage(root, r.data || {});
+  } catch (e) {
+    if (st) st.textContent = String(e?.message || e);
+  }
+}
+
 // tab handlers
 qs("tab-chart")?.addEventListener("click", () => setView("chart"));
+qs("tab-global-market")?.addEventListener("click", () => setView("global-market"));
 qs("tab-config")?.addEventListener("click", () => setView("config"));
+qs("btnGlobalMarketRefresh")?.addEventListener("click", () => loadGlobalMarketSnapshot(true));
 
 // config subtab handlers
 qs("subtab-market")?.addEventListener("click", async () => {

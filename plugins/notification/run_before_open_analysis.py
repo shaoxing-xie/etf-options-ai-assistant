@@ -14,6 +14,7 @@ from datetime import datetime
 from plugins.notification.run_opening_analysis import (
     _OPENING_GLOBAL_HIST_CODES,
     _OPENING_GLOBAL_INDEX_CODES,
+    _mark_analysis_health,
     _maybe_attach_global_market_tavily_digest,
     _merge_market_overview,
     _now_sh,
@@ -249,6 +250,7 @@ def build_before_open_report_data(fetch_mode: str = "production") -> Tuple[Dict[
             data = before_open_analysis.get("data")
             if isinstance(data, dict) and data:
                 rd["analysis"] = data
+    _mark_analysis_health(rd, analysis_tool_key="tool_analyze_before_open")
 
     vol = _safe_step(
         "predict_volatility",
@@ -340,6 +342,10 @@ def tool_run_before_open_analysis_and_send(
     from plugins.notification.send_analysis_report import tool_send_analysis_report
 
     report_data, _errors = build_before_open_report_data(fetch_mode=fetch_mode)
+    ah = report_data.get("analysis_health") if isinstance(report_data.get("analysis_health"), dict) else {}
+    analysis_degraded = bool(ah.get("status") == "degraded")
+    runner_errs = report_data.get("runner_errors") if isinstance(report_data.get("runner_errors"), list) else []
+    report_data["run_quality"] = "error" if runner_errs else ("ok_degraded" if analysis_degraded else "ok_full")
     out = tool_send_analysis_report(
         report_data=report_data,
         mode=mode,
@@ -353,5 +359,7 @@ def tool_run_before_open_analysis_and_send(
         data = dict(out.get("data") or {})
         data["runner_errors"] = report_data.get("runner_errors") or []
         data["report_type"] = "before_open"
+        data["run_quality"] = report_data.get("run_quality") or "ok_full"
+        data["analysis_health"] = report_data.get("analysis_health") or {"status": "unknown", "reason": ""}
         out["data"] = data
     return out

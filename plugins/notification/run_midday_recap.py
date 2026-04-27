@@ -7,10 +7,12 @@
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 import json
 from pathlib import Path
+import time
 
 try:
     import pytz
@@ -369,6 +371,36 @@ def _derive_afternoon_bias(flat: Dict[str, Any]) -> Tuple[str, str]:
     return "震荡", "主要指数涨跌幅处于中性区间，更偏结构性机会"
 
 
+def _mark_midday_analysis_health(rd: Dict[str, Any]) -> None:
+    """
+    午间链路健康检查：确保关键指数快照缺失时显式标记 degraded，
+    避免正文静默 N/A 且难以排障。
+    """
+    rows = _extract_index_rows(rd.get("tool_fetch_index_realtime"))
+    by_code: Dict[str, Dict[str, Any]] = {}
+    for r in rows:
+        code = str(r.get("code") or r.get("index_code") or r.get("symbol") or "").strip()
+        if code:
+            by_code[code] = r
+
+    missing: List[str] = []
+    for code in ("000300", "399006", "000905"):
+        row = by_code.get(code)
+        if not isinstance(row, dict):
+            missing.append(f"{code}:row_missing")
+            continue
+        if _pick_change(row) is None:
+            missing.append(f"{code}:change_missing")
+
+    if missing:
+        reason = "midday_index_snapshot_incomplete:" + ",".join(missing)
+        rd["analysis_health"] = {"status": "degraded", "reason": reason}
+        rd.setdefault("degraded", {})
+        rd["degraded"]["analysis_health"] = reason
+    else:
+        rd["analysis_health"] = {"status": "ok", "reason": ""}
+
+
 def _build_paths(bias: str, risk_level: str) -> Dict[str, Any]:
     # 简化但可执行的三路径（不输出唯一结论）
     risk = (risk_level or "").strip().lower()
@@ -407,13 +439,81 @@ def _safe_step(name: str, fn: Any, errors: List[Dict[str, str]], /, **kwargs: An
         return {"success": False, "message": f"{name} failed: {e}"}
 
 
-def build_midday_recap_report_data(fetch_mode: str = "production") -> Tuple[Dict[str, Any], List[Dict[str, str]]]:
+_WORKFLOW_PROFILES = {"legacy", "cron_balanced"}
+_STAGE_BUDGET_PRESETS: Dict[str, Dict[str, int]] = {
+    "balanced": {"critical": 45, "slow_sources": 60, "compose_send": 30},
+    "tight": {"critical": 35, "slow_sources": 45, "compose_send": 25},
+}
+
+
+def _resolve_stage_budgets(profile: str) -> Optional[Dict[str, int]]:
+    if profile == "off":
+        return None
+    return dict(_STAGE_BUDGET_PRESETS.get(profile, _STAGE_BUDGET_PRESETS["balanced"]))
+
+
+def _mark_stage(
+    stage_timing: Dict[str, Any],
+    stage_name: str,
+    start_ts: float,
+    budget_s: Optional[int],
+    degraded_reason: Optional[str] = None,
+) -> Dict[str, Any]:
+    elapsed_ms = int(round((time.perf_counter() - start_ts) * 1000))
+    status = "degraded" if degraded_reason else "ok"
+    stage_timing[stage_name] = {
+        "elapsed_ms": elapsed_ms,
+        "budget_s": budget_s,
+        "status": status,
+        "degraded_reason": degraded_reason,
+    }
+    return stage_timing[stage_name]
+
+
+def _lineage_entry(
+    stage: str,
+    tool_key: str,
+    payload: Any,
+    *,
+    source_hint: str = "",
+    degraded_reason: Optional[str] = None,
+    elapsed_ms: Optional[int] = None,
+) -> Dict[str, Any]:
+    success = bool(isinstance(payload, dict) and payload.get("success", True))
+    quality = "ok"
+    if degraded_reason:
+        quality = "degraded"
+    elif not success:
+        quality = "error"
+    return {
+        "stage": stage,
+        "tool_key": tool_key,
+        "success": success,
+        "quality_status": quality,
+        "degraded_reason": degraded_reason,
+        "elapsed_ms": elapsed_ms,
+        "source_hint": source_hint or "internal",
+    }
+
+
+def build_midday_recap_report_data(
+    fetch_mode: str = "production",
+    workflow_profile: str = "legacy",
+    stage_budget_profile: str = "balanced",
+    emit_stage_timing: bool = True,
+    max_concurrency: int = 3,
+) -> Tuple[Dict[str, Any], List[Dict[str, str]]]:
     """
     采集并组装 report_data（含 report_type=midday_recap）。
     返回 (report_data, runner_errors)。
     """
     errors: List[Dict[str, str]] = []
     mode = fetch_mode if fetch_mode in ("production", "test") else "production"
+    wf_profile = workflow_profile if workflow_profile in _WORKFLOW_PROFILES else "legacy"
+    budget_profile = stage_budget_profile if stage_budget_profile in ("balanced", "tight", "off") else "balanced"
+    budgets = _resolve_stage_budgets(budget_profile) if wf_profile == "cron_balanced" else None
+    use_observability = bool(emit_stage_timing) or wf_profile == "cron_balanced"
+    concurrency = max(1, min(int(max_concurrency or 1), 6))
     now = _now_sh()
 
     from plugins.data_collection.limit_up.sector_heat import tool_sector_heat_score
@@ -423,9 +523,12 @@ def build_midday_recap_report_data(fetch_mode: str = "production") -> Tuple[Dict
 
     rd: Dict[str, Any] = {
         "report_type": "midday_recap",
-        "runner_version": "midday_recap_composite_v1",
+        "runner_version": "midday_recap_composite_v2",
         "generated_at": now.strftime("%Y-%m-%d %H:%M:%S"),
     }
+    stage_timing: Dict[str, Any] = {}
+    lineage_struct: List[Dict[str, Any]] = []
+    skipped_tasks: List[str] = []
 
     # 非交易日：production 下 realtime 会被交易日门禁拦截；对齐到最近 A 股交易日的日线最后一根
     ref_yyyymmdd: Optional[str] = None
@@ -444,45 +547,76 @@ def build_midday_recap_report_data(fetch_mode: str = "production") -> Tuple[Dict
     idx_399006: Any = None
     idx_000905: Any = None
     etf510: Any = None
+    risk: Any = {}
+    heat: Any = {}
+    fund_flow: Any = {}
+    skip_slow_sources = False
 
+    critical_start = time.perf_counter()
     if use_hist_last_td and ref_yyyymmdd:
         start_d = _hist_start_yyyymmdd(ref_yyyymmdd)
-        idx = _safe_step(
-            "fetch_index_historical_000300_last_td",
-            tool_fetch_index_data,
-            errors,
-            data_type="historical",
-            index_code="000300",
-            start_date=start_d,
-            end_date=ref_yyyymmdd,
-        )
-        idx_399006 = _safe_step(
-            "fetch_index_historical_399006_last_td",
-            tool_fetch_index_data,
-            errors,
-            data_type="historical",
-            index_code="399006",
-            start_date=start_d,
-            end_date=ref_yyyymmdd,
-        )
-        idx_000905 = _safe_step(
-            "fetch_index_historical_000905_last_td",
-            tool_fetch_index_data,
-            errors,
-            data_type="historical",
-            index_code="000905",
-            start_date=start_d,
-            end_date=ref_yyyymmdd,
-        )
-        etf510 = _safe_step(
-            "fetch_etf_historical_510300_last_td",
-            tool_fetch_etf_data,
-            errors,
-            data_type="historical",
-            etf_code="510300",
-            start_date=start_d,
-            end_date=ref_yyyymmdd,
-        )
+        critical_calls: Dict[str, Tuple[Callable[..., Any], Dict[str, Any], str]] = {
+            "idx_000300": (
+                tool_fetch_index_data,
+                {
+                    "data_type": "historical",
+                    "index_code": "000300",
+                    "start_date": start_d,
+                    "end_date": ref_yyyymmdd,
+                },
+                "fetch_index_historical_000300_last_td",
+            ),
+            "idx_399006": (
+                tool_fetch_index_data,
+                {
+                    "data_type": "historical",
+                    "index_code": "399006",
+                    "start_date": start_d,
+                    "end_date": ref_yyyymmdd,
+                },
+                "fetch_index_historical_399006_last_td",
+            ),
+            "idx_000905": (
+                tool_fetch_index_data,
+                {
+                    "data_type": "historical",
+                    "index_code": "000905",
+                    "start_date": start_d,
+                    "end_date": ref_yyyymmdd,
+                },
+                "fetch_index_historical_000905_last_td",
+            ),
+            "etf_510300": (
+                tool_fetch_etf_data,
+                {
+                    "data_type": "historical",
+                    "etf_code": "510300",
+                    "start_date": start_d,
+                    "end_date": ref_yyyymmdd,
+                },
+                "fetch_etf_historical_510300_last_td",
+            ),
+            "risk": (tool_portfolio_risk_snapshot, {}, "portfolio_risk_snapshot"),
+        }
+        with ThreadPoolExecutor(max_workers=min(5, concurrency + 1)) as pool:
+            future_map = {
+                pool.submit(_safe_step, step_name, fn, errors, **kwargs): key
+                for key, (fn, kwargs, step_name) in critical_calls.items()
+            }
+            for fut in as_completed(future_map):
+                key = future_map[fut]
+                payload = fut.result()
+                if key == "idx_000300":
+                    idx = payload
+                elif key == "idx_399006":
+                    idx_399006 = payload
+                elif key == "idx_000905":
+                    idx_000905 = payload
+                elif key == "etf_510300":
+                    etf510 = payload
+                elif key == "risk":
+                    risk = payload
+                lineage_struct.append(_lineage_entry("critical", key, payload, source_hint="fetch"))
         r300 = _synthetic_index_realtime_row("000300", idx if isinstance(idx, dict) else {})
         r006 = _synthetic_index_realtime_row("399006", idx_399006 if isinstance(idx_399006, dict) else {})
         r905 = _synthetic_index_realtime_row("000905", idx_000905 if isinstance(idx_000905, dict) else {})
@@ -498,31 +632,49 @@ def build_midday_recap_report_data(fetch_mode: str = "production") -> Tuple[Dict
             else {"success": False, "data": None}
         )
     else:
-        # 1) 指数/ETF 概览（尽量少依赖 schema；缺字段时留空）
-        idx = _safe_step(
-            "fetch_index_realtime",
-            tool_fetch_index_data,
-            errors,
-            data_type="realtime",
-            mode=mode,
-            index_code="000300",
-        )
-        idx_399006 = _safe_step(
-            "fetch_index_realtime_399006",
-            tool_fetch_index_data,
-            errors,
-            data_type="realtime",
-            mode=mode,
-            index_code="399006",
-        )
-        idx_000905 = _safe_step(
-            "fetch_index_realtime_000905",
-            tool_fetch_index_data,
-            errors,
-            data_type="realtime",
-            mode=mode,
-            index_code="000905",
-        )
+        critical_calls = {
+            "idx_000300": (
+                tool_fetch_index_data,
+                {"data_type": "realtime", "mode": mode, "index_code": "000300"},
+                "fetch_index_realtime",
+            ),
+            "idx_399006": (
+                tool_fetch_index_data,
+                {"data_type": "realtime", "mode": mode, "index_code": "399006"},
+                "fetch_index_realtime_399006",
+            ),
+            "idx_000905": (
+                tool_fetch_index_data,
+                {"data_type": "realtime", "mode": mode, "index_code": "000905"},
+                "fetch_index_realtime_000905",
+            ),
+            "etf_510300": (
+                tool_fetch_etf_data,
+                {"data_type": "realtime", "etf_code": "510300", "mode": mode},
+                "fetch_etf_realtime_510300",
+            ),
+            "risk": (tool_portfolio_risk_snapshot, {}, "portfolio_risk_snapshot"),
+        }
+        with ThreadPoolExecutor(max_workers=min(5, concurrency + 1)) as pool:
+            future_map = {
+                pool.submit(_safe_step, step_name, fn, errors, **kwargs): key
+                for key, (fn, kwargs, step_name) in critical_calls.items()
+            }
+            for fut in as_completed(future_map):
+                key = future_map[fut]
+                payload = fut.result()
+                if key == "idx_000300":
+                    idx = payload
+                elif key == "idx_399006":
+                    idx_399006 = payload
+                elif key == "idx_000905":
+                    idx_000905 = payload
+                elif key == "etf_510300":
+                    etf510 = payload
+                elif key == "risk":
+                    risk = payload
+                lineage_struct.append(_lineage_entry("critical", key, payload, source_hint="fetch"))
+
         rd["tool_fetch_index_realtime"] = {
             "success": True,
             "data": [
@@ -531,28 +683,67 @@ def build_midday_recap_report_data(fetch_mode: str = "production") -> Tuple[Dict
                 idx_000905.get("data") if isinstance(idx_000905, dict) else idx_000905,
             ],
         }
-
-        etf510 = _safe_step(
-            "fetch_etf_realtime_510300",
-            tool_fetch_etf_data,
-            errors,
-            data_type="realtime",
-            etf_code="510300",
-            mode=mode,
-        )
         rd["tool_fetch_etf_realtime_510300"] = etf510
 
-    # 2) 板块热度（涨停侧）
-    heat = _safe_step("sector_heat_score", tool_sector_heat_score, errors)
+    critical_budget = (budgets or {}).get("critical")
+    critical_degraded = None
+    if critical_budget is not None and (time.perf_counter() - critical_start) > critical_budget:
+        critical_degraded = "timeout"
+        skip_slow_sources = True
+    _mark_stage(stage_timing, "critical", critical_start, critical_budget, critical_degraded)
+
+    slow_start = time.perf_counter()
+    if skip_slow_sources:
+        skipped_tasks.extend(["sector_heat_score", "fund_flow_optional"])
+        heat = {"success": False, "message": "skipped due to critical timeout", "quality_status": "degraded"}
+        fund_flow = {"ok": False, "message": "skipped due to critical timeout", "quality_status": "degraded"}
+        lineage_struct.append(
+            _lineage_entry(
+                "slow_sources",
+                "sector_heat_score",
+                heat,
+                source_hint="skipped",
+                degraded_reason="critical_timeout",
+            )
+        )
+        lineage_struct.append(
+            _lineage_entry(
+                "slow_sources",
+                "fund_flow_optional",
+                fund_flow,
+                source_hint="skipped",
+                degraded_reason="critical_timeout",
+            )
+        )
+    else:
+        slow_calls = {
+            "sector_heat_score": (tool_sector_heat_score, {}, "sector_heat_score"),
+            "fund_flow_optional": (_try_fetch_fund_flow, {"now": now}, "fund_flow_optional"),
+        }
+        with ThreadPoolExecutor(max_workers=min(2, concurrency)) as pool:
+            future_map = {
+                pool.submit(_safe_step, step_name, fn, errors, **kwargs): key
+                for key, (fn, kwargs, step_name) in slow_calls.items()
+            }
+            for fut in as_completed(future_map):
+                key = future_map[fut]
+                payload = fut.result()
+                if key == "sector_heat_score":
+                    heat = payload
+                else:
+                    fund_flow = payload
+                lineage_struct.append(_lineage_entry("slow_sources", key, payload, source_hint="fetch"))
     rd["tool_sector_heat_score"] = heat
-
-    # 3) 组合风险快照
-    risk = _safe_step("portfolio_risk_snapshot", tool_portfolio_risk_snapshot, errors)
     rd["tool_portfolio_risk_snapshot"] = risk
-
-    # 4) 资金流向（可选：openclaw-data-china-stock）
-    fund_flow = _safe_step("fund_flow_optional", _try_fetch_fund_flow, errors, now=now)
     rd["tool_fund_flow_optional"] = fund_flow
+
+    slow_budget = (budgets or {}).get("slow_sources")
+    slow_degraded = None
+    if slow_budget is not None and (time.perf_counter() - slow_start) > slow_budget:
+        slow_degraded = "timeout"
+    _mark_stage(stage_timing, "slow_sources", slow_start, slow_budget, slow_degraded)
+
+    analytics_start = time.perf_counter()
 
     ref_dash: Optional[str] = None
     if ref_yyyymmdd and len(str(ref_yyyymmdd)) == 8 and str(ref_yyyymmdd).isdigit():
@@ -656,15 +847,46 @@ def build_midday_recap_report_data(fetch_mode: str = "production") -> Tuple[Dict
     if not ff_lines:
         mr["fund_flow_data_note"] = "资金流向工具不可用或返回空（需要 openclaw-data-china-stock 扩展及可用数据源）。"
 
+    analytics_budget = (budgets or {}).get("compose_send")
+    analytics_degraded = None
+    if analytics_budget is not None and (time.perf_counter() - analytics_start) > analytics_budget:
+        analytics_degraded = "timeout"
+    _mark_stage(stage_timing, "compose_send", analytics_start, analytics_budget, analytics_degraded)
+
     rd["midday_recap"] = mr
     if errors:
         rd["runner_errors"] = errors
+    _mark_midday_analysis_health(rd)
+    degraded = any((v or {}).get("status") == "degraded" for v in stage_timing.values()) or bool(skipped_tasks)
+    if isinstance(rd.get("analysis_health"), dict) and rd["analysis_health"].get("status") == "degraded":
+        degraded = True
+    rd["run_quality"] = "error" if errors else ("ok_degraded" if degraded else "ok_full")
+    if skipped_tasks:
+        rd["skipped_tasks"] = skipped_tasks
+    if use_observability:
+        rd["stage_timing"] = stage_timing
+        rd["lineage_struct"] = lineage_struct
+    rd["_meta"] = {
+        "schema_name": "midday_recap_report",
+        "schema_version": "2.0.0",
+        "task_id": "etf-midday-recap-1200",
+        "data_layer": "L3",
+        "generated_at": rd.get("generated_at"),
+        "trade_date": mr.get("date"),
+        "source_tools": [x.get("tool_key") for x in lineage_struct if isinstance(x, dict)],
+        "lineage_refs": [{"stage": x.get("stage"), "tool_key": x.get("tool_key")} for x in lineage_struct if isinstance(x, dict)],
+        "quality_status": "error" if errors else ("degraded" if degraded else "ok"),
+    }
     return rd, errors
 
 
 def tool_run_midday_recap_and_send(
     mode: str = "prod",
     fetch_mode: str = "production",
+    workflow_profile: str = "legacy",
+    stage_budget_profile: str = "balanced",
+    emit_stage_timing: bool = True,
+    max_concurrency: int = 3,
     webhook_url: Optional[str] = None,
     secret: Optional[str] = None,
     keyword: Optional[str] = None,
@@ -674,7 +896,13 @@ def tool_run_midday_recap_and_send(
     """
     进程内执行午间盘点采集并发送钉钉（report_type=midday_recap）。
     """
-    report_data, _errors = build_midday_recap_report_data(fetch_mode=fetch_mode)
+    report_data, _errors = build_midday_recap_report_data(
+        fetch_mode=fetch_mode,
+        workflow_profile=workflow_profile,
+        stage_budget_profile=stage_budget_profile,
+        emit_stage_timing=emit_stage_timing,
+        max_concurrency=max_concurrency,
+    )
     mr = report_data.get("midday_recap") if isinstance(report_data.get("midday_recap"), dict) else {}
     title = f"午间行情盘点与下午操作指引 - {mr.get('date') or datetime.now().strftime('%Y-%m-%d')}"
 
@@ -791,6 +1019,12 @@ def tool_run_midday_recap_and_send(
         data = dict(out.get("data") or {})
         data["runner_errors"] = report_data.get("runner_errors") or []
         data["report_type"] = "midday_recap"
+        data["run_quality"] = report_data.get("run_quality") or "ok_full"
+        data["analysis_health"] = report_data.get("analysis_health") or {"status": "unknown", "reason": ""}
+        data["stage_timing"] = report_data.get("stage_timing") or {}
+        data["lineage_struct"] = report_data.get("lineage_struct") or []
+        data["skipped_tasks"] = report_data.get("skipped_tasks") or []
+        data["_meta"] = report_data.get("_meta") or {}
         out["data"] = data
     return out
 

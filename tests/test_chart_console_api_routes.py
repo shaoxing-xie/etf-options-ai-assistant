@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from apps.chart_console.api.routes import ApiRoutes
+from apps.chart_console.api.routes import CHART_CONSOLE_ROUTES_TAG, ApiRoutes
 
 
 class _Svc:
@@ -52,6 +52,16 @@ def test_routes_semantic_analysis_endpoints() -> None:
     payload, code, _ = routes.handle_get("/api/semantic/task_dependency_health", {"trade_date": ["2026-04-22"]})
     assert code == 200
     assert payload["data"]["trade_date"] == "2026-04-22"
+
+
+def test_health_includes_routes_tag() -> None:
+    routes = ApiRoutes(_Svc())
+    out = routes.handle_get("/api/health", {})
+    assert len(out) == 2
+    payload, code = out
+    assert code == 200
+    assert payload.get("success") is True
+    assert payload.get("data", {}).get("routes_tag") == CHART_CONSOLE_ROUTES_TAG
 
 
 def test_routes_record_fallback() -> None:

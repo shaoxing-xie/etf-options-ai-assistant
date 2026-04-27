@@ -72,6 +72,8 @@ const ROTATION_ETF_NAME_MAP = {
   "515790": "光伏ETF",
   "512010": "医药ETF",
   "159928": "消费ETF",
+  "159748": "医疗ETF",
+  "159819": "农业ETF",
   "512690": "酒ETF",
   "159905": "深红利ETF",
   "159870": "化工ETF",
@@ -83,7 +85,10 @@ const ROTATION_ETF_NAME_MAP = {
   "159338": "A500ETF国泰",
   "159361": "A500ETF易方达",
   "513300": "纳斯达克ETF",
+  "513130": "恒生科技ETF",
+  "513310": "恒生生科ETF",
   "513880": "日经225ETF",
+  "515400": "资源ETF",
 };
 
 async function jgetWithFallback(primaryUrl, fallbackUrl) {
@@ -1409,13 +1414,20 @@ function renderRotationPanel(payload) {
   const tbody = qs("researchRotationTbody");
   if (tbody) tbody.innerHTML = "";
   const p = payload && typeof payload === "object" ? payload : {};
+  const dq = p.data_quality && typeof p.data_quality === "object" ? p.data_quality : {};
+  const gateObj = p.three_factor_context && typeof p.three_factor_context === "object" ? p.three_factor_context.gate || {} : {};
+  const gateDisplay = gateObj.total_multiplier ?? gateObj.stage_multiplier ?? "—";
+  const degradedReasons = Array.isArray(dq.degraded_reasons) ? dq.degraded_reasons : [];
+  const warnings = Array.isArray(dq.warnings) ? dq.warnings : [];
+  const errors = Array.isArray(dq.errors) ? dq.errors : [];
+  const reasonText = [...degradedReasons, ...warnings, ...errors].filter(Boolean).join("；");
   const top = Array.isArray(p.top5) ? p.top5 : [];
   const quality = String((p._meta || {}).quality_status || p.quality_status || "unknown");
   if (sumEl) {
     sumEl.innerHTML = `<div><strong>交易日</strong>：${esc(p.trade_date || (p._meta || {}).trade_date || "—")}</div>
       <div><strong>质量状态</strong>：${esc(quality)}</div>
-      <div><strong>门闸</strong>：${esc((p.three_factor_context || {}).environment_gate || "—")}</div>
-      <div><strong>降级说明</strong>：${esc((Array.isArray(p.warnings) ? p.warnings.join("；") : "") || "无")}</div>`;
+      <div><strong>门闸</strong>：${esc(gateDisplay)}</div>
+      <div><strong>降级说明</strong>：${esc(reasonText || "无")}</div>`;
   }
   if (!tbody) return;
   if (!top.length) {

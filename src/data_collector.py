@@ -3789,17 +3789,26 @@ def fetch_global_index_hist_em(
                 return None
 
             try:
+                try:
+                    from plugins.utils.proxy_env import proxy_env_for_source
+                except Exception:
+                    from contextlib import nullcontext
+
+                    def proxy_env_for_source(*_args, **_kwargs):  # type: ignore
+                        return nullcontext()
+
                 # yfinance 符号：^HXC
                 yf_symbol = "^HXC"
                 # 将 YYYYMMDD 转为 YYYY-MM-DD，并注意 end 为开区间，需要 +1 天以包含 end_date
                 start_dt = datetime.strptime(start_date, "%Y%m%d")
                 end_dt = datetime.strptime(end_date, "%Y%m%d") + timedelta(days=1)
-                hist = yf.download(
-                    yf_symbol,
-                    start=start_dt.strftime("%Y-%m-%d"),
-                    end=end_dt.strftime("%Y-%m-%d"),
-                    progress=False,
-                )
+                with proxy_env_for_source(cfg if isinstance(cfg, dict) else {}, "yfinance"):
+                    hist = yf.download(
+                        yf_symbol,
+                        start=start_dt.strftime("%Y-%m-%d"),
+                        end=end_dt.strftime("%Y-%m-%d"),
+                        progress=False,
+                    )
                 if hist is None or hist.empty:
                     logger.warning("fetch_global_index_hist_em: yfinance 未返回纳指金龙指数历史数据")
                     return None

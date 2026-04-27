@@ -16,8 +16,9 @@ import logging
 import os
 import re
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 logger = logging.getLogger(__name__)
 
@@ -66,6 +67,53 @@ def _safe_float(v: Any) -> Optional[float]:
         return float(v)
     except Exception:
         return None
+
+
+def _parse_row_ts(value: Any) -> Optional[datetime]:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    try:
+        if raw.endswith("Z"):
+            return datetime.fromisoformat(raw.replace("Z", "+00:00")).astimezone(timezone.utc)
+        dt = datetime.fromisoformat(raw)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=ZoneInfo("Asia/Shanghai"))
+        return dt.astimezone(timezone.utc)
+    except Exception:
+        pass
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d"):
+        try:
+            return datetime.strptime(raw, fmt).replace(tzinfo=ZoneInfo("Asia/Shanghai")).astimezone(timezone.utc)
+        except Exception:
+            continue
+    return None
+
+
+def _infer_row_semantics(row: Mapping[str, Any]) -> str:
+    sem = str(row.get("data_semantics") or "").strip()
+    if sem in {"realtime_quote", "minute_bar", "daily_close"}:
+        return sem
+    src = str(row.get("source_detail") or row.get("source_raw") or "").lower()
+    if "global_hist_sina" in src or "daily" in src or "bar_date" in src:
+        return "daily_close"
+    return "realtime_quote"
+
+
+def _normalize_global_row_meta(row: Mapping[str, Any]) -> Dict[str, Any]:
+    out = dict(row)
+    sem = _infer_row_semantics(row)
+    ts_raw = row.get("as_of") or row.get("timestamp")
+    ts = _parse_row_ts(ts_raw)
+    now = datetime.now(timezone.utc)
+    age = None
+    if ts is not None:
+        age = max(0, int((now - ts).total_seconds()))
+        out["as_of"] = ts.isoformat().replace("+00:00", "Z")
+    out["data_semantics"] = sem
+    if age is not None:
+        out["freshness_age_sec"] = age
+    return out
 
 
 def _detect_report_type(report_data: Dict[str, Any]) -> str:
@@ -353,7 +401,49 @@ def _build_industry_news_lines(report_data: Dict[str, Any]) -> List[str]:
     if not isinstance(items, list) or not items:
         return []
     lines: List[str] = []
-    if ind.get("brief_answer"):
+    # 机构口径：优先输出一段中文“综合要点”，再附参考链接（可追溯）。
+    # LLM 可用时，用 items/snippet 生成“更像研报”的中文提要；不可用则退回 brief_answer/标题拼接。
+    try:
+        from src.config_loader import load_system_config
+
+        cfg = load_system_config(use_cache=True)
+        llm_enabled = bool((cfg or {}).get("llm_structured_extract", {}).get("enabled", False))
+    except Exception:
+        llm_enabled = False
+
+    llm_brief = ""
+    if llm_enabled:
+        try:
+            from plugins.utils.llm_structured_extract import llm_prose_from_unstructured
+
+            raw_chunks: List[str] = []
+            for it in items[:10]:
+                if not isinstance(it, dict):
+                    continue
+                t = str(it.get("title") or "").strip()
+                u = str(it.get("url") or "").strip()
+                s = str(it.get("snippet") or "").strip()
+                if not t:
+                    continue
+                raw_chunks.append(f"- 标题：{t}\n  摘要：{s[:260]}\n  链接：{u}")
+            raw_text = "\n\n".join(raw_chunks).strip()
+            if raw_text:
+                inst = (
+                    "你在写 A 股盘后“行业要闻”小节（面向宽基ETF）。\n"
+                    "请基于给定标题/摘要，写一段**简体中文**综合要点（1-3 句，<=160字），要求：\n"
+                    "- 不要出现英文起句；不得复述“据报道/根据…/文章称”套话\n"
+                    "- 不编造未给出的事实或数值；若信息分散，用“可能/或/关注”措辞\n"
+                    "- 更偏“行业景气/产业链/政策/供需/价格/订单”的机构口径\n"
+                )
+                r = llm_prose_from_unstructured(raw_text, inst, profile="default", max_output_chars=280)
+                if isinstance(r, dict) and r.get("success") and isinstance(r.get("text"), str):
+                    llm_brief = r["text"].strip()
+        except Exception:
+            llm_brief = ""
+
+    if llm_brief:
+        lines.append(f"行业提要：{llm_brief[:220]}")
+    elif ind.get("brief_answer"):
         lines.append(f"行业提要：{str(ind['brief_answer'])[:400]}")
     for i, it in enumerate(items[:8], 1):
         if not isinstance(it, dict):
@@ -377,16 +467,27 @@ def _build_global_spot_lines(report_data: Dict[str, Any]) -> List[str]:
     rows = block.get("data") if isinstance(block.get("data"), list) else []
     if not rows:
         return []
-    parts: List[str] = []
-    for it in rows[:14]:
+    rt_parts: List[str] = []
+    close_parts: List[str] = []
+    for it in rows[:18]:
         if not isinstance(it, dict):
             continue
-        name = it.get("name") or it.get("code") or ""
-        chg = it.get("change_pct")
+        norm = _normalize_global_row_meta(it)
+        name = norm.get("name") or norm.get("code") or ""
+        chg = norm.get("change_pct")
         chg_s = _fmt_pct(chg) if chg is not None else "N/A"
         if name:
-            parts.append(f"{name}: {chg_s}")
-    return [f"全球指数： {' | '.join(parts)}"] if parts else []
+            text = f"{name}: {chg_s}"
+            if str(norm.get("data_semantics")) == "daily_close":
+                close_parts.append(text)
+            else:
+                rt_parts.append(text)
+    lines: List[str] = []
+    if rt_parts:
+        lines.append(f"全球指数（实时/分钟）： {' | '.join(rt_parts[:12])}")
+    if close_parts:
+        lines.append(f"全球指数（收盘口径）： {' | '.join(close_parts[:12])}")
+    return lines
 
 
 def _build_overnight_calibration_lines(report_data: Dict[str, Any]) -> List[str]:
@@ -494,8 +595,51 @@ def _build_policy_news_lines(
             body = "；".join(titles[:6])[: max(80, brief_max)]
             lines.append(f"提要：综合要点（据下列中文来源标题）{body}")
             return lines
+    # 日报/盘前均可能拿到英文提要（如 Bloomberg/WSJ）；若候选标题含中文或摘要可用，则用 LLM 压成中文一句话。
+    llm_brief = ""
     if pn.get("brief_answer"):
-        lines.append(f"提要：{str(pn['brief_answer'])[:brief_max]}")
+        ba = str(pn["brief_answer"])
+        try:
+            from src.config_loader import load_system_config
+
+            cfg = load_system_config(use_cache=True)
+            llm_enabled = bool((cfg or {}).get("llm_structured_extract", {}).get("enabled", False))
+        except Exception:
+            llm_enabled = False
+
+        if llm_enabled and _policy_brief_looks_mostly_english_latin(ba):
+            try:
+                from plugins.utils.llm_structured_extract import llm_prose_from_unstructured
+
+                raw_chunks: List[str] = []
+                for it in items[:10]:
+                    if not isinstance(it, dict):
+                        continue
+                    t = str(it.get("title") or "").strip()
+                    u = str(it.get("url") or "").strip()
+                    s = str(it.get("summary") or it.get("snippet") or "").strip()
+                    if not t and not s:
+                        continue
+                    raw_chunks.append(f"- 标题：{t}\n  摘要：{s[:260]}\n  链接：{u}")
+                raw_text = "\n\n".join(raw_chunks).strip()
+                if raw_text:
+                    inst = (
+                        "你在写 A 股盘后/盘前报告的「政策」小节提要。\n"
+                        "请基于给定标题/摘要，输出**简体中文**一句话提要（1-2句，<=160字），要求：\n"
+                        "- 不要英文起句；不要逐条罗列；不要引用“据报道/报道称”等套话\n"
+                        "- 不编造未给出的事实或数字；只能做归纳与影响方向判断（可用“可能/关注”）\n"
+                        "- 重点放在：监管/央行/财政/产业政策及其对 A 股风险偏好/流动性/行业的影响\n"
+                    )
+                    r = llm_prose_from_unstructured(raw_text, inst, profile="default", max_output_chars=220)
+                    if isinstance(r, dict) and r.get("success") and isinstance(r.get("text"), str):
+                        llm_brief = r["text"].strip()
+            except Exception:
+                llm_brief = ""
+
+        if llm_brief:
+            lines.append(f"提要：{llm_brief[:brief_max]}")
+        else:
+            lines.append(f"提要：{ba[:brief_max]}")
     for i, it in enumerate(items[:8], 1):
         if not isinstance(it, dict):
             continue
@@ -866,12 +1010,17 @@ def _opening_index_code_match(row_code: Any, wanted_yf: str) -> bool:
 
 
 def _opening_pick_row(rows: List[Dict[str, Any]], wanted_yf: str) -> Optional[Dict[str, Any]]:
+    candidates: List[Dict[str, Any]] = []
     for it in rows:
         if not isinstance(it, dict):
             continue
         if _opening_index_code_match(it.get("code"), wanted_yf):
-            return it
-    return None
+            candidates.append(_normalize_global_row_meta(it))
+    if not candidates:
+        return None
+    rank = {"realtime_quote": 0, "minute_bar": 1, "daily_close": 2}
+    candidates.sort(key=lambda x: rank.get(str(x.get("data_semantics") or ""), 9))
+    return candidates[0]
 
 
 def _opening_global_index_row_key(row_code: Any) -> str:
@@ -939,7 +1088,9 @@ def _fmt_opening_index_group(label: str, codes: Tuple[str, ...], rows: List[Dict
         if chg is None:
             chg = it.get("change_percent")
         chg_s = _fmt_pct(chg) if chg is not None else "N/A"
-        parts.append(f"{name}: {chg_s}")
+        sem = str((it or {}).get("data_semantics") or "")
+        sem_tag = "（昨收）" if sem == "daily_close" else ""
+        parts.append(f"{name}: {chg_s}{sem_tag}")
     if not parts:
         return None
     return f"**{label}** " + " | ".join(parts)
@@ -1786,6 +1937,17 @@ def _resolve_trend_fields(
         mss = rm.get("market_sentiment_score")
         if isinstance(mss, (int, float)):
             strength = mss
+    # 根因修复：开盘分析某些场景仅有 report_meta.market_sentiment_score，
+    # 无 overall_trend/final_trend/summary.market_sentiment，会出现「趋势 N/A + 强度 0.00」。
+    # 发送层在仅有分数时兜底推导方向，保持结论层一致性。
+    if overall_trend is None and isinstance(strength, (int, float)):
+        s = float(strength)
+        if s >= 0.2:
+            overall_trend = "偏强"
+        elif s <= -0.2:
+            overall_trend = "偏弱"
+        else:
+            overall_trend = "中性"
     return overall_trend, strength
 
 
@@ -1835,6 +1997,132 @@ def _tail_layer_label(layer_name: str) -> str:
     return m.get(str(layer_name).strip(), str(layer_name))
 
 
+def _format_next_open_direction_block(report_data: Dict[str, Any]) -> List[str]:
+    """
+    次日开盘方向预测（纳指 513300 尾盘任务扩展字段）。
+    仅做展示：不改变原有报告结构与风险提示。
+    """
+    pred = report_data.get("next_open_direction") if isinstance(report_data.get("next_open_direction"), dict) else {}
+    if not pred:
+        return []
+    direction = str(pred.get("direction") or "").strip().lower()
+    p_up = _safe_float(pred.get("p_up"))
+    prob = _safe_float(pred.get("direction_prob"))
+    conf = str(pred.get("confidence_level") or "").strip() or "N/A"
+    backtest = pred.get("backtest_stats") if isinstance(pred.get("backtest_stats"), dict) else {}
+    comps = pred.get("components") if isinstance(pred.get("components"), list) else []
+    llm_fusion = pred.get("llm_fusion") if isinstance(pred.get("llm_fusion"), dict) else {}
+    prob_debug = pred.get("probability_debug") if isinstance(pred.get("probability_debug"), dict) else {}
+    event_sources = pred.get("event_sources") if isinstance(pred.get("event_sources"), dict) else {}
+    similarity_debug = pred.get("similarity_debug") if isinstance(pred.get("similarity_debug"), dict) else {}
+    method_note = str(pred.get("method_note") or "").strip()
+    limitation_note = str(pred.get("limitation_note") or "").strip()
+
+    arrow = "↑" if direction == "up" else ("↓" if direction == "down" else "—")
+    dir_txt = "看涨" if direction == "up" else ("看跌" if direction == "down" else "未知")
+    lines: List[str] = []
+    lines.append("### 次日开盘方向预测（新增）")
+    lines.append("> 预测目标：今日收盘价 → 次交易日开盘价（binary 涨/跌）。")
+    if prob is not None:
+        lines.append(f"- 方向：{arrow} {dir_txt}")
+        lines.append(f"- 概率：**{prob*100:.0f}%**（P(up)={_fmt_num(p_up, 4) or 'N/A'}）")
+    else:
+        lines.append(f"- 方向：{arrow} {dir_txt}")
+        lines.append("- 概率：N/A")
+    lines.append(f"- 置信度：{conf}")
+    source = str(llm_fusion.get("source") or "").strip() or "rule"
+    lines.append(f"- 概率来源：{source}")
+    p_raw = _safe_float(prob_debug.get("p_up_raw_pre_gate"))
+    p_final = _safe_float(prob_debug.get("p_up_final"))
+    if p_raw is not None and p_final is not None:
+        lines.append(f"- 概率口径：raw={_fmt_num(p_raw, 4) or 'N/A'} → final={_fmt_num(p_final, 4) or 'N/A'}（event gate后）")
+    rationale = str(llm_fusion.get("rationale") or "").strip()
+    if rationale:
+        lines.append(f"- LLM理由摘要：{rationale}")
+    if method_note:
+        lines.append(f"- 方法说明：{method_note}")
+    if limitation_note:
+        lines.append(f"- 局限说明：{limitation_note}")
+
+    if comps:
+        lines.append("")
+        lines.append("#### 信号分解")
+        for c in comps[:4]:
+            if not isinstance(c, dict):
+                continue
+            layer = c.get("layer") or "layer?"
+            score = c.get("score")
+            weight = c.get("weight")
+            contrib = c.get("contribution")
+            if layer == "layer3_event_gate":
+                er = _safe_float(c.get("event_risk"))
+                lines.append(f"- {layer}: event_risk={_fmt_num(er, 4) or 'N/A'}")
+                continue
+            if layer == "layer4_llm_fusion":
+                src = c.get("source") or "N/A"
+                p_raw = _fmt_num(c.get("p_up_raw"), 4) or "N/A"
+                lines.append(f"- {layer}: source={src} / p_up_raw={p_raw}")
+                continue
+            if str(c.get("status") or "").strip():
+                lines.append(
+                    f"- {layer}: score={_fmt_num(score, 4) or 'N/A'} / weight={_fmt_num(weight, 2) or 'N/A'} / contrib={_fmt_num(contrib, 4) or 'N/A'} / status={c.get('status')}"
+                )
+                continue
+            lines.append(
+                f"- {layer}: score={_fmt_num(score, 4) or 'N/A'} / weight={_fmt_num(weight, 2) or 'N/A'} / contrib={_fmt_num(contrib, 4) or 'N/A'}"
+            )
+
+    if similarity_debug:
+        lines.append("")
+        lines.append("#### 相似日调试")
+        lines.append(
+            f"- topK：{similarity_debug.get('topk_used', 'N/A')}/{similarity_debug.get('topk_requested', 'N/A')} / p_up_nn={_fmt_num(similarity_debug.get('p_up_nn'), 4) or 'N/A'}"
+        )
+        topm = similarity_debug.get("top_matches") if isinstance(similarity_debug.get("top_matches"), list) else []
+        if topm:
+            seg = []
+            for m in topm[:3]:
+                if isinstance(m, dict):
+                    seg.append(f"{m.get('trade_date')}({m.get('sim')},{m.get('label')})")
+            if seg:
+                lines.append(f"- top matches: {', '.join(seg)}")
+
+    if event_sources:
+        lines.append("")
+        lines.append("#### 事件门闸来源")
+        for k in ("tavily", "yfinance"):
+            s = event_sources.get(k) if isinstance(event_sources.get(k), dict) else {}
+            if not s:
+                continue
+            lines.append(
+                f"- {k}: success={bool(s.get('success'))} / risk={_fmt_num(s.get('event_risk'), 3) or 'N/A'} / note={s.get('note') or 'N/A'}"
+            )
+
+    if backtest:
+        n = backtest.get("n_60d")
+        hr = backtest.get("hit_rate_60d")
+        br = backtest.get("brier_60d")
+        cov = backtest.get("coverage_60d")
+        req = backtest.get("required_samples")
+        cur = backtest.get("current_samples")
+        eta = backtest.get("estimated_ready_date")
+        lines.append("")
+        lines.append("#### 历史统计（滚动60日）")
+        if hr is None or br is None or (isinstance(n, int) and n < 20):
+            lines.append("- 命中率 / Brier：N/A（样本不足，需积累 20 个交易日）")
+        else:
+            lines.append(f"- 命中率：{_fmt_num(_safe_float(hr)*100 if hr is not None else None, 2) or 'N/A'}%")
+            lines.append(f"- Brier：{_fmt_num(br, 4) or 'N/A'}")
+        lines.append(f"- 样本数：{n if n is not None else 'N/A'} / 覆盖率：{_fmt_num(_safe_float(cov)*100 if cov is not None else None, 2) or 'N/A'}%")
+        if req is not None or cur is not None:
+            lines.append(f"- 积累进度：{cur if cur is not None else 'N/A'} / {req if req is not None else 'N/A'}")
+        if eta:
+            lines.append(f"- 预计可用日期：{eta}")
+
+    lines.append("")
+    return lines
+
+
 def _format_tail_session_report(
     report_data: Dict[str, Any],
     title: str,
@@ -1873,6 +2161,8 @@ def _format_tail_session_report(
     deviation_proxy = analysis.get("deviation_proxy") if isinstance(analysis.get("deviation_proxy"), dict) else {}
     pattern_alerts = analysis.get("pattern_alerts") if isinstance(analysis.get("pattern_alerts"), list) else []
     valuation_blend = snap.get("valuation_blend") if isinstance(snap.get("valuation_blend"), dict) else {}
+    run_quality = str(report_data.get("run_quality") or "").strip().lower()
+    degraded_stages = report_data.get("degraded_stages") if isinstance(report_data.get("degraded_stages"), list) else []
     premium_pct_20d = analysis.get("premium_percentile_20d")
     deviation_pct_20d = analysis.get("deviation_percentile_20d")
     temp_band = analysis.get("temperature_band")
@@ -1928,6 +2218,11 @@ def _format_tail_session_report(
     lines.append(f"- 区间置信度：{_fmt_num(signal_board.get('confidence'), 2) or 'N/A'}")
     lines.append("")
 
+    # 新增：次日开盘方向预测（若有）
+    next_open_block = _format_next_open_direction_block(report_data)
+    if next_open_block:
+        lines.extend(next_open_block)
+
     if quick_mode:
         lines.append("### 四、偏离代理与门禁")
         lines.append(
@@ -1973,6 +2268,9 @@ def _format_tail_session_report(
         lines.append("")
         lines.append("### 七、用户决策声明")
         lines.append(f"- {analysis.get('user_decision_note') or '本系统仅提供多视角信息，不替代你的最终交易决策。'}")
+        if run_quality == "ok_degraded":
+            ds_txt = ",".join(str(x) for x in degraded_stages) if degraded_stages else "unknown_stage"
+            lines.append(f"- ok_degraded：成功发送但阶段有降级（{ds_txt}）")
         lines.append("---")
         lines.append(f"*分析完成时间：{now}*")
         return title, _dingtalk_trim("\n".join(lines).strip())
@@ -2106,6 +2404,9 @@ def _format_tail_session_report(
 
     lines.append("### 十、用户决策声明")
     lines.append(f"- {analysis.get('user_decision_note') or '本系统仅提供多视角信息，不替代你的最终交易决策。'}")
+    if run_quality == "ok_degraded":
+        ds_txt = ",".join(str(x) for x in degraded_stages) if degraded_stages else "unknown_stage"
+        lines.append(f"- ok_degraded：成功发送但阶段有降级（{ds_txt}）")
     lines.append("---")
     lines.append(f"*分析完成时间：{now}*")
     return title, _dingtalk_trim("\n".join(lines).strip())
@@ -2990,6 +3291,10 @@ def tool_analyze_after_close_and_send_daily_report(
     report_date: Optional[str] = None,
     webhook_url: Optional[str] = None,
     mode: str = "prod",
+    workflow_profile: str = "legacy",
+    stage_budget_profile: str = "balanced",
+    emit_stage_timing: bool = True,
+    max_concurrency: int = 3,
     extra_report_data: Optional[Dict[str, Any]] = None,
     secret: Optional[str] = None,
     keyword: Optional[str] = None,
@@ -3012,10 +3317,122 @@ def tool_analyze_after_close_and_send_daily_report(
         except Exception as e:
             return {"success": False, "message": f"{name} failed: {e}"}
 
-    timing_sink: Optional[Dict[str, float]] = {} if _daily_report_timing_enabled() else None
+    def _safe_call_with_retry(
+        name: str,
+        fn: Any,
+        *a: Any,
+        retries: int = 2,
+        sleep_s: float = 2.0,
+        backoff_max_s: float = 8.0,
+        **kw: Any,
+    ) -> Any:
+        last: Any = None
+        for i in range(max(1, int(retries))):
+            last = _safe_call(name, fn, *a, **kw)
+            if not isinstance(last, dict):
+                return last
+            if bool(last.get("success")):
+                return last
+            msg = str(last.get("message") or last.get("error") or "").lower()
+            is_rate = any(
+                x in msg
+                for x in ("no tables found", "too many requests", "rate limit", "429", "限流", "throttle")
+            )
+            if i < int(retries) - 1 and is_rate:
+                wait_s = min(max(0.0, float(sleep_s)) * (2**i), max(0.0, float(backoff_max_s)))
+                time.sleep(wait_s)
+                continue
+            return last
+        return last
 
+    def _load_ths_fund_flow_rate_limit_policy() -> Dict[str, Any]:
+        default = {
+            "batch_size": 10,
+            "sleep_seconds": 1.0,
+            "max_retries": 3,
+            "backoff_first_seconds": 1.0,
+            "backoff_max_seconds": 8.0,
+        }
+        try:
+            root = Path(__file__).resolve().parents[2]
+            policy_path = root / "config" / "cron" / "ths_fund_flow_rate_limit.json"
+            if not policy_path.is_file():
+                return default
+            payload = json.loads(policy_path.read_text(encoding="utf-8"))
+            if not isinstance(payload, dict):
+                return default
+            now_h = datetime.now(ZoneInfo("Asia/Shanghai")).hour
+            period = "intraday"
+            if now_h < 9:
+                period = "pre_open"
+            elif now_h >= 16:
+                period = "after_close"
+            by_period = payload.get("by_period") if isinstance(payload.get("by_period"), dict) else {}
+            chosen = by_period.get(period) if isinstance(by_period.get(period), dict) else {}
+            base = payload.get("default") if isinstance(payload.get("default"), dict) else {}
+            merged = {**default, **base, **chosen}
+            merged["period"] = period
+            return merged
+        except Exception:
+            return default
+
+    def _daily_stage_budget(profile: str) -> Dict[str, Optional[float]]:
+        p = (profile or "").strip().lower()
+        if p in ("off", "disabled", "none"):
+            return {"critical_data": None, "enrich_optional": None, "compose_send": None}
+        if p in ("tight", "fast"):
+            return {"critical_data": 300.0, "enrich_optional": 210.0, "compose_send": 120.0}
+        # balanced: 7m + 5m + 2.5m = 14.5m, reserve runtime slack.
+        return {"critical_data": 420.0, "enrich_optional": 300.0, "compose_send": 150.0}
+
+    def _record_stage(
+        sink: Dict[str, Dict[str, Any]],
+        stage: str,
+        started_at: float,
+        budget_s: Optional[float],
+        status: str,
+        degraded_reason: str = "",
+    ) -> None:
+        sink[stage] = {
+            "elapsed_ms": int(round((time.perf_counter() - started_at) * 1000)),
+            "budget_s": budget_s,
+            "status": status,
+            "degraded_reason": degraded_reason,
+        }
+
+    def _lineage(
+        sink: List[Dict[str, Any]],
+        stage: str,
+        tool_key: str,
+        payload: Any,
+        source_hint: str = "",
+    ) -> None:
+        ok = bool(isinstance(payload, dict) and payload.get("success"))
+        sink.append(
+            {
+                "stage": stage,
+                "tool_key": tool_key,
+                "success": ok,
+                "quality_status": "ok" if ok else "degraded",
+                "source_hint": source_hint or "tool",
+            }
+        )
+
+    timing_sink: Optional[Dict[str, float]] = {} if _daily_report_timing_enabled() else None
+    profile = (workflow_profile or "").strip().lower()
+    use_balanced = profile == "cron_balanced"
+    budgets = _daily_stage_budget(stage_budget_profile if use_balanced else "off")
+    stage_timing: Dict[str, Dict[str, Any]] = {}
+    lineage_struct: List[Dict[str, Any]] = []
+    skipped_optional = False
+    optional_degraded_reason = ""
+    compose_degraded_reason = ""
+    _ = max(1, min(int(max_concurrency or 1), 6))
+
+    critical_started = time.perf_counter()
     _tp0 = time.perf_counter() if timing_sink is not None else None
     ac = tool_analyze_after_close()
+    _lineage(lineage_struct, "critical_data", "tool_analyze_after_close", ac)
     if timing_sink is not None and _tp0 is not None:
         timing_sink["pipeline_1_analyze_after_close_s"] = time.perf_counter() - _tp0
 
@@ -3031,7 +3448,21 @@ def tool_analyze_after_close_and_send_daily_report(
         rd["analysis"] = {"_non_dict_payload": data}
     if extra_report_data:
         _drn._merge_extra_report_data_skipping_tool_arg_stubs(rd, extra_report_data)
-    _drn._maybe_autofill_cron_daily_market_p0(rd)
+    _record_stage(stage_timing, "critical_data", critical_started, budgets.get("critical_data"), "ok", "")
+
+    optional_budget = budgets.get("enrich_optional")
+    optional_started = time.perf_counter()
+    if optional_budget is not None and stage_timing["critical_data"]["elapsed_ms"] >= int(optional_budget * 1000):
+        skipped_optional = True
+        optional_degraded_reason = "critical_data_over_budget"
+    elif optional_budget is not None and stage_timing["critical_data"]["elapsed_ms"] >= int(
+        (budgets.get("critical_data") or 0) * 1000
+    ):
+        skipped_optional = True
+        optional_degraded_reason = "critical_data_budget_hit"
+
+    if not skipped_optional:
+        _drn._maybe_autofill_cron_daily_market_p0(rd)
 
     # P0 自动补齐：避免日报退化为“有模板无内容”
     try:
@@ -3057,17 +3488,27 @@ def tool_analyze_after_close_and_send_daily_report(
         except Exception:
             tool_fetch_a_share_fund_flow = None
 
+        if skipped_optional:
+            raise RuntimeError("optional_stage_skipped")
         if "tool_sector_heat_score" not in rd:
             rd["tool_sector_heat_score"] = _safe_call("tool_sector_heat_score", tool_sector_heat_score)
+            _lineage(lineage_struct, "enrich_optional", "tool_sector_heat_score", rd["tool_sector_heat_score"])
         if "tool_fetch_policy_news" not in rd:
             rd["tool_fetch_policy_news"] = _safe_call(
                 "tool_fetch_policy_news", tool_fetch_policy_news, max_items=6
             )
+            _lineage(lineage_struct, "enrich_optional", "tool_fetch_policy_news", rd["tool_fetch_policy_news"])
         if "policy_news" not in rd and isinstance(rd.get("tool_fetch_policy_news"), dict):
             rd["policy_news"] = rd.get("tool_fetch_policy_news")
         if "tool_fetch_industry_news_brief" not in rd:
             rd["tool_fetch_industry_news_brief"] = _safe_call(
                 "tool_fetch_industry_news_brief", tool_fetch_industry_news_brief, max_items=10
+            )
+            _lineage(
+                lineage_struct,
+                "enrich_optional",
+                "tool_fetch_industry_news_brief",
+                rd["tool_fetch_industry_news_brief"],
             )
         if "industry_news" not in rd and isinstance(rd.get("tool_fetch_industry_news_brief"), dict):
             rd["industry_news"] = rd.get("tool_fetch_industry_news_brief")
@@ -3075,33 +3516,51 @@ def tool_analyze_after_close_and_send_daily_report(
             rd["tool_fetch_announcement_digest"] = _safe_call(
                 "tool_fetch_announcement_digest", tool_fetch_announcement_digest, max_items=10
             )
+            _lineage(
+                lineage_struct,
+                "enrich_optional",
+                "tool_fetch_announcement_digest",
+                rd["tool_fetch_announcement_digest"],
+            )
         if "announcement_digest" not in rd and isinstance(rd.get("tool_fetch_announcement_digest"), dict):
             rd["announcement_digest"] = rd.get("tool_fetch_announcement_digest")
         # 资金流专题优先口径：同花顺行业/概念板块资金流；全市场大盘口径作为补充。
         if callable(tool_fetch_a_share_fund_flow):
+            ff_policy = _load_ths_fund_flow_rate_limit_policy()
+            ff_retry = int(ff_policy.get("max_retries") or 3)
+            ff_sleep = float(ff_policy.get("backoff_first_seconds") or ff_policy.get("sleep_seconds") or 1.0)
+            ff_backoff_max = float(ff_policy.get("backoff_max_seconds") or 8.0)
             if "a_share_capital_flow_sector_industry" not in rd:
-                rd["a_share_capital_flow_sector_industry"] = _safe_call(
+                rd["a_share_capital_flow_sector_industry"] = _safe_call_with_retry(
                     "tool_fetch_a_share_fund_flow.sector_industry",
                     tool_fetch_a_share_fund_flow,
                     query_kind="sector_rank",
                     sector_type="industry",
                     rank_window="immediate",
                     limit=12,
+                    retries=ff_retry,
+                    sleep_s=ff_sleep,
+                    backoff_max_s=ff_backoff_max,
                 )
             if "a_share_capital_flow_sector_concept" not in rd:
-                rd["a_share_capital_flow_sector_concept"] = _safe_call(
+                # THS 连续抓取容易触发瞬时限流，概念口径前按策略做间隔退避。
+                time.sleep(max(0.0, float(ff_policy.get("sleep_seconds") or 1.0)))
+                rd["a_share_capital_flow_sector_concept"] = _safe_call_with_retry(
                     "tool_fetch_a_share_fund_flow.sector_concept",
                     tool_fetch_a_share_fund_flow,
                     query_kind="sector_rank",
                     sector_type="concept",
                     rank_window="immediate",
                     limit=12,
+                    retries=ff_retry,
+                    sleep_s=ff_sleep,
+                    backoff_max_s=ff_backoff_max,
                 )
             if "a_share_capital_flow_market_history" not in rd:
                 rd["a_share_capital_flow_market_history"] = _safe_call(
-                    "tool_fetch_a_share_fund_flow.market_flow_preferred",
+                    "tool_fetch_a_share_fund_flow.market_history",
                     tool_fetch_a_share_fund_flow,
-                    query_kind="market_flow_preferred",
+                    query_kind="market_history",
                     provider_preference="auto",
                     rank_window="immediate",
                     limit=120,
@@ -3133,6 +3592,7 @@ def tool_analyze_after_close_and_send_daily_report(
                 etf_code="510300,510500,510050,159919,159915",
                 mode="production",
             )
+            _lineage(lineage_struct, "enrich_optional", "tool_fetch_etf_realtime", rd["tool_fetch_etf_realtime"])
         if "tool_fetch_index_realtime" not in rd:
             rd["tool_fetch_index_realtime"] = _safe_call(
                 "tool_fetch_index_realtime",
@@ -3141,11 +3601,20 @@ def tool_analyze_after_close_and_send_daily_report(
                 index_code="000001,000300,399001,399006",
                 mode="production",
             )
+            _lineage(
+                lineage_struct, "enrich_optional", "tool_fetch_index_realtime", rd["tool_fetch_index_realtime"]
+            )
         if "tool_predict_daily_volatility_range" not in rd:
             rd["tool_predict_daily_volatility_range"] = _safe_call(
                 "tool_predict_daily_volatility_range",
                 tool_predict_daily_volatility_range,
                 underlying="510300",
+            )
+            _lineage(
+                lineage_struct,
+                "enrich_optional",
+                "tool_predict_daily_volatility_range",
+                rd["tool_predict_daily_volatility_range"],
             )
         dvr = rd.get("tool_predict_daily_volatility_range")
         if isinstance(dvr, dict):
@@ -3167,9 +3636,16 @@ def tool_analyze_after_close_and_send_daily_report(
                 underlying="510300",
                 mode="production",
             )
+            _lineage(
+                lineage_struct,
+                "enrich_optional",
+                "tool_generate_option_trading_signals",
+                rd["tool_generate_option_trading_signals"],
+            )
     except Exception:
         # 补齐失败不阻断主流程；由发送层审计行标识降级
-        pass
+        if not optional_degraded_reason:
+            optional_degraded_reason = "optional_fetch_exception"
 
     if timing_sink is not None and _tp1 is not None:
         timing_sink["pipeline_2_p0_autofill_network_s"] = time.perf_counter() - _tp1
@@ -3311,7 +3787,8 @@ def tool_analyze_after_close_and_send_daily_report(
         except Exception:
             pass
 
-    _ensure_index_etf_info_blocks()
+    if not skipped_optional:
+        _ensure_index_etf_info_blocks()
 
     # 派生字段：修复日报模板字段对齐
     gis = rd.get("global_index_spot")
@@ -3393,6 +3870,35 @@ def tool_analyze_after_close_and_send_daily_report(
             "failure_log_path": log_path,
         }
 
+    optional_status = "ok"
+    if skipped_optional:
+        optional_status = "degraded"
+        optional_degraded_reason = optional_degraded_reason or "optional_stage_skipped"
+    elif optional_budget is not None:
+        optional_elapsed_ms = int(round((time.perf_counter() - optional_started) * 1000))
+        if optional_elapsed_ms > int(optional_budget * 1000):
+            optional_status = "degraded"
+            optional_degraded_reason = optional_degraded_reason or "optional_budget_hit"
+    _record_stage(
+        stage_timing,
+        "enrich_optional",
+        optional_started,
+        optional_budget,
+        optional_status,
+        optional_degraded_reason,
+    )
+
+    critical_ok = bool(isinstance(ac, dict) and ac.get("success"))
+    pre_degraded = any((x or {}).get("status") == "degraded" for x in stage_timing.values())
+    pre_run_quality = "error" if not critical_ok else ("ok_degraded" if pre_degraded else "ok_full")
+    rd["run_quality"] = pre_run_quality
+    rd["quality_status"] = "error" if pre_run_quality == "error" else (
+        "degraded" if pre_run_quality == "ok_degraded" else "ok"
+    )
+    if emit_stage_timing:
+        rd["stage_timing"] = stage_timing
+        rd["lineage_struct"] = lineage_struct
+
     if timing_sink is not None and _tp2 is not None:
         timing_sink["pipeline_3_ensure_derive_normalize_gate_s"] = time.perf_counter() - _tp2
 
@@ -3408,6 +3914,7 @@ def tool_analyze_after_close_and_send_daily_report(
     if timing_sink is not None:
         send_kw["_timing_sink"] = timing_sink
 
+    compose_started = time.perf_counter()
     _tp3 = time.perf_counter() if timing_sink is not None else None
     out = tool_send_daily_report(
         report_data=rd,
@@ -3424,6 +3931,48 @@ def tool_analyze_after_close_and_send_daily_report(
                 d["timing_phases_s"] = dict(timing_sink)
             else:
                 out["data"] = {"timing_phases_s": dict(timing_sink)}
+    compose_budget = budgets.get("compose_send")
+    compose_status = "ok"
+    if compose_budget is not None:
+        compose_elapsed_ms = int(round((time.perf_counter() - compose_started) * 1000))
+        if compose_elapsed_ms > int(compose_budget * 1000):
+            compose_status = "degraded"
+            compose_degraded_reason = "compose_send_budget_hit"
+    _record_stage(
+        stage_timing,
+        "compose_send",
+        compose_started,
+        compose_budget,
+        compose_status,
+        compose_degraded_reason,
+    )
+
+    send_success = bool(isinstance(out, dict) and out.get("success"))
+    has_degraded = any((x or {}).get("status") == "degraded" for x in stage_timing.values())
+    run_quality = "error"
+    if send_success and critical_ok:
+        run_quality = "ok_degraded" if has_degraded else "ok_full"
+
+    rd["run_quality"] = run_quality
+    rd["quality_status"] = "error" if run_quality == "error" else ("degraded" if run_quality == "ok_degraded" else "ok")
+    if emit_stage_timing:
+        rd["stage_timing"] = stage_timing
+        rd["lineage_struct"] = lineage_struct
+
+    if isinstance(out, dict):
+        out_data = out.get("data")
+        if not isinstance(out_data, dict):
+            out_data = {}
+        out_data["run_quality"] = run_quality
+        if emit_stage_timing:
+            out_data["stage_timing"] = stage_timing
+            out_data["lineage_struct"] = lineage_struct
+        out_data["delivery"] = {
+            "success": send_success,
+            "authority": "toolResult.success",
+        }
+        out["data"] = out_data
+
     return out
 
 

@@ -105,3 +105,12 @@
 
 - 修改对外工具名或行为后：同步 **`config/tools_manifest.yaml`** 并执行 `python scripts/generate_tools_json.py`。
 - 工作流中「仅钉钉 / 禁飞书扇出」等文案以 **`docs/openclaw/dingtalk_delivery_contract.md`** 为权威，YAML 内多为摘要指针。
+
+### 7.1 投递幂等与“每次必发”约定
+
+- **推荐约定（Cron 任务）**：凡是 cron 定时任务需要“每次运行都发当次报告”（而不是同日只发一次），在调用发送封装工具时传：
+  - `idempotency_scope='run'`
+- **可选约定（同日只发一次）**：如希望同一报告类型在同日内去重，显式传：
+  - `idempotency_scope='daily'`
+
+当前仓库内已对 `etf_rotation_research` 落地该能力（包括计算失败兜底发缓存报告的分支也会沿用同一 `idempotency_scope`）。

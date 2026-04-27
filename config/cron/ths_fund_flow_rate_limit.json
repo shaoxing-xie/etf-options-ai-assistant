@@ -1,0 +1,34 @@
+{
+  "schema_name": "ths_fund_flow_rate_limit_policy_v1",
+  "schema_version": "1.0.0",
+  "default": {
+    "batch_size": 10,
+    "sleep_seconds": 1.0,
+    "max_retries": 3,
+    "backoff_first_seconds": 1.0,
+    "backoff_max_seconds": 8.0
+  },
+  "by_period": {
+    "pre_open": {
+      "batch_size": 10,
+      "sleep_seconds": 1.0,
+      "max_retries": 3,
+      "backoff_first_seconds": 1.0,
+      "backoff_max_seconds": 8.0
+    },
+    "intraday": {
+      "batch_size": 5,
+      "sleep_seconds": 2.0,
+      "max_retries": 3,
+      "backoff_first_seconds": 1.0,
+      "backoff_max_seconds": 8.0
+    },
+    "after_close": {
+      "batch_size": 20,
+      "sleep_seconds": 0.5,
+      "max_retries": 2,
+      "backoff_first_seconds": 0.8,
+      "backoff_max_seconds": 6.0
+    }
+  }
+}
