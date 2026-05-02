@@ -1,0 +1,14 @@
+---
+description: P1b — 日内/分钟多源切换与 data_cache 工具链节拍（附录 B）
+globs:
+  - config/domains/market_data.yaml
+  - src/data_collector.py
+  - src/data_cache_collection_core.py
+---
+
+# 日内上游节拍（intraday upstream spacing）
+
+- **配置真源**：`config/domains/market_data.yaml` 下 `data_sources.intraday_tool_spacing_seconds`、`index_minute.upstream_spacing_seconds`、`etf_minute.upstream_spacing_seconds`、`stock_minute.upstream_spacing_seconds_between_periods`。
+- **助手实现**：`src/data_collector.py` 中 `_upstream_spacing_sleep`；指数/ETF 分钟多源 `enumerate` 时在 **切换源前** sleep；A 股分钟在 **30m 与 15m 两次拉取之间** sleep。
+- **采集任务链**：`src/data_cache_collection_core.py` 在 **index → etf → stock** 分钟工具之间 `time.sleep(intraday_tool_spacing_seconds)`。
+- **与资金流限流 JSON 并存**：不替代 `ths_fund_flow_rate_limit.json` 与 `circuit_breaker`，仅叠加「大类工具 / 源切换」节拍。

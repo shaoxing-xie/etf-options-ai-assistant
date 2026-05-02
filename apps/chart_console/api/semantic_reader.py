@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import ast
 import urllib.request
@@ -136,6 +137,54 @@ class SemanticReader:
         self.root = root.resolve()
         self._screening = ScreeningReader(self.root)
         self._tail = TailScreeningReader(self.root)
+
+    def _openclaw_data_china_stock_repo(self) -> Path:
+        """Plugin repo root for `source_health_snapshot.json` (same resolution as Chart services)."""
+        for key in ("OPENCLAW_DATA_CHINA_STOCK_REPO", "OPENCLAW_CHINA_STOCK_PLUGIN_ROOT"):
+            raw = (os.environ.get(key) or "").strip()
+            if raw:
+                p = Path(raw).expanduser().resolve()
+                if p.is_dir():
+                    return p
+        link = self.root / "plugins" / "data_collection"
+        if link.is_symlink():
+            try:
+                target = Path(os.readlink(link)).resolve()
+                return target.parent.parent
+            except OSError:
+                pass
+        return Path("/home/xie/openclaw-data-china-stock")
+
+    def _data_source_health_ops_payload(self) -> dict[str, Any]:
+        """§4.6.2: `data_source_health` block for ops_events (read-only snapshot)."""
+        base = self._openclaw_data_china_stock_repo()
+        p = base / "data" / "meta" / "source_health_snapshot.json"
+        out: dict[str, Any] = {
+            "event_type": "data_source_health",
+            "snapshot_path": str(p),
+            "last_probe_at": None,
+            "sources": [],
+            "degraded_sources": [],
+            "top_error_codes": [],
+            "quality_status": "degraded",
+            "hint": "Run plugin tool_probe_source_health with write_snapshot=true",
+        }
+        if not p.is_file():
+            return out
+        doc = _read_json(p)
+        if not isinstance(doc, dict):
+            out["hint"] = "invalid_snapshot_json"
+            return out
+        meta = doc.get("_meta") if isinstance(doc.get("_meta"), dict) else {}
+        rows = doc.get("sources") if isinstance(doc.get("sources"), list) else []
+        degraded = [r for r in rows if isinstance(r, dict) and r.get("ok") is not True]
+        out["last_probe_at"] = meta.get("generated_at")
+        out["sources"] = rows
+        out["degraded_sources"] = degraded
+        out["top_error_codes"] = []
+        out["quality_status"] = str(meta.get("quality_status") or ("degraded" if degraded else "ok"))
+        out["hint"] = ""
+        return out
 
     @staticmethod
     def _normalize_candidate_row(
@@ -1134,6 +1183,7 @@ class SemanticReader:
         if td and validate_screening_date_key(td):
             snap = self._read_ops_snapshot(td)
             if isinstance(snap, dict):
+                snap["data_source_health"] = self._data_source_health_ops_payload()
                 return snap
         jobs, lineage = self._ops_jobs_source()
         execution: list[dict[str, Any]] = []
@@ -1303,9 +1353,10 @@ class SemanticReader:
             "execution_audit_events": execution,
             "collection_quality_events": collection,
             "task_health_events": task_health,
+            "data_source_health": self._data_source_health_ops_payload(),
             "_meta": {
                 "schema_name": "ops_events_view_v1",
-                "schema_version": "1.0.0",
+                "schema_version": "1.1.0",
                 "task_id": "openclaw-jobs-inventory",
                 "run_id": "",
                 "data_layer": "L4",

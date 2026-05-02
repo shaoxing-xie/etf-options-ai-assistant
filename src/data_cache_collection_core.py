@@ -370,6 +370,12 @@ def run_data_cache_collection(
             now_sh = datetime.now(tz)
         minute = now_sh.minute
 
+        ds_cfg = config.get("data_sources") if isinstance(config.get("data_sources"), dict) else {}
+        try:
+            chain_spacing = float(ds_cfg.get("intraday_tool_spacing_seconds", 0.45) or 0)
+        except (TypeError, ValueError):
+            chain_spacing = 0.45
+
         if u["index_codes"]:
             r = tool_fetch_index_minute(
                 index_code=",".join(u["index_codes"]),
@@ -380,6 +386,8 @@ def run_data_cache_collection(
                 {"tool": "index_minute", "success": r.get("success"), "message": r.get("message")}
             )
         if u["etf_codes"]:
+            if chain_spacing > 0 and u["index_codes"]:
+                time.sleep(chain_spacing)
             r = tool_fetch_etf_minute(
                 etf_code=",".join(u["etf_codes"]),
                 period="5,15,30",
@@ -393,6 +401,8 @@ def run_data_cache_collection(
         if phase == "intraday_minute" and throttle_stock:
             do_stock = do_stock and minute in (1, 31)
         if do_stock:
+            if chain_spacing > 0 and (u["index_codes"] or u["etf_codes"]):
+                time.sleep(chain_spacing)
             r = tool_fetch_stock_minute(
                 stock_code=",".join(u["stock_codes"]),
                 period="5,15,30",

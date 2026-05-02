@@ -11,11 +11,16 @@ network:
         enabled: true
         url: http://127.0.0.1:2080
 data_sources:
+  intraday_tool_spacing_seconds: 0.45
+  limit_up:
+    # P3: 涨停工具 approved 链（em → previous → strong → sub_new）相邻 AkShare 调用间隔（秒）
+    upstream_chain_spacing_seconds: 0.35
   circuit_breaker:
     enabled: true
     error_threshold: 3
     cooldown_seconds: 300
   etf_minute:
+    upstream_spacing_seconds: 0.35
     priority:
       - sina
       - eastmoney
@@ -32,6 +37,7 @@ data_sources:
         Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124
         Safari/537.36
   index_minute:
+    upstream_spacing_seconds: 0.35
     priority:
       - sina
       - eastmoney
@@ -111,6 +117,7 @@ data_sources:
       max_retries: 5
       retry_delay: 3
   stock_minute:
+    upstream_spacing_seconds_between_periods: 0.5
     priority:
       - mootdx
       - akshare
@@ -158,6 +165,8 @@ tushare:
   enabled: true
   token: ${TUSHARE_TOKEN}
   prefer_minute: false
+  # 默认 2000 积分档不含表二 stk_mins；已单独开通股票分钟时改为 minute_table2 或设 minute_table2: true
+  permission_profile: "2000"
 iopv_fallback:
   manual_iopv_overrides:
     '513300':

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import importlib
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Dict, List, Tuple
 
 from plugins.data_access.read_cache_data import read_cache_data
@@ -44,10 +44,29 @@ def tool_rotation_data_health_check(symbols: str, lookback_days: int = 120) -> D
     degraded_evidence: List[Dict[str, Any]] = []
     cache_ok = 0
     cache_total = 0
+    lb = int(lookback_days or 120)
+    end_d = datetime.now()
+    start_d = end_d - timedelta(days=lb)
+    start_ymd = start_d.strftime("%Y%m%d")
+    end_ymd = end_d.strftime("%Y%m%d")
     for sym in syms:
         cache_total += 1
-        cache = read_cache_data(data_type="etf_daily", symbol=sym, lookback_days=int(lookback_days or 120), return_df=False)
-        hit = bool(isinstance(cache, dict) and cache.get("success") and cache.get("df") is not None)
+        cache = read_cache_data(
+            data_type="etf_daily",
+            symbol=sym,
+            start_date=start_ymd,
+            end_date=end_ymd,
+            return_df=False,
+            skip_online_refill=True,
+        )
+        data = cache.get("data") if isinstance(cache, dict) else {}
+        recs = data.get("records") if isinstance(data, dict) else None
+        hit = bool(
+            isinstance(cache, dict)
+            and cache.get("success")
+            and isinstance(recs, list)
+            and len(recs) > 0
+        )
         if hit:
             cache_ok += 1
         fallback_ok, fallback_src = (False, "")

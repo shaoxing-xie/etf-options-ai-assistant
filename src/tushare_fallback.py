@@ -16,6 +16,7 @@ import time
 
 from src.logger_config import get_module_logger
 from src.config_loader import load_system_config
+from src.tushare_stk_mins_entitlement import is_stk_mins_entitled
 
 logger = get_module_logger(__name__)
 
@@ -595,6 +596,17 @@ def fetch_etf_minute_tushare(
     Returns:
         DataFrame: ETF分钟数据，格式与 akshare 兼容，失败返回 None
     """
+    try:
+        cfg_gate = config if isinstance(config, dict) else load_system_config()
+    except Exception:
+        cfg_gate = {}
+    if not is_stk_mins_entitled(cfg_gate):
+        logger.warning(
+            "stk_mins 未授权：需 Tushare 表二分钟权限；设置 tushare.permission_profile=minute_table2 "
+            "或 tushare.minute_table2=true（或测试环境 TUSHARE_FORCE_STK_MINS=1）。跳过调用。"
+        )
+        return None
+
     # 如果提供了 token，使用该 token 初始化；否则使用 get_tushare_pro() 获取默认实例
     pro = None
     use_prefer_token = False

@@ -967,6 +967,7 @@ def calculate_technical_indicators(
                 start_date=start_date,
                 end_date=end_date,
                 return_df=True,
+                skip_online_refill=data_type not in ("etf_minute", "index_minute"),
             )
 
             if cache_read.get('df') is not None and not cache_read['df'].empty:

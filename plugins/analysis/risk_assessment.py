@@ -105,6 +105,7 @@ def _load_daily_for_risk(
             start_date=start_ymd,
             end_date=end_ymd,
             return_df=True,
+            skip_online_refill=True,
         )
         df0 = res.get("df") if isinstance(res, dict) else None
         if df0 is not None and not getattr(df0, "empty", True):
@@ -121,6 +122,7 @@ def _load_daily_for_risk(
             start_date=start_ymd,
             end_date=end_ymd,
             return_df=True,
+            skip_online_refill=True,
         )
         df0 = res.get("df") if isinstance(res, dict) else None
         if df0 is not None and not getattr(df0, "empty", True):

@@ -9,9 +9,11 @@ function currentOpsSubview() {
   const t1 = qs("subtab-ops-exec");
   const t2 = qs("subtab-ops-collect");
   const t3 = qs("subtab-ops-health");
+  const t4 = qs("subtab-ops-datasources");
   if (t1?.getAttribute("aria-selected") === "true") return "exec";
   if (t2?.getAttribute("aria-selected") === "true") return "collect";
   if (t3?.getAttribute("aria-selected") === "true") return "health";
+  if (t4?.getAttribute("aria-selected") === "true") return "datasources";
   return "exec";
 }
 
@@ -27,18 +29,23 @@ function setOpsSubview(name) {
   const exec = qs("ops-exec-view");
   const collect = qs("ops-collect-view");
   const health = qs("ops-health-view");
+  const datasources = qs("ops-datasources-view");
   const isExec = name === "exec";
   const isCollect = name === "collect";
   const isHealth = name === "health";
+  const isDs = name === "datasources";
   if (exec) exec.classList.toggle("active", isExec);
   if (collect) collect.classList.toggle("active", isCollect);
   if (health) health.classList.toggle("active", isHealth);
+  if (datasources) datasources.classList.toggle("active", isDs);
   const t1 = qs("subtab-ops-exec");
   const t2 = qs("subtab-ops-collect");
   const t3 = qs("subtab-ops-health");
+  const t4 = qs("subtab-ops-datasources");
   if (t1) t1.setAttribute("aria-selected", String(isExec));
   if (t2) t2.setAttribute("aria-selected", String(isCollect));
   if (t3) t3.setAttribute("aria-selected", String(isHealth));
+  if (t4) t4.setAttribute("aria-selected", String(isDs));
 }
 
 function openOpsDetailModal({ title, meta, jsonText }) {
@@ -333,6 +340,53 @@ function normalizeRunQuality(raw, fallbackStatus) {
   return "unknown";
 }
 
+function renderDataSourceHealthRows(tbodyId, payload) {
+  const tb = qs(tbodyId);
+  if (!tb) return;
+  const rows = Array.isArray(payload?.sources) ? payload.sources : [];
+  if (!rows.length) {
+    const hint = payload?.hint || payload?.message || "无数据";
+    tb.innerHTML = `<tr><td colspan="3" class="small">${esc(hint)}</td></tr>`;
+    return;
+  }
+  tb.innerHTML = rows
+    .map((r) => {
+      const ok = r?.ok === true;
+      const badge = ok ? "ok" : "bad";
+      const label = ok ? "ok" : "fail";
+      return `<tr><td>${esc(r?.source_id)}</td><td><span class="badge ${badge}">${esc(label)}</span></td><td class="small">${esc(r?.detail)}</td></tr>`;
+    })
+    .join("");
+}
+
+async function loadDataSourceHealth() {
+  const tb = qs("opsDataSourcesTbody");
+  const hint = qs("opsDataSourcesHint");
+  if (tb) tb.innerHTML = `<tr><td colspan="3" class="small">加载中…</td></tr>`;
+  try {
+    const r = await jget("/api/semantic/data_source_health");
+    if (r && r.success === false) {
+      renderDataSourceHealthRows("opsDataSourcesTbody", {
+        sources: [],
+        hint: r.message || "request_failed",
+      });
+      return;
+    }
+    const inner = r?.data;
+    if (inner && typeof inner === "object" && !Array.isArray(inner)) {
+      renderDataSourceHealthRows("opsDataSourcesTbody", inner);
+      const gen = inner?._meta?.generated_at;
+      const q = inner?._meta?.quality_status;
+      if (hint && gen)
+        hint.textContent = `快照 generated_at=${gen} quality=${q || "n/a"}；无数据时请运行插件 tool_probe_source_health(write_snapshot=true)。`;
+    } else {
+      renderDataSourceHealthRows("opsDataSourcesTbody", { sources: [], hint: "empty response" });
+    }
+  } catch (e) {
+    if (tb) tb.innerHTML = `<tr><td colspan="3" class="small warn">${esc(String(e?.message || e))}</td></tr>`;
+  }
+}
+
 async function loadBaseline3dMetrics(taskRows) {
   const tasks = (Array.isArray(taskRows) ? taskRows : [])
     .map((x) => String(x?.task_id || "").trim())
@@ -446,6 +500,10 @@ qs("btnOpsRefresh")?.addEventListener("click", () => loadOpsEvents());
 qs("subtab-ops-exec")?.addEventListener("click", () => setOpsSubview("exec"));
 qs("subtab-ops-collect")?.addEventListener("click", () => setOpsSubview("collect"));
 qs("subtab-ops-health")?.addEventListener("click", () => setOpsSubview("health"));
+qs("subtab-ops-datasources")?.addEventListener("click", () => {
+  setOpsSubview("datasources");
+  loadDataSourceHealth();
+});
 qs("opsOnlyIssues")?.addEventListener("change", () => loadOpsEvents());
 wireOpsDetailModal();
 

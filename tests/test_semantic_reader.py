@@ -81,6 +81,10 @@ def test_semantic_ops_events_view(monkeypatch, tmp_path: Path) -> None:
     assert len(payload["task_health_events"]) == 2
     assert any(x.get("quality_status") == "degraded" for x in payload["task_health_events"])
     assert payload["collection_quality_events"][0]["quality_status"] == "degraded"
+    dsh = payload.get("data_source_health")
+    assert isinstance(dsh, dict)
+    assert dsh.get("event_type") == "data_source_health"
+    assert "snapshot_path" in dsh
 
 
 def test_semantic_ops_events_prefers_snapshot(tmp_path: Path) -> None:
@@ -95,6 +99,7 @@ def test_semantic_ops_events_prefers_snapshot(tmp_path: Path) -> None:
     reader = SemanticReader(root)
     payload = reader.ops_events("2026-04-22")
     assert payload["execution_audit_events"][0]["task_id"] == "snap"
+    assert payload.get("data_source_health", {}).get("event_type") == "data_source_health"
 
 
 def test_semantic_ops_events_reports_tail_full_degraded(monkeypatch, tmp_path: Path) -> None:

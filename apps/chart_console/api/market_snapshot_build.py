@@ -314,17 +314,28 @@ def _cn_proxy_etf_metrics(etf_code: str) -> Tuple[Optional[float], Optional[floa
     except Exception as e:
         return None, None, None, f"cn_proxy_import:{e}"
     try:
-        resp = fetch_etf_realtime(etf_code=etf_code)
+        # 与 L4 展示一致：非交易日仍取最近可得行情；production 会整段拒绝 ETF 拉取
+        resp = fetch_etf_realtime(etf_code=etf_code, mode="test")
     except Exception as e:
         return None, None, None, f"cn_proxy_err:{e}"
     if not isinstance(resp, dict) or not bool(resp.get("success")):
         return None, None, None, f"cn_proxy_err:{(resp or {}).get('message') or 'failed'}"
     data = resp.get("data")
-    if not isinstance(data, dict):
+    row: Optional[dict[str, Any]] = None
+    if isinstance(data, dict):
+        row = data
+    elif isinstance(data, list):
+        for it in data:
+            if isinstance(it, dict) and str(it.get("code") or "").strip() == str(etf_code).strip():
+                row = it
+                break
+        if row is None and len(data) == 1 and isinstance(data[0], dict):
+            row = data[0]
+    if not isinstance(row, dict):
         return None, None, None, "cn_proxy_empty"
-    last = _safe_float(data.get("current_price"))
-    chg_a = _safe_float(data.get("change"))
-    chg_p = _safe_float(data.get("change_percent"))
+    last = _safe_float(row.get("current_price"))
+    chg_a = _safe_float(row.get("change"))
+    chg_p = _safe_float(row.get("change_percent"))
     if last is None:
         return None, None, None, "cn_proxy_empty"
     return last, chg_a, chg_p, "cn_proxy_etf"
@@ -362,16 +373,18 @@ def _build_cn_index_items(trade_date: str) -> Tuple[list[dict[str, Any]], str, l
         "399006",
         "000688",
         "399673",
+        "899050",  # 需插件 fetch_realtime index_mapping 含 bj899050
     }
     rt_codes = [c for c, _ in specs if c in realtime_supported]
     src = "tool_fetch_index_data:realtime"
     try:
         from plugins.merged.fetch_index_data import tool_fetch_index_data  # type: ignore
 
+        # L4 大盘卡片：休市日仍需展示最近可得行情；production 会对非交易日整段拒绝指数实时
         resp = tool_fetch_index_data(
             data_type="realtime",
             index_code=",".join(rt_codes),
-            mode="production",
+            mode="test",
         )
         tools.append(src)
         if isinstance(resp, dict) and bool(resp.get("success")) and isinstance(resp.get("data"), list):
@@ -411,7 +424,16 @@ def _build_cn_index_items(trade_date: str) -> Tuple[list[dict[str, Any]], str, l
                 sid = "openclaw"
                 raw = f"{src}|{h_tag}"
                 tools.append("tool_fetch_index_data:historical")
-            else:
+            # 国内 ETF 代理优先于 yfinance：网络/周末时 yf 常空，159790/159915 更稳
+            if last is None and code in proxy_etf_map:
+                p_last, p_ca, p_cp, p_tag = _cn_proxy_etf_metrics(proxy_etf_map[code])
+                if p_last is not None:
+                    last, chg_a, chg_p = p_last, p_ca, p_cp
+                    q = "degraded"
+                    sid = "openclaw"
+                    raw = f"{src}|{p_tag}:{proxy_etf_map[code]}"
+                    tools.append("fetch_etf_realtime")
+            if last is None:
                 for ysym in _CN_INDEX_YF_FALLBACK.get(code, []):
                     y_last, y_ca, y_cp, tag = _yf_hist_metrics(ysym, cfg)
                     if y_last is not None:
@@ -421,14 +443,6 @@ def _build_cn_index_items(trade_date: str) -> Tuple[list[dict[str, Any]], str, l
                         raw = f"{src}|yf:{ysym}:{tag}"
                         tools.append("yfinance")
                         break
-            if last is None and code in proxy_etf_map:
-                p_last, p_ca, p_cp, p_tag = _cn_proxy_etf_metrics(proxy_etf_map[code])
-                if p_last is not None:
-                    last, chg_a, chg_p = p_last, p_ca, p_cp
-                    q = "degraded"
-                    sid = "openclaw"
-                    raw = f"{src}|{p_tag}:{proxy_etf_map[code]}"
-                    tools.append("fetch_etf_realtime")
         if q != "ok":
             worst = "degraded"
         semantics = "realtime_quote" if sid == "openclaw" else "daily_close"
@@ -995,7 +1009,8 @@ def build_global_market_snapshot(trade_date: str) -> dict[str, Any]:
     # Global indices — strict same-index mapping and one-round retry for misses.
     apac_specs: list[tuple[str, list[str], str]] = [
         ("HSI", ["^HSI"], "恒生指数"),
-        ("HSCEI", ["^HSCEI", "^HSCE", "2828.HK"], "国企指数"),
+        # Yahoo 上 ^HSCEI 常 404；^HSCE 与 2828.HK 更稳（手工探测 2026-05）
+        ("HSCEI", ["^HSCE", "^HSCEI", "2828.HK"], "国企指数"),
         ("N225", ["^N225"], "日经225"),
         ("KOSPI", ["^KS11"], "韩国KOSPI"),
         ("ASX200", ["^AXJO"], "澳大利亚标普200"),

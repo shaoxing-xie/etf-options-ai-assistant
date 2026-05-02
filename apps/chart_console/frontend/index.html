@@ -598,6 +598,7 @@
           <button class="subtab" id="subtab-ops-exec" role="tab" aria-selected="true" data-subview="exec">执行审计事件</button>
           <button class="subtab" id="subtab-ops-collect" role="tab" aria-selected="false" data-subview="collect">采集质量事件</button>
           <button class="subtab" id="subtab-ops-health" role="tab" aria-selected="false" data-subview="health">运维任务看板</button>
+          <button class="subtab" id="subtab-ops-datasources" role="tab" aria-selected="false" data-subview="datasources">数据源健康</button>
         </div>
         <div class="bar screening-toolbar">
           <button type="button" id="btnOpsRefresh">刷新</button>
@@ -632,6 +633,17 @@
             </table>
           </div>
         </div>
+        <div class="research-view" id="ops-datasources-view" data-subview="datasources">
+          <p class="small" id="opsDataSourcesHint" style="margin:0 0 8px 0;">
+            只读语义：<code>/api/semantic/data_source_health</code>（插件 <code>source_health_snapshot.json</code>）。无快照时请先运行 <code>tool_probe_source_health</code> 且 <code>write_snapshot=true</code>。
+          </p>
+          <div class="screening-table-wrap">
+            <table>
+              <thead><tr><th>source_id</th><th>ok</th><th>detail</th></tr></thead>
+              <tbody id="opsDataSourcesTbody"></tbody>
+            </table>
+          </div>
+        </div>
       </section>
       <div id="opsDetailModal" class="modal" role="dialog" aria-modal="true" aria-label="运维任务详情">
         <div class="modal-card">
@@ -651,6 +663,6 @@
     </div>
     <script type="module" src="/app.js?v=20260501-2026"></script>
     <script type="module" src="/screening.js?v=20260501-2026"></script>
-    <script type="module" src="/ops.js?v=20260501-2026"></script>
+    <script type="module" src="/ops.js?v=20260502-dsh"></script>
   </body>
 </html>

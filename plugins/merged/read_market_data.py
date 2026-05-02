@@ -6,6 +6,24 @@ data_type 枚举: index_daily | index_minute | etf_daily | etf_minute | option_m
 
 from typing import Dict, Any, Optional, List
 
+
+def _since_yyyymmdd(since: Optional[str]) -> Optional[str]:
+    if since is None or str(since).strip() == "":
+        return None
+    s = str(since).strip().replace("-", "")
+    if len(s) >= 8 and s[:8].isdigit():
+        return s[:8]
+    return None
+
+
+def _apply_since_floor(since_norm: Optional[str], start: Optional[str]) -> Optional[str]:
+    if not since_norm:
+        return start
+    if not start:
+        return since_norm
+    return start if start >= since_norm else since_norm
+
+
 def tool_read_market_data(
     data_type: Optional[str] = None,
     data_types: Optional[List[str]] = None,
@@ -15,6 +33,7 @@ def tool_read_market_data(
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
     date: Optional[str] = None,
+    since: Optional[str] = None,
     **kwargs
 ) -> Dict[str, Any]:
     """
@@ -23,6 +42,8 @@ def tool_read_market_data(
     """
     from data_access.read_cache_data import read_cache_data
     from datetime import datetime, timedelta
+
+    since_norm = _since_yyyymmdd(since)
 
     # 确定请求类型列表
     if data_types:
@@ -56,10 +77,16 @@ def tool_read_market_data(
                     data_type=dt,
                     symbol=sym,
                     period=period or "15",
-                    date=date
+                    date=date,
+                    skip_online_refill=True,
                 )
             else:
-                out = read_cache_data(data_type=dt, symbol=sym, date=date)
+                out = read_cache_data(
+                    data_type=dt,
+                    symbol=sym,
+                    date=date,
+                    skip_online_refill=True,
+                )
         else:
             if not symbol:
                 sym = "000300" if "index" in dt else "510300"
@@ -71,10 +98,14 @@ def tool_read_market_data(
             if dt in ("index_minute", "etf_minute"):
                 effective_start = start_date
                 effective_end = end_date
+                if not effective_start and not effective_end and date:
+                    effective_start = str(date)
+                    effective_end = str(date)
                 if not effective_start and not effective_end and not date:
                     today = datetime.now()
                     effective_end = today.strftime("%Y%m%d")
                     effective_start = (today - timedelta(days=5)).strftime("%Y%m%d")
+                effective_start = _apply_since_floor(since_norm, effective_start)
 
                 out = read_cache_data(
                     data_type=dt,
@@ -82,13 +113,22 @@ def tool_read_market_data(
                     period=period or "5",
                     start_date=effective_start,
                     end_date=effective_end,
+                    skip_online_refill=True,
                 )
             else:
+                effective_start = start_date
+                effective_end = end_date
+                if not effective_start and not effective_end and not date:
+                    today = datetime.now()
+                    effective_end = today.strftime("%Y%m%d")
+                    effective_start = (today - timedelta(days=30)).strftime("%Y%m%d")
+                effective_start = _apply_since_floor(since_norm, effective_start)
                 out = read_cache_data(
                     data_type=dt,
                     symbol=sym,
-                    start_date=start_date,
-                    end_date=end_date
+                    start_date=effective_start,
+                    end_date=effective_end,
+                    skip_online_refill=True,
                 )
         results[dt] = out
         if not out.get("success"):

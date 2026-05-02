@@ -36,6 +36,25 @@ def _repo_root_for_data() -> Path:
 
 ROOT = _repo_root_for_data()
 ALERTS_PATH = ROOT / "config" / "alerts.yaml"
+
+
+def _openclaw_data_china_stock_root() -> Path:
+    """Resolve plugin dev directory for health snapshot JSON (symlink or env)."""
+    for key in ("OPENCLAW_DATA_CHINA_STOCK_REPO", "OPENCLAW_CHINA_STOCK_PLUGIN_ROOT"):
+        raw = (os.environ.get(key) or "").strip()
+        if raw:
+            p = Path(raw).expanduser().resolve()
+            if p.is_dir():
+                return p
+    link = ROOT / "plugins" / "data_collection"
+    if link.is_symlink():
+        try:
+            target = Path(os.readlink(link)).resolve()
+            # .../openclaw-data-china-stock/plugins/data_collection -> repo root
+            return target.parent.parent
+        except Exception:
+            pass
+    return Path("/home/xie/openclaw-data-china-stock")
 MARKET_DATA_PATH = ROOT / "config" / "domains" / "market_data.yaml"
 ANALYTICS_PATH = ROOT / "config" / "domains" / "analytics.yaml"
 ROTATION_CONFIG_PATH = ROOT / "config" / "rotation_config.yaml"
@@ -310,6 +329,25 @@ class ApiServices:
     def get_semantic_ops_run_detail(self, task_id: str = "", limit: int = 80) -> dict[str, Any]:
         data = self._semantic.ops_run_detail(task_id=str(task_id or ""), limit=int(limit or 80))
         return {"success": True, "message": "ok", "data": data}
+
+    def get_semantic_data_source_health(self) -> dict[str, Any]:
+        """Read-only: `source_health_snapshot.json` from plugin repo (P2-data-health)."""
+        p = _openclaw_data_china_stock_root() / "data" / "meta" / "source_health_snapshot.json"
+        if not p.is_file():
+            return {
+                "success": True,
+                "message": "no_snapshot",
+                "data": {
+                    "sources": [],
+                    "snapshot_path": str(p),
+                    "hint": "Run plugin tool_probe_source_health with write_snapshot=true",
+                },
+            }
+        try:
+            doc = json.loads(p.read_text(encoding="utf-8"))
+        except Exception as e:
+            return {"success": False, "message": f"invalid_json: {e}", "data": None}
+        return {"success": True, "message": "ok", "data": doc}
 
     def get_semantic_trade_dates(self) -> dict[str, Any]:
         dates = self._semantic.semantic_trade_dates()

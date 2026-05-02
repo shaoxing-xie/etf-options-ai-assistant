@@ -37,8 +37,25 @@ def tool_detect_market_regime(
     if not out.get("success"):
         return {"success": False, "message": f"read etf_daily failed: {out.get('message')}", "data": None}
 
-    data = (out.get("data") or {}).get("data") or (out.get("data") or {}).get("rows") or out.get("data")
-    df = pd.DataFrame(data)
+    raw = out.get("data")
+    if isinstance(raw, list):
+        df = pd.DataFrame(raw)
+    elif isinstance(raw, dict):
+        nested = raw.get("records") or raw.get("rows") or raw.get("data")
+        if isinstance(nested, list):
+            df = pd.DataFrame(nested)
+        elif isinstance(nested, dict):
+            try:
+                df = pd.DataFrame(nested)
+            except Exception:
+                return {"success": False, "message": "etf_daily nested dict is not columnar", "data": None}
+        else:
+            try:
+                df = pd.DataFrame(raw)
+            except Exception:
+                return {"success": False, "message": "etf_daily cache shape not tabular", "data": None}
+    else:
+        return {"success": False, "message": "empty etf_daily cache payload", "data": None}
     cols = {c.lower(): c for c in df.columns}
     close_col = cols.get("close") or cols.get("收盘") or cols.get("收盘价")
     if not close_col:

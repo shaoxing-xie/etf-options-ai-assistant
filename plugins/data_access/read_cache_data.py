@@ -156,7 +156,7 @@ def read_cache_data(
     date: Optional[str] = None,
     use_closest: bool = True,
     return_df: bool = False,
-    skip_online_refill: bool = False,
+    skip_online_refill: bool = True,
     **_: Any,
 ) -> Dict[str, Any]:
     """
@@ -170,8 +170,8 @@ def read_cache_data(
         date: 期权 minute/greeks 的日期（YYYYMMDD 或 YYYYMMDD hh:mm:ss）
         use_closest: option_greeks 缓存缺失时是否回退到最近缓存日
         return_df: True 返回 pandas.DataFrame；False 返回 records 列表（工具输出更友好）
-        skip_online_refill: 为 True 时，index_daily/etf_daily 仅读 parquet，不触发在线补拉。
-            供 `load_etf_daily_df` 等路径使用，避免与上层 `fetch_single_*` 重复打源站。
+        skip_online_refill: 默认 **True**（仅读盘）：日线不触发 `_try_refill_daily_cache`；分钟不触发 `_try_refill_minute_cache`。
+            需要在线补拉时显式传 `skip_online_refill=False`（与 P0-cache / 数据源封装规划一致）。
     """
 
     from src import data_cache
@@ -280,8 +280,8 @@ def read_cache_data(
         else:
             df, missing = data_cache.get_cached_etf_minute(sym, str(period), start_date, end_date)
 
-        # 如果存在缺失日期，尝试从数据源补齐并写回缓存，再读一次
-        if missing:
+        # 如果存在缺失日期，尝试从数据源补齐并写回缓存，再读一次（仅当允许在线补拉）
+        if missing and not skip_online_refill:
             refill_df = _try_refill_minute_cache(
                 data_type=dt,
                 symbol=sym,

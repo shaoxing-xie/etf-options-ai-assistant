@@ -23,7 +23,8 @@ def patch_opening_chain() -> object:
         "success": True,
         "data": {
             "quote_narration_rule_cn": "口径说明",
-            "allows_intraday_continuous_wording": False,
+            # True so `_attach_rotation_opening_block` runs realtime validation (expects quality ok below).
+            "allows_intraday_continuous_wording": True,
         },
     }
     pn = {"success": True, "data": {"items": [{"title": "t", "url": "http://x"}]}}

@@ -48,6 +48,16 @@ def _get_circuit_breaker_config(config: Optional[Dict] = None) -> Dict[str, Any]
     }
 
 
+def _upstream_spacing_sleep(seconds: float) -> None:
+    """Appendix B / P1b: pacing between upstream switches (seconds)."""
+    try:
+        s = float(seconds)
+    except (TypeError, ValueError):
+        return
+    if s > 0:
+        time.sleep(s)
+
+
 def _is_data_source_available(source_key: str, config: Optional[Dict] = None) -> bool:
     """
     判断数据源当前是否可用（未处于熔断期）
@@ -507,6 +517,7 @@ def fetch_index_minute_data_with_fallback(
     cb_cfg = _get_circuit_breaker_config(config)
     data_sources_config = config.get("data_sources", {})
     index_minute_config = data_sources_config.get("index_minute", {})
+    spacing_sec = float(index_minute_config.get("upstream_spacing_seconds", 0) or 0)
 
     # 默认优先级：["eastmoney", "sina"]
     priority = index_minute_config.get("priority", ["eastmoney", "sina"])
@@ -534,7 +545,9 @@ def fetch_index_minute_data_with_fallback(
     
     # ========== 按优先级尝试获取30分钟数据 ==========
     index_30m = None
-    for source in available_sources:
+    for i, source in enumerate(available_sources):
+        if i > 0:
+            _upstream_spacing_sleep(spacing_sec)
         source_key = f"index_minute_{source}"
         if cb_cfg.get("enabled", True) and not _is_data_source_available(source_key, config):
             logger.warning(f"数据源 {source_key} 当前处于熔断期，跳过30分钟数据获取")
@@ -584,7 +597,9 @@ def fetch_index_minute_data_with_fallback(
     
     # ========== 按优先级尝试获取15分钟数据 ==========
     index_15m = None
-    for source in available_sources:
+    for i, source in enumerate(available_sources):
+        if i > 0:
+            _upstream_spacing_sleep(spacing_sec)
         source_key = f"index_minute_{source}"
         if cb_cfg.get("enabled", True) and not _is_data_source_available(source_key, config):
             logger.warning(f"数据源 {source_key} 当前处于熔断期，跳过15分钟数据获取")
@@ -686,7 +701,8 @@ def fetch_etf_minute_data_with_fallback(
     # ========== 读取数据源优先级配置 ==========
     data_sources_config = config.get('data_sources', {})
     etf_minute_config = data_sources_config.get('etf_minute', {})
-    
+    spacing_sec = float(etf_minute_config.get("upstream_spacing_seconds", 0) or 0)
+
     # 默认优先级：["eastmoney", "sina"]
     priority = etf_minute_config.get('priority', ['eastmoney', 'sina'])
     
@@ -709,7 +725,9 @@ def fetch_etf_minute_data_with_fallback(
     
     # ========== 按优先级尝试获取30分钟数据 ==========
     etf_30m = None
-    for source in available_sources:
+    for i, source in enumerate(available_sources):
+        if i > 0:
+            _upstream_spacing_sleep(spacing_sec)
         source_key = f"etf_minute_{source}"
         if cb_cfg.get("enabled", True) and not _is_data_source_available(source_key, config):
             logger.warning(f"数据源 {source_key} 当前处于熔断期，跳过30分钟数据获取")
@@ -759,7 +777,9 @@ def fetch_etf_minute_data_with_fallback(
     
     # ========== 按优先级尝试获取15分钟数据 ==========
     etf_15m = None
-    for source in available_sources:
+    for i, source in enumerate(available_sources):
+        if i > 0:
+            _upstream_spacing_sleep(spacing_sec)
         source_key = f"etf_minute_{source}"
         if cb_cfg.get("enabled", True) and not _is_data_source_available(source_key, config):
             logger.warning(f"数据源 {source_key} 当前处于熔断期，跳过15分钟数据获取")
@@ -899,9 +919,13 @@ def fetch_stock_minute_data_with_fallback(
     """
     symbol = str(symbol).strip()
     logger.info("开始获取 A 股分钟数据: %s", symbol)
+    cfg = load_system_config()
+    sm_cfg = (cfg.get("data_sources") or {}).get("stock_minute") or {}
+    between_sec = float(sm_cfg.get("upstream_spacing_seconds_between_periods", 0.45) or 0)
     s30 = fetch_stock_minute_em(
         symbol, "30", lookback_days, max_retries=max_retries, retry_delay=retry_delay
     )
+    _upstream_spacing_sleep(between_sec)
     s15 = fetch_stock_minute_em(
         symbol, "15", lookback_days, max_retries=max_retries, retry_delay=retry_delay
     )
@@ -1206,8 +1230,18 @@ def fetch_etf_minute_em(
     config = load_system_config()
     tushare_config = config.get('tushare', {})
     prefer_tushare_minute = tushare_config.get('prefer_minute', False)
-    
+    stk_mins_ok = False
     if prefer_tushare_minute:
+        from src.tushare_stk_mins_entitlement import is_stk_mins_entitled
+
+        stk_mins_ok = is_stk_mins_entitled(config)
+        if not stk_mins_ok:
+            logger.warning(
+                "tushare.prefer_minute=true 但未声明表二 stk_mins 权限（permission_profile=minute_table2 / "
+                "tushare.minute_table2 / TUSHARE_FORCE_STK_MINS）；跳过 Tushare 分钟主路径，改用备用源"
+            )
+
+    if prefer_tushare_minute and stk_mins_ok:
         try:
             from src.tushare_fallback import fetch_etf_minute_tushare
             
