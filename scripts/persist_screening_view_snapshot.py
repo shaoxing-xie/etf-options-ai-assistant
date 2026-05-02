@@ -210,42 +210,8 @@ def _load_tushare_industry_map_full() -> dict[str, str]:
 
 
 def _fetch_sector_map_akshare(codes: list[str], *, max_codes: int = 60) -> dict[str, str]:
-    """东财 push2 个股信息中的「行业」字段；mootdx 实时无行业时兜底（依赖外网，可能偶发失败）。"""
-    uniq = [c for c in sorted(set(codes)) if _looks_like_code(c)][:max_codes]
-    if not uniq:
-        return {}
-    try:
-        import akshare as ak  # type: ignore
-    except Exception:
-        return {}
-    out: dict[str, str] = {}
-    for code in uniq:
-        df = None
-        for attempt in range(3):
-            try:
-                df = ak.stock_individual_info_em(symbol=code, timeout=15.0)
-                break
-            except Exception:
-                if attempt < 2:
-                    time.sleep(0.7)
-        if df is None or not hasattr(df, "columns"):
-            continue
-        if "item" in df.columns and "value" in df.columns:
-            sel = df.loc[df["item"].astype(str).str.strip() == "行业", "value"]
-            if not sel.empty:
-                v = str(sel.iloc[0]).strip()
-                if v and not _looks_like_code(v):
-                    out[code] = v
-        else:
-            for _, row in df.iterrows():
-                if str(row.get("item") or "").strip() != "行业":
-                    continue
-                v = str(row.get("value") or "").strip()
-                if v and not _looks_like_code(v):
-                    out[code] = v
-                break
-        time.sleep(0.2)
-    return out
+    """Deprecated: keep plugin-first discipline; no assistant-side direct source fallback."""
+    return {}
 
 
 def _fetch_sector_map_merged(symbols: list[str]) -> dict[str, str]:
@@ -263,12 +229,6 @@ def _fetch_sector_map_merged(symbols: list[str]) -> dict[str, str]:
     if missing:
         rt = _fetch_sector_map(missing)
         for k, v in rt.items():
-            if v and not merged.get(k):
-                merged[k] = v
-    missing2 = [c for c in codes if not str(merged.get(c) or "").strip()]
-    if missing2:
-        akmap = _fetch_sector_map_akshare(missing2)
-        for k, v in akmap.items():
             if v and not merged.get(k):
                 merged[k] = v
     write_back_sector_cache(ROOT, merged, codes)

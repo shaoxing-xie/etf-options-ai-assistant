@@ -24,6 +24,7 @@ sys.path.insert(0, str(project_root))
 
 from src.logger_config import get_module_logger
 from src.prediction_normalizer import PRICE_RANGES, process_prediction
+from src.data_collector import fetch_index_daily_em
 
 logger = get_module_logger(__name__)
 
@@ -31,6 +32,7 @@ logger = get_module_logger(__name__)
 PREDICTION_RECORDS_DIR = project_root / "data" / "prediction_records"
 ETF_DAILY_DIR = project_root / "data" / "cache" / "etf_daily"
 ETF_MINUTE_DIR = project_root / "data" / "cache" / "etf_minute"
+INDEX_DAILY_DIR = project_root / "data" / "cache" / "index_daily"
 
 _prediction_quality_cache: Optional[Dict[str, Any]] = None
 
@@ -265,6 +267,86 @@ def verify_predictions_for_date(date: str, symbol: Optional[str] = None) -> Dict
     
     return stats
 
+
+def _iter_prediction_files() -> List[Path]:
+    return sorted(PREDICTION_RECORDS_DIR.glob("predictions_*.json"))
+
+
+def _load_index_daily_close(symbol: str, date: str) -> Optional[float]:
+    import pandas as pd
+
+    daily_path = INDEX_DAILY_DIR / symbol / f"{date}.parquet"
+    if daily_path.exists():
+        try:
+            df = pd.read_parquet(daily_path)
+            if len(df) > 0:
+                close_col = '收盘' if '收盘' in df.columns else 'close'
+                return float(df[close_col].iloc[-1])
+        except Exception as e:
+            logger.warning("读取指数日线缓存失败 %s: %s", daily_path, e)
+    try:
+        fetch_date = date.replace("-", "")
+        df = fetch_index_daily_em(symbol=symbol[:6], start_date=fetch_date, end_date=fetch_date)
+        if df is not None and not df.empty:
+            close_col = '收盘' if '收盘' in df.columns else 'close'
+            return float(pd.to_numeric(df[close_col], errors="coerce").dropna().iloc[-1])
+    except Exception as e:
+        logger.warning("拉取指数日线失败 %s/%s: %s", symbol, date, e)
+    return None
+
+
+def verify_direction_predictions_for_target_date(target_date: str) -> Dict[str, Any]:
+    verified = 0
+    hit = 0
+    miss = 0
+
+    for json_file in _iter_prediction_files():
+        try:
+            records = json.loads(json_file.read_text(encoding='utf-8'))
+        except Exception:
+            continue
+        dirty = False
+        for record in records:
+            if record.get("prediction_type") != "index_direction":
+                continue
+            if str(record.get("target_date") or "") != target_date:
+                continue
+            if record.get("direction_verified"):
+                continue
+            symbol = str(record.get("symbol") or "")
+            if not symbol:
+                continue
+            prediction = record.get("prediction") if isinstance(record.get("prediction"), dict) else {}
+            predicted_direction = str(prediction.get("direction") or "")
+            if predicted_direction not in {"up", "down", "neutral"}:
+                continue
+            prev_trade_date = str(record.get("metadata", {}).get("trade_date") or "").replace("-", "")
+            prev_close = _load_index_daily_close(symbol, prev_trade_date) if prev_trade_date else None
+            target_close = _load_index_daily_close(symbol, target_date)
+            if prev_close in (None, 0) or target_close is None:
+                continue
+            actual_direction = "up" if target_close > prev_close else "down" if target_close < prev_close else "neutral"
+            ok = predicted_direction == actual_direction
+            record["direction_verification"] = {
+                "base_close": prev_close,
+                "target_close": target_close,
+                "actual_direction": actual_direction,
+                "hit": ok,
+                "verified_at": datetime.now().isoformat(),
+            }
+            record["direction_verified"] = True
+            dirty = True
+            verified += 1
+            if ok:
+                hit += 1
+            else:
+                miss += 1
+        if dirty:
+            json_file.write_text(json.dumps(records, ensure_ascii=False, indent=2), encoding='utf-8')
+
+    accuracy = hit / verified if verified else 0.0
+    return {"verified": verified, "hit": hit, "miss": miss, "accuracy": accuracy}
+
 def generate_verification_report(date: str, stats: Dict[str, Any]) -> str:
     """
     生成验证报告（Markdown 格式）
@@ -315,8 +397,17 @@ def main():
     
     logger.info(f"开始验证 {args.date} 的预测记录...")
     
-    # 验证预测
-    stats = verify_predictions_for_date(args.date, args.symbol)
+    # 同日区间 + 次日方向 两类验证
+    range_stats = verify_predictions_for_date(args.date, args.symbol)
+    direction_stats = verify_direction_predictions_for_target_date(args.date)
+    stats = {
+        "verified": int(range_stats.get("verified", 0)) + int(direction_stats.get("verified", 0)),
+        "hit": int(range_stats.get("hit", 0)) + int(direction_stats.get("hit", 0)),
+        "miss": int(range_stats.get("miss", 0)) + int(direction_stats.get("miss", 0)),
+    }
+    stats["accuracy"] = stats["hit"] / stats["verified"] if stats["verified"] else 0.0
+    stats["range_stats"] = range_stats
+    stats["direction_stats"] = direction_stats
     
     # 生成报告
     if args.report and stats['verified'] > 0:

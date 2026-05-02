@@ -54,9 +54,8 @@ def _daterange_days(end: datetime, n: int) -> List[str]:
 
 def load_verified_hits(
     dates_needed: List[str],
-) -> List[Tuple[str, str, str, bool]]:
-    """(date_str, symbol, method, hit)"""
-    rows: List[Tuple[str, str, str, bool]] = []
+) -> List[Dict[str, Any]]:
+    rows: List[Dict[str, Any]] = []
     for ds in dates_needed:
         path = PRED_DIR / f"predictions_{ds}.json"
         if not path.exists():
@@ -70,39 +69,120 @@ def load_verified_hits(
         if not isinstance(recs, list):
             continue
         for r in recs:
+            pred = r.get("prediction") or {}
+            if pred.get("usable") is False:
+                continue
+            sym = str(r.get("symbol", ""))
+            method = str(pred.get("method", "unknown"))
+            if bool(pred.get("iv_hv_fusion")):
+                method = f"{method}|iv_hv_fusion"
+            if r.get("prediction_type") == "index_direction":
+                dv = r.get("direction_verification") or {}
+                if "hit" not in dv:
+                    continue
+                hit = bool(dv.get("hit"))
+                target_date = str(r.get("target_date") or "")
+                ds_use = target_date.replace("-", "") if target_date else ds
+                predicted_direction = str(pred.get("direction") or "")
+                probability = float(pred.get("probability") or 50.0)
+                if predicted_direction == "down":
+                    prob_up = max(0.0, min(1.0, (100.0 - probability) / 100.0))
+                elif predicted_direction == "up":
+                    prob_up = max(0.0, min(1.0, probability / 100.0))
+                else:
+                    prob_up = 0.5
+                actual_direction = str(dv.get("actual_direction") or "")
+                actual_up = 1.0 if actual_direction == "up" else 0.5 if actual_direction == "neutral" else 0.0
+                quality_status = str(pred.get("quality_status") or "unknown")
+                rows.append(
+                    {
+                        "date": ds_use,
+                        "symbol": sym,
+                        "method": method,
+                        "hit": hit,
+                        "prediction_type": "index_direction",
+                        "prob_up": prob_up,
+                        "actual_up": actual_up,
+                        "quality_status": quality_status,
+                        "signal_strength": abs(prob_up - 0.5) * 2.0,
+                    }
+                )
+                continue
             if not r.get("verified"):
                 continue
             ar = r.get("actual_range") or {}
             if "hit" not in ar:
                 continue
-            sym = str(r.get("symbol", ""))
-            pred = r.get("prediction") or {}
-            # 质量策略：mark_invalid 的记录不纳入命中统计
-            if pred.get("usable") is False:
-                continue
-            method = str(pred.get("method", "unknown"))
-            if bool(pred.get("iv_hv_fusion")):
-                method = f"{method}|iv_hv_fusion"
             hit = bool(ar.get("hit"))
-            rows.append((ds, sym, method, hit))
+            rows.append(
+                {
+                    "date": ds,
+                    "symbol": sym,
+                    "method": method,
+                    "hit": hit,
+                    "prediction_type": str(r.get("prediction_type") or ""),
+                    "prob_up": None,
+                    "actual_up": None,
+                    "quality_status": str(pred.get("quality_status") or "unknown"),
+                    "signal_strength": None,
+                }
+            )
     return rows
 
 
-def summarize_window(rows: List[Tuple[str, str, str, bool]], date_set: set) -> DefaultDict[Tuple[str, str], List[bool]]:
-    by: DefaultDict[Tuple[str, str], List[bool]] = defaultdict(list)
-    for ds, sym, method, hit in rows:
-        if ds in date_set:
-            by[(sym, method)].append(hit)
+def summarize_window(rows: List[Dict[str, Any]], date_set: set) -> DefaultDict[Tuple[str, str], List[Dict[str, Any]]]:
+    by: DefaultDict[Tuple[str, str], List[Dict[str, Any]]] = defaultdict(list)
+    for row in rows:
+        if row["date"] in date_set:
+            by[(row["symbol"], row["method"])].append(row)
     return by
 
 
-def hit_rate(hits: List[bool]) -> float:
-    if not hits:
+def hit_rate(rows: List[Dict[str, Any]]) -> float:
+    if not rows:
         return float("nan")
-    return sum(1 for h in hits if h) / len(hits)
+    return sum(1 for row in rows if row["hit"]) / len(rows)
 
 
-def main() -> None:
+def brier_score(rows: List[Dict[str, Any]]) -> float:
+    pairs = [(row["prob_up"], row["actual_up"]) for row in rows if row.get("prob_up") is not None and row.get("actual_up") is not None]
+    if not pairs:
+        return float("nan")
+    return sum((p - y) ** 2 for p, y in pairs) / len(pairs)
+
+
+def degraded_ratio(rows: List[Dict[str, Any]]) -> float:
+    if not rows:
+        return float("nan")
+    return sum(1 for row in rows if row.get("quality_status") not in {"ok", ""}) / len(rows)
+
+
+def signal_concentration(rows: List[Dict[str, Any]]) -> float:
+    vals = [float(row["signal_strength"]) for row in rows if row.get("signal_strength") is not None]
+    if not vals:
+        return float("nan")
+    return sum(vals) / len(vals)
+
+
+def calibration_error(rows: List[Dict[str, Any]], bins: int = 5) -> float:
+    pairs = [(row["prob_up"], row["actual_up"]) for row in rows if row.get("prob_up") is not None and row.get("actual_up") is not None]
+    if not pairs:
+        return float("nan")
+    bucket_sum = 0.0
+    total = len(pairs)
+    for i in range(bins):
+        lo = i / bins
+        hi = (i + 1) / bins
+        bucket = [(p, y) for p, y in pairs if (p >= lo and p < hi) or (i == bins - 1 and p <= hi)]
+        if not bucket:
+            continue
+        avg_p = sum(p for p, _ in bucket) / len(bucket)
+        avg_y = sum(y for _, y in bucket) / len(bucket)
+        bucket_sum += abs(avg_p - avg_y) * len(bucket) / total
+    return bucket_sum
+
+
+def main() -> int:
     parser = argparse.ArgumentParser(description="Weekly-style prediction metrics and drop alerts")
     parser.add_argument("--end-date", type=str, default=None, help="YYYYMMDD，默认上海当天")
     args = parser.parse_args()
@@ -133,8 +213,8 @@ def main() -> None:
     lines: List[str] = []
     lines.append(f"## 预测命中滚动对比（近 {rolling} 日 vs 前 {baseline} 日）")
     lines.append("")
-    lines.append(f"| symbol | method | n_recent | hit% recent | n_prior | hit% prior | 告警 |")
-    lines.append("|--------|--------|----------|-------------|---------|------------|------|")
+    lines.append(f"| symbol | method | n_recent | hit_rate_20d | brier_score_20d | coverage | degraded_ratio | signal_concentration | calibration_error | n_prior | hit% prior | 告警 |")
+    lines.append("|--------|--------|----------|--------------|----------------|----------|----------------|----------------------|-------------------|---------|------------|------|")
 
     alerts: List[str] = []
     for sym, method in keys:
@@ -144,6 +224,11 @@ def main() -> None:
         hr, hp = hit_rate(r_hits), hit_rate(p_hits)
         hr_s = f"{hr:.1%}" if not math.isnan(hr) else "-"
         hp_s = f"{hp:.1%}" if not math.isnan(hp) else "-"
+        brier_s = f"{brier_score(r_hits):.4f}" if not math.isnan(brier_score(r_hits)) else "-"
+        coverage_s = f"{(nr / rolling):.1%}" if rolling else "-"
+        degraded_s = f"{degraded_ratio(r_hits):.1%}" if not math.isnan(degraded_ratio(r_hits)) else "-"
+        signal_s = f"{signal_concentration(r_hits):.3f}" if not math.isnan(signal_concentration(r_hits)) else "-"
+        calib_s = f"{calibration_error(r_hits):.4f}" if not math.isnan(calibration_error(r_hits)) else "-"
         warn = ""
         if (
             nr >= min_n
@@ -154,7 +239,7 @@ def main() -> None:
             warn = f"WARN 下降≥{drop_pp:.0f}pp"
             alerts.append(f"- {sym}/{method}: prior {hp:.1%} → recent {hr:.1%} (n {np_}/{nr})")
         lines.append(
-            f"| {sym} | {method} | {nr} | {hr_s} | {np_} | {hp_s} | {warn or '-'} |"
+            f"| {sym} | {method} | {nr} | {hr_s} | {brier_s} | {coverage_s} | {degraded_s} | {signal_s} | {calib_s} | {np_} | {hp_s} | {warn or '-'} |"
         )
 
     lines.append("")
@@ -171,7 +256,8 @@ def main() -> None:
     out_path = REPORT_DIR / f"weekly_metrics_{end.strftime('%Y%m%d')}.md"
     out_path.write_text(report, encoding="utf-8")
     logger.info("报告已写入 %s", out_path)
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

@@ -7,6 +7,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
@@ -52,6 +53,68 @@ def _project_root() -> Path:
     return Path(__file__).resolve().parents[2]
 
 
+def build_structured_rotation_warnings(
+    *,
+    errors: List[str],
+    corr_warnings: List[str],
+    min_history_days: int,
+    correlation_lookback_config: int,
+) -> List[Dict[str, Any]]:
+    """
+    可机读告警：insufficient_history、correlation_window_reduced 等（供 L4 data_quality 审计）。
+    """
+    out: List[Dict[str, Any]] = []
+    ins_re = re.compile(r"^([^:]+):\s*insufficient rows \((\d+)\s*<\s*(\d+)\)\s*$")
+    for e in errors or []:
+        if not isinstance(e, str):
+            continue
+        m = ins_re.match(e.strip())
+        if not m:
+            continue
+        sym, actual_s, thr_s = m.group(1), m.group(2), m.group(3)
+        actual, thr = int(actual_s), int(thr_s)
+        out.append(
+            {
+                "code": "insufficient_history",
+                "policy": "excluded_from_primary_scoring",
+                "symbol": sym,
+                "actual_window_days": actual,
+                "threshold_days": thr,
+                "message": (
+                    f"{sym}: 实际使用窗口={actual}日（低于主榜阈值{thr}日），"
+                    "主榜/因子可信度降低；已从主榜计分排除。"
+                ),
+            }
+        )
+    corr_pat = re.compile(r"^correlation_lookback_auto_reduced[^:]*:(\d+)\s*->\s*(\d+)\s*$")
+    seen: set[Tuple[int, int]] = set()
+    for cw in corr_warnings or []:
+        if not isinstance(cw, str):
+            continue
+        m = corr_pat.match(cw.strip())
+        if not m:
+            continue
+        req, act = int(m.group(1)), int(m.group(2))
+        if (req, act) in seen:
+            continue
+        seen.add((req, act))
+        out.append(
+            {
+                "code": "correlation_window_reduced",
+                "policy": "correlation_window_reduced",
+                "requested_window": req,
+                "actual_window": act,
+                "configured_correlation_lookback": correlation_lookback_config,
+                "min_history_threshold": min_history_days,
+                "message": (
+                    f"相关性计算窗口由{req}个交易日收缩为{act}（交叉市场/日期对齐约束），"
+                    "相关性矩阵可信度下降。"
+                ),
+            }
+        )
+    return out
+
+
 def resolve_etf_pool(etf_pool: Optional[str], config: Dict[str, Any]) -> List[str]:
     """非空 etf_pool 优先；否则按配置多源合并（静态/环境变量/观察池）。"""
     if etf_pool is not None and str(etf_pool).strip():
@@ -60,7 +123,8 @@ def resolve_etf_pool(etf_pool: Optional[str], config: Dict[str, Any]) -> List[st
     from src.symbols_loader import load_symbols_config
 
     pool_cfg = config.get("pool") or {}
-    groups = pool_cfg.get("symbol_groups") or ["core", "industry_etf"]
+    # 主榜计分池可与「行业 RPS 映射全市场」解耦：未配置时回退 symbol_groups
+    groups = pool_cfg.get("primary_scoring_symbol_groups") or pool_cfg.get("symbol_groups") or ["core", "industry_etf"]
     extras = pool_cfg.get("extra_etf_codes") or []
     sym_cfg = load_symbols_config()
     codes: List[str] = []
@@ -660,6 +724,10 @@ def _prefetch_etf_daily_frames(
         return sym, df, msg, src
 
     raw = os.environ.get("ETF_ROTATION_LOAD_MAX_WORKERS", "").strip()
+    # Cache-only mode is I/O-bound and can suffer from lock/contention when many workers
+    # hit the same cache backend concurrently; default to sequential unless explicitly overridden.
+    if (not allow_online_backfill) and raw == "":
+        raw = "1"
     if raw == "1":
         out: Dict[str, Tuple[Optional[pd.DataFrame], Optional[str], str]] = {}
         for sym in symbols:
@@ -925,8 +993,8 @@ def run_rotation_pipeline(
 
     data_need = compute_data_need(config, lookback_days)
     # 用“所需交易日 * 系数”的日历天数回看，避免固定回看6年导致缓存补采与校验极慢/易失败。
-    # 经验：1个交易日≈1.4-1.6个日历日；这里取 3x 作为保守上限，同时兜底至少 365 天。
-    cal_back = max(365, int(data_need) * 3)
+    # 经验：1个交易日≈1.4-1.6个日历日；这里取 2x 并保留最小兜底，降低读盘压力。
+    cal_back = max(300, int(data_need) * 2)
     # 防止极端配置导致过大回看
     cal_back = min(cal_back, 1200)
     start_d, end_d = default_load_date_range(as_of_yyyymmdd=as_of_yyyymmdd, calendar_days_back=cal_back)
@@ -1326,6 +1394,13 @@ def run_rotation_pipeline(
     if industry_total == 0 and concept_total == 0 and overall_ok == 0:
         degraded_reasons.append("no_available_symbols_in_custom_pool")
 
+    structured_warnings = build_structured_rotation_warnings(
+        errors=errors,
+        corr_warnings=list(corr_warnings),
+        min_history_days=min_rows,
+        correlation_lookback_config=corr_lb,
+    )
+
     return {
         "ranked_active": ranked,
         "ranked_by_pool": ranked_by_pool,
@@ -1337,6 +1412,7 @@ def run_rotation_pipeline(
         ),
         "correlation_symbols": list(corr_df.index) if corr_df is not None else [],
         "warnings": corr_warnings,
+        "structured_warnings": structured_warnings,
         "config_snapshot": {
             "data_need": data_need,
             "load_range": [start_d, end_d],

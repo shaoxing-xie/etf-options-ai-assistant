@@ -328,3 +328,16 @@ def test_data_collection_tools_cli_smoke(
     assert isinstance(out, dict)
     for k in keys:
         assert k in out
+
+
+def test_index_realtime_supports_kc50_and_chinext50_codes() -> None:
+    from plugins.data_collection.index import fetch_realtime as mod
+
+    # Only verify whitelist/mapping acceptance here; force both providers off to avoid network.
+    with patch.object(mod, "AKSHARE_AVAILABLE", False), patch.object(mod, "MOOTDX_AVAILABLE", False):
+        out = mod.fetch_index_realtime(index_code="000688,399673", mode="test")
+
+    assert out["success"] is False
+    assert "需要 mootdx 或 akshare" in str(out.get("message") or "")
+    # If codes were still not whitelisted, message would be "不支持的指数代码".
+    assert "不支持的指数代码" not in str(out.get("message") or "")

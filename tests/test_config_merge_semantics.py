@@ -4,7 +4,19 @@ from pathlib import Path
 
 import yaml
 
-from src.config_loader import merge_config, load_layered_user_config
+from src.config_loader import (
+    _backfill_feishu_webhook_from_env,
+    get_default_config,
+    merge_config,
+    load_layered_user_config,
+)
+
+
+def test_backfill_feishu_webhook_from_env(monkeypatch):
+    cfg = merge_config(get_default_config(), {"notification": {"feishu_webhook": None}})
+    monkeypatch.setenv("FEISHU_WEBHOOK_URL", "https://open.feishu.cn/open-apis/bot/v2/hook/testdummy")
+    _backfill_feishu_webhook_from_env(cfg)
+    assert str(cfg["notification"]["feishu_webhook"]).startswith("https://")
 
 
 def test_merge_config_list_replaces_not_appends():

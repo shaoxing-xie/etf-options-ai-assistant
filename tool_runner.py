@@ -296,6 +296,10 @@ TOOL_MAP: Dict[str, ToolSpec] = {
         module_path="strategy_engine.tool_strategy_engine",
         function_name="tool_strategy_engine",
     ),
+    "tool_nlu_query": ToolSpec(
+        module_path="plugins.nlu.intent_router",
+        function_name="tool_nlu_query",
+    ),
     "tool_detect_market_regime": ToolSpec(
         module_path="analysis.market_regime",
         function_name="tool_detect_market_regime",

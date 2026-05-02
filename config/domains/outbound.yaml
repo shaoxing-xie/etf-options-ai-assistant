@@ -7,17 +7,25 @@ notification:
     app_id: "${FEISHU_APP_ID}"
     app_secret: "${FEISHU_APP_SECRET}"
     encrypt_key: ""
-    feishu_root_folder_token: "${FEISHU_ROOT_FOLDER_TOKEN}"
-    subfolders:
-      option_greeks: "${FEISHU_SUBFOLDER_OPTION_GREEKS}"
-      index_minute: "${FEISHU_SUBFOLDER_INDEX_MINUTE}"
-      etf_minute: "${FEISHU_SUBFOLDER_ETF_MINUTE}"
   daily_report_strict_tool_payload: false
   daily_report_allow_degraded_in_prod: false
   daily_report_self_heal_from_after_close: true
   daily_report_volatility_relaxed_with_key_levels: true
   dingtalk_max_chars_per_message: 5000
   dingtalk_max_chars_hard_ceiling: 20000
+  opening_rotation_validation:
+    open_change_strong_threshold: 0.5
+    open_change_weak_threshold: -1.0
+    volume_ratio_strong_threshold: 1.2
+    volume_ratio_weak_threshold: 0.7
+    observe_band_pct: 0.3
+    max_rotation_etf_in_report: 8
+    signal_position_multiplier:
+      STRONG: 1.0
+      CAUTIOUS: 0.5
+      OBSERVE: 0.0
+      WEAK: 0.0
+      NEUTRAL: 0.0
 
 trend_analysis_plugin:
   enabled: true

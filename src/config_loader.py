@@ -250,6 +250,32 @@ def merge_config(default: Dict, user: Dict) -> Dict:
     return result
 
 
+def _backfill_feishu_webhook_from_env(config: Dict[str, Any]) -> None:
+    """
+    若合并后 notification.feishu_webhook 仍无效，但进程环境已有 FEISHU_WEBHOOK_URL，则回填。
+
+    解决：YAML 占位 `${FEISHU_WEBHOOK_URL}` 在部分 OpenClaw 子进程未预载 .env 时解析为空，
+    而运维任务（tool_send_feishu_message / data_cache notify 等）依赖统一口径。
+    """
+    try:
+        notif = config.get("notification")
+        if not isinstance(notif, dict):
+            return
+        cur = notif.get("feishu_webhook")
+        if isinstance(cur, str) and cur.strip().lower().startswith("http"):
+            return
+        try:
+            from src.feishu_webhook_envfile import effective_feishu_webhook_url
+
+            url = effective_feishu_webhook_url().strip()
+        except Exception:
+            url = (os.getenv("FEISHU_WEBHOOK_URL") or "").strip()
+        if url.lower().startswith("http"):
+            notif["feishu_webhook"] = url
+    except Exception:
+        return
+
+
 def _warn_missing_credentials(config: Dict[str, Any]) -> None:
     """Warn when enabled config sections have empty credential fields."""
 
@@ -466,6 +492,7 @@ def load_system_config(config_path: Optional[str] = None, use_cache: bool = True
             user_config = load_layered_user_config(project_root)
 
         config = merge_config(default_config, user_config)
+        _backfill_feishu_webhook_from_env(config)
         _warn_missing_credentials(config)
         normalize_signal_generation_config(config)
 

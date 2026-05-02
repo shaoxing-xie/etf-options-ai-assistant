@@ -36,7 +36,7 @@ def test_notify_true_calls_feishu_once(mock_run, mock_feishu) -> None:
     assert mock_feishu.call_count == 1
     call_kw = mock_feishu.call_args[1]
     assert call_kw.get("notification_type") == "message"
-    assert "data_cache" in (call_kw.get("title") or "")
+    assert "早盘数据采集完成" in (call_kw.get("title") or "")
     assert out["success"] is True
     assert out["notify_result"]["success"] is True
 

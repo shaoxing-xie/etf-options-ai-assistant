@@ -1,0 +1,22 @@
+{
+  "tested_at": "2026-04-28T19:17:45",
+  "interface": "ak.stock_zh_index_hist_csindex",
+  "results": [
+    {
+      "symbol": "000928",
+      "start_date": "20100101",
+      "end_date": "20240604",
+      "ok": false,
+      "rows": 0,
+      "error": "ConnectionError: ('Connection aborted.', ConnectionResetError(104, 'Connection reset by peer'))"
+    },
+    {
+      "symbol": "000922",
+      "start_date": "20100101",
+      "end_date": "20260428",
+      "ok": false,
+      "rows": 0,
+      "error": "ConnectionError: ('Connection aborted.', ConnectionResetError(104, 'Connection reset by peer'))"
+    }
+  ]
+}

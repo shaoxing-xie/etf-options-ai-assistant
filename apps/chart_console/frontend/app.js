@@ -31,6 +31,10 @@ function setView(view) {
   if (tabResearch) tabResearch.setAttribute("aria-selected", String(view === "research"));
   if (tabOps) tabOps.setAttribute("aria-selected", String(view === "ops"));
   if (tabGm) tabGm.setAttribute("aria-selected", String(view === "global-market"));
+  if (view === "chart" && charts && !chartBootLoaded) {
+    chartBootLoaded = true;
+    loadData().catch(() => {});
+  }
   if (view === "global-market") {
     loadGlobalMarketSnapshot(false).catch(() => {});
   }
@@ -77,6 +81,7 @@ try {
   // 图表引擎失败时，仍允许使用配置中心
   charts = null;
 }
+let chartBootLoaded = false;
 const state = {
   draw_objects: [],
   layer: { volume: true, macd: true, rsi: true, ma: true },
@@ -543,18 +548,74 @@ async function saveRotationConfig() {
 async function loadGlobalMarketSnapshot(refresh) {
   const root = qs("view-global-market");
   const st = qs("globalMarketStatus");
+  const btn = qs("btnGlobalMarketRefresh");
   if (!root) return;
-  if (st) st.textContent = "加载中…";
-  const q = refresh ? "refresh=1" : "refresh=0";
+  if (st) st.textContent = refresh ? "刷新中…" : "加载中…";
+  if (btn) btn.disabled = true;
+  const cacheBuster = `t=${Date.now()}`;
+  const q = refresh ? `refresh=1&${cacheBuster}` : `refresh=0&${cacheBuster}`;
+
+  const fetchJsonWithTimeout = async (url, timeoutMs) => {
+    const ctl = new AbortController();
+    const timer = setTimeout(() => ctl.abort(), timeoutMs);
+    try {
+      const resp = await fetch(url, { cache: "no-store", signal: ctl.signal });
+      return await resp.json();
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+
+  const extractFetchedAt = (obj) => String(((obj || {}).data || {}).fetched_at || "");
+
   try {
-    const r = await jget(`/api/semantic/global_market_snapshot?${q}`);
-    if (!r.success) {
-      if (st) st.textContent = r.message || "加载失败";
+    if (!refresh) {
+      const r = await fetchJsonWithTimeout(`/api/semantic/global_market_snapshot?${q}`, 45000);
+      if (!r.success) {
+        if (st) st.textContent = r.message || "加载失败";
+        return;
+      }
+      renderGlobalMarketPage(root, r.data || {});
       return;
     }
-    renderGlobalMarketPage(root, r.data || {});
+
+    const before = await fetchJsonWithTimeout(`/api/semantic/global_market_snapshot?refresh=0&t=${Date.now()}`, 20000);
+    const beforeTs = extractFetchedAt(before);
+
+    const refreshPromise = fetchJsonWithTimeout(`/api/semantic/global_market_snapshot?${q}`, 240000);
+    const startedAt = Date.now();
+    const pollMs = 3000;
+    const maxWaitMs = 260000;
+
+    while (Date.now() - startedAt < maxWaitMs) {
+      const finished = await Promise.race([
+        refreshPromise.then((x) => ({ done: true, payload: x })),
+        new Promise((resolve) => setTimeout(() => resolve({ done: false }), pollMs)),
+      ]);
+
+      if (finished && finished.done) {
+        const r = finished.payload || {};
+        if (!r.success) {
+          if (st) st.textContent = r.message || "刷新失败";
+          return;
+        }
+        renderGlobalMarketPage(root, r.data || {});
+        if (st) st.textContent = "已刷新";
+        return;
+      }
+
+      const probe = await fetchJsonWithTimeout(`/api/semantic/global_market_snapshot?refresh=0&t=${Date.now()}`, 20000);
+      if (probe && probe.success && extractFetchedAt(probe) && extractFetchedAt(probe) !== beforeTs) {
+        renderGlobalMarketPage(root, probe.data || {});
+        if (st) st.textContent = "已刷新";
+        return;
+      }
+    }
+    if (st) st.textContent = "刷新超时，请稍后重试";
   } catch (e) {
-    if (st) st.textContent = String(e?.message || e);
+    if (st) st.textContent = e?.name === "AbortError" ? "刷新超时，请稍后重试" : String(e?.message || e);
+  } finally {
+    if (btn) btn.disabled = false;
   }
 }
 
@@ -591,7 +652,7 @@ export { setView };
 Promise.all([loadWorkspaces(), loadChartSentimentBar()])
   .then(async () => {
     try {
-      if (charts) await loadData();
+      // 图表数据改为按需加载（进入图形页时触发），避免全局市场页启动时触发 510300 数据链路。
     } catch (e) {
       showBootError(`图表数据加载失败（可切到配置中心继续使用）: ${e?.message || e}`);
       setView("config");

@@ -7,6 +7,7 @@ import pandas as pd
 from unittest.mock import patch
 
 from analysis.etf_rotation_core import (
+    build_structured_rotation_warnings,
     build_log_returns_aligned,
     composite_raw_score,
     composite_raw_score_58,
@@ -22,6 +23,20 @@ from analysis.etf_rotation_core import (
     trim_dataframe,
 )
 from src.rotation_config_loader import DEFAULT_ROTATION_CONFIG, load_rotation_config
+
+
+def test_build_structured_rotation_warnings() -> None:
+    sw = build_structured_rotation_warnings(
+        errors=["512100: insufficient rows (16 < 70)"],
+        corr_warnings=["correlation_lookback_auto_reduced:252->120"],
+        min_history_days=70,
+        correlation_lookback_config=252,
+    )
+    assert any(x.get("code") == "insufficient_history" for x in sw)
+    assert any(x.get("code") == "correlation_window_reduced" for x in sw)
+    ins = next(x for x in sw if x["code"] == "insufficient_history")
+    assert ins["actual_window_days"] == 16
+    assert ins["policy"] == "excluded_from_primary_scoring"
 
 
 def test_trim_dataframe() -> None:

@@ -2,6 +2,10 @@
 version: 1
 
 pool:
+  # 主榜 pipeline 计分池；与 openclaw-data-china-stock `sector_etf_mapping` 的 RPS 行业宇宙独立配置，勿混用口径。
+  primary_scoring_symbol_groups:
+    - industry_etf
+    - concept_etf
   symbol_groups:
     - industry_etf
     - concept_etf

@@ -85,7 +85,9 @@ def record_prediction(
     prediction: Dict[str, Any],  # 包含upper, lower, timestamp, method, confidence等
     source: str = 'on_demand',  # 'on_demand'（用户即时预测）或 'scheduled'（定时任务预测）
     actual_range: Optional[Dict[str, Any]] = None,  # 收盘后填入实际价格范围
-    config: Optional[Dict[str, Any]] = None
+    config: Optional[Dict[str, Any]] = None,
+    target_date: Optional[str] = None,
+    metadata: Optional[Dict[str, Any]] = None,
 ) -> bool:
     """
     记录预测结果，用于后续准确性评估
@@ -165,6 +167,8 @@ def record_prediction(
             'prediction_type': prediction_type,
             'symbol': symbol,
             'source': source,  # 'on_demand' 或 'scheduled'
+            'target_date': target_date,
+            'metadata': metadata or {},
             # 含 upper/lower/current、method、timestamp、IV 调试字段、normalization 等
             'prediction': pred_payload,
             'actual_range': actual_range,  # 收盘后填入
@@ -214,7 +218,13 @@ def record_prediction(
 def _save_to_database(record: dict):
     """保存到SQLite数据库"""
     try:
-        conn = sqlite3.connect(PREDICTION_DB_PATH)
+        conn = sqlite3.connect(PREDICTION_DB_PATH, timeout=2.0)
+        try:
+            conn.execute("PRAGMA journal_mode=WAL;")
+            conn.execute("PRAGMA synchronous=NORMAL;")
+            conn.execute("PRAGMA busy_timeout=2000;")
+        except Exception:
+            pass
         cursor = conn.cursor()
         
         # 创建表（如果不存在）
@@ -348,7 +358,13 @@ def update_actual_range(
 def _update_database_actual_range(date: str, symbol: str, source: str, actual_range: dict):
     """更新数据库中的实际范围"""
     try:
-        conn = sqlite3.connect(PREDICTION_DB_PATH)
+        conn = sqlite3.connect(PREDICTION_DB_PATH, timeout=2.0)
+        try:
+            conn.execute("PRAGMA journal_mode=WAL;")
+            conn.execute("PRAGMA synchronous=NORMAL;")
+            conn.execute("PRAGMA busy_timeout=2000;")
+        except Exception:
+            pass
         cursor = conn.cursor()
         
         cursor.execute('''

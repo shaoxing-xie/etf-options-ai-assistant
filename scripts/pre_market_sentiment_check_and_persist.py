@@ -8,6 +8,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -41,9 +42,19 @@ def _safe_float(v: Any) -> float | None:
         return None
 
 
+def _try_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
+    try:
+        out = _run_tool(name, args)
+        if isinstance(out, dict):
+            return out
+        return {"success": False, "error": "non_dict_result"}
+    except Exception as exc:
+        return {"success": False, "error": f"{name}:{type(exc).__name__}"}
+
+
 def main() -> int:
-    # trade_date 以 UTC 日期落盘（与既有语义快照口径一致）
-    trade_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    # Align with A-share trading calendar semantics used by cron/orchestration.
+    trade_date = datetime.now(ZoneInfo("Asia/Shanghai")).strftime("%Y-%m-%d")
     run_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
     depends_on: list[str] = []
 
@@ -64,12 +75,10 @@ def main() -> int:
     degraded = False
     lineage: list[str] = []
     try:
-        ts = _run_tool("tool_check_trading_status", {})  # type: ignore[arg-type]
-        lineage.append("tool_check_trading_status")
-        limit_up = _run_tool("tool_fetch_limit_up_stocks", {})
-        fund_flow = _run_tool("tool_fetch_a_share_fund_flow", {"query_kind": "market_history", "max_days": 5})
-        north = _run_tool("tool_fetch_northbound_flow", {"lookback_days": 5})
-        sector = _run_tool("tool_fetch_sector_data", {"sector_type": "industry", "period": "today"})
+        limit_up = _try_tool("tool_fetch_limit_up_stocks", {})
+        fund_flow = _try_tool("tool_fetch_a_share_fund_flow", {"query_kind": "market_history", "max_days": 5})
+        north = _try_tool("tool_fetch_northbound_flow", {"lookback_days": 5})
+        sector = _try_tool("tool_fetch_sector_data", {"sector_type": "industry", "period": "today"})
         for obj in (limit_up, fund_flow, north, sector):
             if not bool(obj.get("success")):
                 degraded = True

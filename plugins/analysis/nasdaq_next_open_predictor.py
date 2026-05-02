@@ -19,6 +19,8 @@ from pathlib import Path
 import re
 from typing import Any, Dict, List, Optional, Tuple
 
+_LLM_FUSION_CACHE: Dict[str, Dict[str, Any]] = {}
+
 
 def _safe_float(v: Any) -> Optional[float]:
     try:
@@ -150,6 +152,30 @@ class NextOpenPredictorConfig:
     weekend_penalty: float = 0.7
     alpha: float = 1.0
     weights: Tuple[float, float] = (0.5, 0.3)  # Layer1, Layer2; Layer3 is gate
+
+
+def _monitor_point_bucket(monitor_point: str) -> str:
+    mp = str(monitor_point or "").strip().upper()
+    if mp in {"M1", "M2", "M3"}:
+        return "am"
+    if mp in {"M4", "M5", "M6"}:
+        return "pm"
+    return "close"
+
+
+def _is_data_quality_normal(report_data: Dict[str, Any]) -> bool:
+    snap = report_data.get("tail_session_snapshot") if isinstance(report_data.get("tail_session_snapshot"), dict) else {}
+    iopv_source = str(snap.get("iopv_source") or "").strip().lower()
+    if iopv_source in {"manual", "proxy_deviation", "unknown"}:
+        return False
+    data_quality = str(snap.get("data_quality") or "").strip().lower()
+    if data_quality not in {"fresh", "cached"}:
+        return False
+    valuation_blend = snap.get("valuation_blend") if isinstance(snap.get("valuation_blend"), dict) else {}
+    agreement_gap_pct = _safe_float(valuation_blend.get("agreement_gap_pct"))
+    if agreement_gap_pct is None or agreement_gap_pct >= 5.0:
+        return False
+    return True
 
 
 def _fit_alpha_platt(scores: List[float], labels: List[float]) -> Tuple[Optional[float], Optional[float]]:
@@ -362,66 +388,68 @@ def _fetch_tavily_event_signal(trade_date: str) -> Dict[str, Any]:
 
 def _fetch_yf_event_signal(trade_date: str) -> Dict[str, Any]:
     """
-    事件信号源2：yfinance（mega-cap 财报日期）。
-    仅判断是否处于隔夜窗口附近，不做方向判断。
+    事件信号源2：插件事件哨兵（mega-cap 财报/宏观事件）。
+    保留原返回结构，作为 Layer3 的第二事件源。
     """
     try:
-        import pandas as pd  # type: ignore
-        import yfinance as yf  # type: ignore
+        from plugins.sentinel.event_sentinel import tool_event_sentinel
     except Exception as e:
-        return {"success": False, "event_risk": 0.0, "note": f"yf_import_error:{type(e).__name__}", "events": []}
+        return {"success": False, "event_risk": 0.0, "note": f"event_sentinel_import_error:{type(e).__name__}", "events": []}
 
     td = _parse_trade_date(trade_date)
     if td is None:
         td = datetime.utcnow()
-    # 以自然日近似隔夜窗口（trade_date 当天及次日）
-    d0 = td.date()
-    d1 = (td.date()).fromordinal(td.date().toordinal() + 1)
+    query = (
+        "Nasdaq 100 overnight events around "
+        f"{td.strftime('%Y-%m-%d')}: "
+        "US mega-cap earnings (AAPL MSFT NVDA AMZN GOOGL META TSLA), "
+        "and macro releases (CPI FOMC NFP PCE Fed speech)."
+    )
+    try:
+        res = tool_event_sentinel(query=query, topic="news", n=8, days=3, deep=True)
+    except Exception as e:
+        return {"success": False, "event_risk": 0.0, "note": f"event_sentinel_query_error:{type(e).__name__}", "events": []}
+    if not isinstance(res, dict) or not bool(res.get("success")):
+        return {"success": False, "event_risk": 0.0, "note": str((res or {}).get("message") or "event_sentinel_failed"), "events": []}
 
-    symbols = ("AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "META", "TSLA")
-    events: List[str] = []
-    err_count = 0
-
-    for s in symbols:
-        try:
-            t = yf.Ticker(s)
-            dt = None
-            src = None
-            cal = getattr(t, "calendar", None)
-            if cal is not None and hasattr(cal, "index") and len(cal.index) > 0:
-                idx = [str(x) for x in cal.index]
-                if "Earnings Date" in idx:
-                    try:
-                        val = cal.loc["Earnings Date"][0]
-                        dt = pd.to_datetime(val, utc=True, errors="coerce")
-                        src = "calendar"
-                    except Exception:
-                        dt = None
-            if dt is None:
-                ed = getattr(t, "earnings_dates", None)
-                if ed is not None and hasattr(ed, "index") and len(ed.index) > 0:
-                    try:
-                        dt = pd.to_datetime(ed.index[0], utc=True, errors="coerce")
-                        src = "earnings_dates"
-                    except Exception:
-                        dt = None
-            if dt is None or str(dt) == "NaT":
-                continue
-            day = dt.date()
-            if day in (d0, d1):
-                events.append(f"{s}:{str(day)}:{src}")
-        except Exception:
-            err_count += 1
+    data = res.get("data") if isinstance(res.get("data"), dict) else {}
+    chunks: List[str] = []
+    ans = str(data.get("answer") or "").strip()
+    if ans:
+        chunks.append(ans)
+    for src in (data.get("sources") or []):
+        if not isinstance(src, dict):
             continue
+        chunks.append(str(src.get("title") or ""))
+        chunks.append(str(src.get("url") or ""))
+    text = " ".join(chunks).lower()
 
-    if not events and err_count >= len(symbols):
-        return {"success": False, "event_risk": 0.0, "note": "yf_all_failed_or_rate_limited", "events": []}
-
+    events: List[str] = []
     risk = 0.0
+    if re.search(r"\bfomc\b|federal reserve|fed meeting", text):
+        events.append("FOMC/FED")
+        risk = max(risk, 0.55)
+    if re.search(r"\bcpi\b|inflation", text):
+        events.append("CPI")
+        risk = max(risk, 0.50)
+    if re.search(r"\bnfp\b|nonfarm payroll", text):
+        events.append("NFP")
+        risk = max(risk, 0.50)
+    if re.search(r"\bpce\b", text):
+        events.append("PCE")
+        risk = max(risk, 0.45)
+
+    ticker_hits = 0
+    for tk in ("aapl", "msft", "nvda", "amzn", "googl", "meta", "tsla"):
+        if re.search(rf"\b{tk}\b", text):
+            ticker_hits += 1
+    if "earnings" in text and ticker_hits > 0:
+        events.append(f"mega_cap_earnings:{ticker_hits}")
+        risk = max(risk, min(0.35 + 0.03 * ticker_hits, 0.55))
+
+    note = "event_sentinel_ok_no_high_impact"
     if events:
-        # 单个 mega-cap 财报就足以提高隔夜不确定性
-        risk = min(0.35 + 0.04 * len(events), 0.60)
-    note = "yf_ok_no_near_earnings" if not events else f"yf_near_earnings:{len(events)}"
+        note = f"event_sentinel_events:{','.join(events[:4])}"
     return {"success": True, "event_risk": _clip(risk, 0.0, 1.0), "note": note, "events": events[:10]}
 
 
@@ -546,11 +574,16 @@ def predict_next_open_direction(
     labels = _calc_close_to_next_open_labels(klines)
 
     sims: List[Tuple[float, float, str, int, float]] = []
+    hist_vec_dim_set: List[int] = []
+    top_candidates_before_threshold: List[Dict[str, Any]] = []
+    eligible_samples_count = 0
+    similarity_degraded_reason_detail: Optional[str] = None
     # (sim, weight, trade_date, label, gap_days)
     for e in hist_events:
         td = str(e.get("trade_date") or e.get("date") or "").strip()
         if not td or td not in labels:
             continue
+        eligible_samples_count += 1
         a0 = e.get("analysis") if isinstance(e.get("analysis"), dict) else {}
         fr0 = a0.get("futures_reference") if isinstance(a0.get("futures_reference"), dict) else {}
         m0 = _safe_float(fr0.get("change_pct"))
@@ -558,6 +591,7 @@ def predict_next_open_direction(
             m0 = _safe_float(a0.get("index_day_ret_pct"))
         i0 = _safe_float(a0.get("index_day_ret_pct"))
         vec0 = [float(m0 or 0.0), float(i0 or 0.0)]
+        hist_vec_dim_set.append(len(vec0))
         sim = _cosine_sim(today_vec, vec0)
         if sim is None:
             continue
@@ -588,6 +622,7 @@ def predict_next_open_direction(
         if gap_days > 1.5:
             w *= float(cfg.weekend_penalty)
         sims.append((float(sim), w, td, int(labels[td]), gap_days))
+    sims_before_sort = list(sims)
 
     sims.sort(key=lambda x: x[0], reverse=True)
     top = sims[: max(1, int(cfg.nn_topk))]
@@ -596,11 +631,44 @@ def predict_next_open_direction(
     if w_sum > 0:
         p_up_nn = sum(w * float(lbl) for _, w, _, lbl, _ in top) / w_sum
     corr_score = (2.0 * float(p_up_nn) - 1.0) if p_up_nn is not None else 0.0
+    for sim, w, td, lbl, gd in sorted(sims_before_sort, key=lambda x: x[0], reverse=True)[:5]:
+        top_candidates_before_threshold.append(
+            {
+                "trade_date": td,
+                "sim": round(float(sim), 4),
+                "label": int(lbl),
+                "weight": round(float(w), 3),
+                "gap_days": round(float(gd), 1),
+            }
+        )
+    if not hist_events:
+        similarity_degraded_reason_detail = "EMPTY_MONITOR_EVENTS"
+    elif not labels:
+        similarity_degraded_reason_detail = "EMPTY_LABELS"
+    elif eligible_samples_count == 0:
+        similarity_degraded_reason_detail = "NO_LABEL_OVERLAP"
+    elif len(set(hist_vec_dim_set)) > 1 or (hist_vec_dim_set and any(x != len(today_vec) for x in hist_vec_dim_set)):
+        similarity_degraded_reason_detail = "DIMENSION_MISMATCH"
+    elif not sims:
+        similarity_degraded_reason_detail = "NO_VALID_SIMILARITY_SAMPLES"
+    elif p_up_nn is None:
+        similarity_degraded_reason_detail = "WEIGHTED_SUM_ZERO"
+
+    if similarity_degraded_reason_detail:
+        quality_status = "degraded"
+        degraded_reason = degraded_reason or "PREDICTOR_LAYER2_UNAVAILABLE"
     similarity_debug = {
         "topk_requested": int(cfg.nn_topk),
         "topk_used": len(top),
+        "hist_events_count": len(hist_events),
+        "labels_count": len(labels),
+        "eligible_samples_count": eligible_samples_count,
+        "today_vec_dim": len(today_vec),
+        "hist_vec_dim_set": sorted(set(hist_vec_dim_set)),
         "weighted_sum": round(float(w_sum), 6),
         "p_up_nn": round(float(p_up_nn), 6) if p_up_nn is not None else None,
+        "degraded_reason_detail": similarity_degraded_reason_detail,
+        "top_candidates_before_threshold": top_candidates_before_threshold,
         "top_matches": [
             {"trade_date": td, "sim": round(float(sim), 4), "label": int(lbl), "weight": round(float(w), 3), "gap_days": round(float(gd), 1)}
             for sim, w, td, lbl, gd in top[:5]
@@ -659,14 +727,33 @@ def predict_next_open_direction(
     p_up_raw = _sigmoid(alpha_used * s)
 
     # LLM 融合（可选，失败不阻断）
-    llm_fusion = _llm_fuse_probability(
-        momentum_score=float(momentum_score),
-        corr_score=float(corr_score),
-        event_risk=float(event_risk),
-        p_up_rule_raw=float(p_up_raw),
-        tav_sig=tav_sig,
-        yf_sig=yf_sig,
-    )
+    llm_called = False
+    llm_call_reason: List[str] = []
+    if 0.4 <= float(p_up_raw) <= 0.6:
+        llm_call_reason.append("rule_uncertain")
+    if float(event_risk) > 0.4:
+        llm_call_reason.append("event_risk_high")
+    if float(momentum_score) * float(corr_score) < 0:
+        llm_call_reason.append("layer_conflict")
+    llm_cache_key = f"{trade_date}:{_monitor_point_bucket(monitor_point)}"
+    llm_fusion: Dict[str, Any] = {"success": False, "note": "llm_not_triggered"}
+    if llm_call_reason:
+        llm_called = True
+        cached = _LLM_FUSION_CACHE.get(llm_cache_key)
+        if isinstance(cached, dict):
+            llm_fusion = dict(cached)
+            llm_fusion["note"] = "llm_cached"
+        else:
+            llm_fusion = _llm_fuse_probability(
+                momentum_score=float(momentum_score),
+                corr_score=float(corr_score),
+                event_risk=float(event_risk),
+                p_up_rule_raw=float(p_up_raw),
+                tav_sig=tav_sig,
+                yf_sig=yf_sig,
+            )
+            if isinstance(llm_fusion, dict) and llm_fusion.get("success"):
+                _LLM_FUSION_CACHE[llm_cache_key] = dict(llm_fusion)
     p_up_raw_source = "rule"
     if isinstance(llm_fusion, dict) and llm_fusion.get("success"):
         p_up_raw = float(llm_fusion.get("p_up_raw"))
@@ -692,6 +779,33 @@ def predict_next_open_direction(
     hit_rate = (hit / n) if n > 0 else None
     brier = (brier_sum / n) if n > 0 else None
     coverage = (n / float(len(recent_dates))) if recent_dates else None
+    analysis = report_data.get("analysis") if isinstance(report_data.get("analysis"), dict) else {}
+    range_prediction = analysis.get("range_prediction") if isinstance(analysis.get("range_prediction"), dict) else {}
+    current_width_pct = _safe_float(range_prediction.get("core_width_pct"))
+    current_vol_bucket = "unknown"
+    if current_width_pct is not None:
+        if current_width_pct < 2.0:
+            current_vol_bucket = "low"
+        elif current_width_pct <= 4.0:
+            current_vol_bucket = "medium"
+        else:
+            current_vol_bucket = "high"
+    bucket_total = 0
+    bucket_up = 0
+    for td0, e in events_by_date:
+        if td0 not in labels:
+            continue
+        a0 = e.get("analysis") if isinstance(e.get("analysis"), dict) else {}
+        rp0 = a0.get("range_prediction") if isinstance(a0.get("range_prediction"), dict) else {}
+        w0 = _safe_float(rp0.get("core_width_pct"))
+        if w0 is None:
+            continue
+        b0 = "low" if w0 < 2.0 else ("medium" if w0 <= 4.0 else "high")
+        if b0 != current_vol_bucket:
+            continue
+        bucket_total += 1
+        bucket_up += int(labels.get(td0, 0))
+    bucket_up_prob = (bucket_up / float(bucket_total)) if bucket_total > 0 else None
     backtest_stats = {
         "hit_rate_60d": round(hit_rate, 4) if hit_rate is not None and n >= cfg.min_backtest_n else None,
         "brier_60d": round(brier, 4) if brier is not None and n >= cfg.min_backtest_n else None,
@@ -702,12 +816,24 @@ def predict_next_open_direction(
         "calibration_curve": "platt" if alpha_fit is not None else "none",
         "alpha": round(alpha_used, 4),
         "brier_fit": round(float(brier_fit), 4) if brier_fit is not None else None,
+        "volatility_context": {
+            "current_core_width_pct": round(float(current_width_pct), 4) if current_width_pct is not None else None,
+            "current_bucket": current_vol_bucket,
+            "bucket_sample_n": bucket_total,
+            "bucket_up_probability": round(float(bucket_up_prob), 4) if bucket_up_prob is not None else None,
+        },
     }
 
-    confidence_level = "high"
-    if quality_status == "degraded" or (n < cfg.min_backtest_n):
-        confidence_level = "low" if n < cfg.min_backtest_n else "medium"
-    elif event_risk >= 0.45:
+    data_quality_normal = _is_data_quality_normal(report_data)
+    confidence_level = "low"
+    if data_quality_normal and n >= cfg.min_backtest_n:
+        if float(event_risk) < 0.3:
+            confidence_level = "high"
+        elif float(event_risk) <= 0.6:
+            confidence_level = "medium"
+        else:
+            confidence_level = "low"
+    if str(monitor_point).upper() in {"M1", "M2", "M3", "M4", "M5", "M6"} and confidence_level == "high":
         confidence_level = "medium"
 
     feature_row = {
@@ -737,6 +863,8 @@ def predict_next_open_direction(
         "calibration": {"alpha_used": alpha_used, "method": "platt" if alpha_fit is not None else "none"},
         "llm_fusion": {
             "enabled": True,
+            "called": llm_called,
+            "call_reason": llm_call_reason,
             "success": bool((llm_fusion or {}).get("success")),
             "source": p_up_raw_source,
             "p_up_raw": round(float(p_up_raw), 6),
@@ -774,6 +902,8 @@ def predict_next_open_direction(
         ],
         "llm_fusion": {
             "source": p_up_raw_source,
+            "called": llm_called,
+            "call_reason": llm_call_reason,
             "success": bool((llm_fusion or {}).get("success")),
             "p_up_raw": round(float(p_up_raw), 6),
             "p_up_pre_gate": round(float(p_up_pre_gate), 6),
@@ -783,6 +913,11 @@ def predict_next_open_direction(
         },
         "backtest_stats": backtest_stats,
         "probability_debug": {
+            "rule_based_p_up": round(float(_sigmoid(alpha_used * s)), 6),
+            "llm_adjusted_p_up": round(float(p_up_pre_gate), 6),
+            "llm_shift": round(float(p_up_pre_gate) - float(_sigmoid(alpha_used * s)), 6),
+            "llm_confidence": (llm_fusion or {}).get("confidence"),
+            "llm_called": llm_called,
             "p_up_raw_pre_gate": round(float(p_up_pre_gate), 6),
             "event_risk": round(float(event_risk), 6),
             "p_up_final": round(float(p_up), 6),

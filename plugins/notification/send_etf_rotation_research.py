@@ -12,6 +12,7 @@ from .send_etf_rotation_research_last_report import tool_send_etf_rotation_resea
 def tool_send_etf_rotation_research_report(
     *,
     etf_pool: str = "",
+    trade_date: str = "",
     lookback_days: int = 120,
     top_k: int = 3,
     mode: str = "prod",
@@ -35,6 +36,7 @@ def tool_send_etf_rotation_research_report(
         scope = "run_" + datetime.now().strftime("%Y%m%dT%H%M%S")
     rotation_out = tool_etf_rotation_research(
         etf_pool=etf_pool,
+        trade_date=trade_date,
         lookback_days=lookback_days,
         top_k=top_k,
         mode=mode,
@@ -58,6 +60,7 @@ def tool_send_etf_rotation_research_report(
         if "pipeline_timeout" in merged and retry_budget > 0:
             rotation_out = tool_etf_rotation_research(
                 etf_pool=etf_pool,
+                trade_date=trade_date,
                 lookback_days=min(int(lookback_days), 90),
                 top_k=top_k,
                 mode=mode,
@@ -88,12 +91,23 @@ def tool_send_etf_rotation_research_report(
     data = rotation_out.get("data") or {}
     report_data = data.get("report_data")
     if not isinstance(report_data, dict):
+        # Some degraded-success paths return semantic artifacts but no report_data.
+        # In that case, send last cached report to keep cron delivery healthy.
+        fallback_send = tool_send_etf_rotation_research_last_report(mode=mode, max_age_days=3, idempotency_scope=scope)
+        if isinstance(fallback_send, dict) and fallback_send.get("success"):
+            return {
+                "success": True,
+                "run_quality": "ok_degraded",
+                "failure_code": "missing_report_data_sent_cached_report",
+                "message": "missing report_data, cached report sent",
+                "data": {"rotation": rotation_out, "fallback_send": fallback_send},
+            }
         return {
             "success": False,
             "run_quality": "error",
             "failure_code": "missing_report_data",
             "message": "missing report_data in rotation output",
-            "data": {"rotation": rotation_out},
+            "data": {"rotation": rotation_out, "fallback_send": fallback_send},
         }
 
     # 幂等/锁统一由下游 send_analysis_report 负责，避免双层锁冲突导致“假成功未发送”

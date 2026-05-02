@@ -66,10 +66,10 @@ def test_tail_session_report_sections() -> None:
             "temperature_position_ceiling": 0.5,
         },
         "monitor_context": {
-            "monitor_point": "M3",
-            "monitor_label": "M3 早盘收官",
-            "target_window": "10:30-11:30",
-            "template_focus": ["收官前15分钟结构", "午盘开盘区间"],
+            "monitor_point": "M7",
+            "monitor_label": "M7 收盘定调",
+            "target_window": "14:30-次日开盘",
+            "template_focus": ["次日开盘区间", "隔夜持仓建议"],
         },
         "next_open_direction": {
             "direction": "up",
@@ -80,8 +80,8 @@ def test_tail_session_report_sections() -> None:
             "limitation_note": "14:30 information is incomplete for next-open forecasting; confidence is capped conservatively.",
             "probability_debug": {"p_up_raw_pre_gate": 0.71, "event_risk": 0.55, "p_up_final": 0.62},
             "event_sources": {
-                "tavily": {"success": True, "event_risk": 0.55, "note": "tavily_events:FOMC"},
-                "yfinance": {"success": False, "event_risk": 0.0, "note": "yf_all_failed_or_rate_limited"},
+                    "tavily": {"success": True, "event_risk": 0.55, "note": "tavily_events:FOMC", "events": ["FOMC", "MSFT"]},
+                    "yfinance": {"success": False, "event_risk": 0.0, "note": "yf_all_failed_or_rate_limited", "events": []},
             },
             "similarity_debug": {
                 "topk_requested": 20,
@@ -109,6 +109,12 @@ def test_tail_session_report_sections() -> None:
                 "required_samples": 20,
                 "current_samples": 10,
                 "estimated_ready_date": "2026-05-05",
+                "volatility_context": {
+                    "current_core_width_pct": 3.6,
+                    "current_bucket": "medium",
+                    "bucket_sample_n": 18,
+                    "bucket_up_probability": 0.54,
+                },
             },
         },
     }
@@ -125,11 +131,57 @@ def test_tail_session_report_sections() -> None:
     assert "status=degraded_no_data" in body
     assert "#### 相似日调试" in body
     assert "#### 事件门闸来源" in body
+    assert "触发事件：" in body
     assert "积累进度：10 / 20" in body
     assert "预计可用日期：2026-05-05" in body
-    assert "### 四、偏离代理与门禁" in body
-    assert "### 六、简版操作建议" in body
-    assert "### 七、用户决策声明" in body
+    assert "#### 波动预期" in body
+    assert "用户决策声明" in body
     assert "IOPV来源：realtime" in body
     assert "双源估值：置信度" in body
-    assert "历史分位：溢价" in body
+
+
+def test_tail_session_nikkei_m1_vs_m3_event_display_boundary() -> None:
+    base = {
+        "report_type": "tail_session",
+        "generated_at": "2026-04-14 09:20:00",
+        "tail_session_snapshot": {
+            "latest_price": 1.23,
+            "iopv": 1.2,
+            "premium_pct": 1.2,
+            "amount": 40000000,
+            "data_quality": "fresh",
+            "iopv_source": "realtime",
+        },
+        "analysis": {
+            "range_prediction": {"core_range": [1.21, 1.25], "safe_range": [1.20, 1.26], "core_width_pct": 3.0, "safe_width_pct": 4.0},
+            "signal_board": {"confidence": 0.7},
+            "deviation_proxy": {"expected_pct": 0.1, "actual_pct": 0.2, "deviation_pct": 0.1, "deviation_trend": "sideways"},
+            "risk_gate": {"action_state": "GO", "gates_triggered": []},
+            "action_paths": {},
+            "monitor_projection": {"projection_label": "次日开盘区间", "key_levels": []},
+            "user_decision_note": "note",
+            "risk_notices": [],
+        },
+        "next_open_direction": {
+            "direction": "up",
+            "p_up": 0.6,
+            "direction_prob": 0.6,
+            "confidence_level": "medium",
+            "confidence_reason": "事件风险中等",
+            "event_gate": {
+                "event_risk": 0.5,
+                "event_triggers": ["FOMC", "美国CPI"],
+                "impact_templates": [{"event": "FOMC", "impact_note": "隔夜美盘情绪→日经期货→次日开盘"}],
+            },
+            "probability_debug": {"p_up_raw_pre_gate": 0.62, "p_up_final": 0.6},
+        },
+    }
+    m1 = dict(base)
+    m1["monitor_context"] = {"monitor_point": "M1", "monitor_label": "M1", "target_window": "09:35-10:30", "template_mode": "full"}
+    _, body1 = _format_daily_report(report_data=m1, report_date=None)
+    assert "关键事件：FOMC" in body1
+
+    m3 = dict(base)
+    m3["monitor_context"] = {"monitor_point": "M3", "monitor_label": "M3", "target_window": "10:15-10:30", "template_mode": "quick"}
+    _, body3 = _format_daily_report(report_data=m3, report_date=None)
+    assert "关键事件：" not in body3

@@ -3,7 +3,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from plugins.data_collection.rotation_data_health import tool_rotation_data_health_check
+from plugins.analysis.rotation_data_health import tool_rotation_data_health_check
 
 
 def test_rotation_data_health_check_structure() -> None:
@@ -21,8 +21,8 @@ def test_rotation_data_health_check_structure() -> None:
 
     fake_module = SimpleNamespace(fetch_single_etf_historical=_fake_fetch_single_etf_historical)
     # read_cache_data and importlib are resolved inside tool function.
-    with patch("data_access.read_cache_data.read_cache_data", side_effect=_fake_read_cache_data), patch(
-        "plugins.data_collection.rotation_data_health.importlib.import_module",
+    with patch("plugins.analysis.rotation_data_health.read_cache_data", side_effect=_fake_read_cache_data), patch(
+        "plugins.analysis.rotation_data_health.importlib.import_module",
         return_value=fake_module,
     ):
         out = tool_rotation_data_health_check(symbols="512480,513120", lookback_days=30)

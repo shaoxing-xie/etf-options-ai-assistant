@@ -56,7 +56,8 @@
 #
 # 发送校验（--verify-send）逻辑（与 delivery.mode=none 一致）：
 # - 以会话 *.jsonl 中 tool_send_* 的 toolResult 为权威：至少一次 success（钉钉 errcode 0 等）
-# - delivered / deliveryStatus 仅作辅助（jobs.json delivery.mode=none 时几乎恒为 not-delivered，属预期，不能单独当失败）
+# - runs.jsonl 的 delivered / deliveryStatus：mode=none 时常为假阴性；--wait-finished 打印的 FINISHED 行会合并
+#   finished.summary 里 ACK JSON 的 delivery_success=true，避免“钉钉已收到仍显示未投递”
 # - 会话路径：~/.openclaw/agents/<job.agentId>/sessions/<sessionId>.jsonl
 
 # 不 set -e，跑完全部用例并汇总
@@ -478,26 +479,52 @@ PY
     else
       local finished_status delivered delivery_status finished_error
       local session_id session_key summary_present
-      finished_status="$("$PY_BIN" - <<'PY' "$found_json"
-import json,sys
-o=json.loads(sys.argv[1]); print(o.get("status"))
+      # OpenClaw runs.jsonl：delivery.mode=none 时框架几乎恒为 delivered=false（见 docs/openclaw/cron_delivery_delivered_field.md）。
+      # 复合发送工具的真实结果体现在 summary ACK 的 delivery_success 或会话 toolResult；此处合并显示避免假阴性。
+      local _fd_lines
+      mapfile -t _fd_lines < <("$PY_BIN" - <<'PY' "$found_json"
+import json, re, sys
+
+def ack_delivery_success(summary: str) -> bool:
+    if not (summary or "").strip():
+        return False
+    s = summary.strip()
+    try:
+        obj = json.loads(s)
+        if isinstance(obj, dict) and obj.get("delivery_success") is True:
+            return True
+    except Exception:
+        pass
+    return bool(re.search(r'"delivery_success"\s*:\s*true', s))
+
+o = json.loads(sys.argv[1])
+finished_status = o.get("status")
+finished_error = o.get("error")
+fw_delivered = o.get("delivered")
+fw_ds = (o.get("deliveryStatus") or "") or ""
+summary = o.get("summary") or ""
+ack_ok = ack_delivery_success(summary)
+
+if fw_delivered is True:
+    delivered_out = True
+    ds_out = fw_ds or "delivered"
+elif ack_ok:
+    delivered_out = True
+    ds_out = "tool-ack-ok"
+else:
+    delivered_out = bool(fw_delivered)
+    ds_out = fw_ds or "not-delivered"
+
+print(finished_status or "")
+print(delivered_out)
+print(ds_out or "")
+print("" if finished_error is None else str(finished_error))
 PY
-)"
-      delivered="$("$PY_BIN" - <<'PY' "$found_json"
-import json,sys
-o=json.loads(sys.argv[1]); print(o.get("delivered"))
-PY
-)"
-      delivery_status="$("$PY_BIN" - <<'PY' "$found_json"
-import json,sys
-o=json.loads(sys.argv[1]); print(o.get("deliveryStatus"))
-PY
-)"
-      finished_error="$("$PY_BIN" - <<'PY' "$found_json"
-import json,sys
-o=json.loads(sys.argv[1]); print(o.get("error"))
-PY
-)"
+)
+      finished_status="${_fd_lines[0]:-}"
+      delivered="${_fd_lines[1]:-}"
+      delivery_status="${_fd_lines[2]:-}"
+      finished_error="${_fd_lines[3]:-}"
       session_id="$("$PY_BIN" - <<'PY' "$found_json"
 import json,sys
 o=json.loads(sys.argv[1]); print(o.get("sessionId"))

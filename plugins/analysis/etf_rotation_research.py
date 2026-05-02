@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import os
+import sys
+import subprocess
 import uuid
 from pathlib import Path
 from datetime import datetime
@@ -38,6 +40,82 @@ DEFAULT_ETF_NAME_MAP: Dict[str, str] = {
     "159748": "医疗ETF",
     "560260": "家电ETF",
 }
+
+
+def _load_openclaw_env_vars() -> Dict[str, str]:
+    """
+    Load ~/.openclaw/.env (KEY=VALUE) for child plugin process.
+    Keep it additive and non-destructive: existing os.environ has precedence.
+    """
+    env_path = Path("/home/xie/.openclaw/.env")
+    if not env_path.is_file():
+        return {}
+    out: Dict[str, str] = {}
+    try:
+        for line in env_path.read_text(encoding="utf-8").splitlines():
+            s = line.strip()
+            if not s or s.startswith("#") or "=" not in s:
+                continue
+            k, v = s.split("=", 1)
+            k = k.strip()
+            if not k:
+                continue
+            out[k] = v.strip().strip('"').strip("'")
+    except Exception:
+        return {}
+    return out
+
+
+def _resolve_data_plugin_runner() -> tuple[Optional[Path], str]:
+    """
+    Resolve openclaw-data-china-stock tool_runner and its python interpreter.
+
+    Priority:
+    - OPENCLAW_DATA_CHINA_STOCK_ROOT / OPENCLAW_DATA_CHINA_STOCK_PYTHON (dev override)
+    - ~/.openclaw/extensions/openclaw-data-china-stock/.venv/bin/python + tool_runner.py (runtime)
+    """
+    root = (os.environ.get("OPENCLAW_DATA_CHINA_STOCK_ROOT") or "").strip()
+    if root:
+        runner = Path(root).expanduser().resolve() / "tool_runner.py"
+    else:
+        local_dev_runner = Path("/home/xie/openclaw-data-china-stock/tool_runner.py")
+        runtime_runner = Path.home() / ".openclaw" / "extensions" / "openclaw-data-china-stock" / "tool_runner.py"
+        runner = local_dev_runner if local_dev_runner.is_file() else runtime_runner
+    if not runner.is_file():
+        return None, sys.executable
+    py = (os.environ.get("OPENCLAW_DATA_CHINA_STOCK_PYTHON") or "").strip()
+    if py:
+        return runner, py
+    venv_py = runner.parent / ".venv" / "bin" / "python"
+    return runner, str(venv_py if venv_py.is_file() else sys.executable)
+
+
+def _call_data_plugin_tool(tool_name: str, args: Dict[str, Any], *, timeout_s: int = 120) -> Dict[str, Any]:
+    runner, py = _resolve_data_plugin_runner()
+    if runner is None:
+        return {"success": False, "message": "data-plugin-runner-missing"}
+    child_env = dict(os.environ)
+    # Ensure plugin runner can resolve source tokens even if parent service wasn't
+    # started from a shell that sourced ~/.openclaw/.env.
+    for k, v in _load_openclaw_env_vars().items():
+        child_env.setdefault(k, v)
+    try:
+        proc = subprocess.run(
+            [py, str(runner), tool_name, json.dumps(args, ensure_ascii=False)],
+            text=True,
+            capture_output=True,
+            timeout=int(timeout_s or 120),
+            env=child_env,
+        )
+    except Exception as exc:
+        return {"success": False, "message": f"data-plugin-runner-error:{type(exc).__name__}"}
+    if proc.returncode != 0 or not proc.stdout.strip():
+        return {"success": False, "message": (proc.stderr or proc.stdout or "").strip()[:200]}
+    try:
+        payload = json.loads(proc.stdout.strip())
+        return payload if isinstance(payload, dict) else {"success": False, "message": "invalid-json-payload"}
+    except Exception:
+        return {"success": False, "message": "invalid-json"}
 
 
 def _load_etf_name_map() -> Dict[str, str]:
@@ -208,6 +286,179 @@ def _load_latest_sentiment_snapshot() -> Tuple[Dict[str, Any], List[str]]:
     }, warnings
 
 
+def _pick_effective_rotation_gate(*, sector_env: Dict[str, Any], three_factor_context: Dict[str, Any]) -> str:
+    """Dominant gate for UI: sector STOP/CAUTION wins; else sector GO / three_factor stage."""
+    sg = str((sector_env or {}).get("gate") or "")
+    tf_gate = (three_factor_context or {}).get("gate") or {}
+    tf_gate = tf_gate if isinstance(tf_gate, dict) else {}
+    if sg in ("STOP", "CAUTION"):
+        return sg
+    if sg == "GO":
+        return "GO"
+    for key in ("stage", "label", "regime"):
+        v = tf_gate.get(key)
+        if v is not None and str(v).strip():
+            return str(v).strip()
+    return "UNKNOWN"
+
+
+def _sector_environment_effective(*, sector_env: Dict[str, Any], three_factor_context: Dict[str, Any]) -> Dict[str, Any]:
+    tf_gate = (three_factor_context or {}).get("gate") or {}
+    tf_gate = tf_gate if isinstance(tf_gate, dict) else {}
+    sent = (three_factor_context or {}).get("sentiment") or {}
+    sent = sent if isinstance(sent, dict) else {}
+    se = sector_env if isinstance(sector_env, dict) else {}
+    return {
+        "effective_gate": _pick_effective_rotation_gate(sector_env=se, three_factor_context=three_factor_context or {}),
+        "sector_rotation_environment": dict(se) if se else {},
+        "three_factor_gate": dict(tf_gate),
+        "sentiment": dict(sent),
+        "sector_human_notes": str(se.get("human_notes") or ""),
+    }
+
+
+def _build_unified_next_day(
+    *,
+    sector_recommendations: List[Dict[str, Any]],
+    ranked_payload: List[Dict[str, Any]],
+    sector_env: Dict[str, Any],
+    three_factor_context: Dict[str, Any],
+) -> List[Dict[str, Any]]:
+    gate_eff = _pick_effective_rotation_gate(sector_env=sector_env, three_factor_context=three_factor_context)
+    by_sym: Dict[str, Dict[str, Any]] = {}
+    for row in ranked_payload or []:
+        if not isinstance(row, dict):
+            continue
+        sym = str(row.get("symbol") or "").strip()
+        if sym and sym not in by_sym:
+            by_sym[sym] = row
+
+    out: List[Dict[str, Any]] = []
+    if sector_recommendations:
+        seen_codes: set[str] = set()
+        for rec in sector_recommendations:
+            if not isinstance(rec, dict):
+                continue
+            code = str(rec.get("etf_code") or "").strip()
+            if code:
+                seen_codes.add(code)
+            sig = rec.get("signals") if isinstance(rec.get("signals"), dict) else {}
+            joined = by_sym.get(code)
+            tf = (joined or {}).get("three_factor") if isinstance(joined, dict) else {}
+            tf = tf if isinstance(tf, dict) else {}
+            tf_score = None
+            if isinstance(joined, dict):
+                tf_score = joined.get("score")
+                if tf_score is None:
+                    tf_score = joined.get("composite_score")
+            missing = joined is None
+            cautions = [str(x) for x in (rec.get("cautions") or []) if x is not None]
+            out.append(
+                {
+                    "rank": rec.get("rank"),
+                    "etf_code": code,
+                    "etf_name": str(rec.get("etf_name") or ""),
+                    "sector": str(rec.get("sector") or ""),
+                    "unified_score": float(rec.get("composite_score") or 0.0),
+                    "components": {
+                        "rps_20d": sig.get("rps_20d"),
+                        "rps_5d": sig.get("rps_5d"),
+                        "rps_change": sig.get("rps_change"),
+                        "three_factor_score": tf_score,
+                        "volume_ratio": sig.get("volume_ratio"),
+                        "volume_status": sig.get("volume_status"),
+                    },
+                    "explain_bullets": [str(b) for b in (rec.get("explain_bullets") or []) if b is not None],
+                    "cautions": cautions,
+                    "allocation_pct": rec.get("allocation_pct"),
+                    "gate_effective": gate_eff,
+                    "three_factor_missing": bool(missing),
+                    "three_factor_breakdown": {
+                        "momentum_score": tf.get("momentum_score"),
+                        "capital_resonance_score": tf.get("capital_resonance_score"),
+                        "environment_gate": tf.get("environment_gate"),
+                    },
+                }
+            )
+        # When RPS and three-factor universes have low overlap, add three-factor-only
+        # supplements so unified view is not just a mirror of RPS table.
+        supplement_rank = len(out)
+        for row in (ranked_payload or [])[:10]:
+            if not isinstance(row, dict):
+                continue
+            code = str(row.get("symbol") or "").strip()
+            if not code or code in seen_codes:
+                continue
+            tf = row.get("three_factor") if isinstance(row.get("three_factor"), dict) else {}
+            supplement_rank += 1
+            out.append(
+                {
+                    "rank": supplement_rank,
+                    "etf_code": code,
+                    "etf_name": str(row.get("name") or ""),
+                    "sector": str(row.get("pool_type") or ""),
+                    "unified_score": float(row.get("score") or row.get("composite_score") or 0.0),
+                    "components": {
+                        "rps_20d": None,
+                        "rps_5d": None,
+                        "rps_change": None,
+                        "three_factor_score": row.get("score"),
+                        "volume_ratio": None,
+                        "volume_status": None,
+                    },
+                    "explain_bullets": [
+                        "三维补充：该标的未进入当日RPS TopK，按三维共振评分补充展示。"
+                    ],
+                    "cautions": ["from_three_factor_only"],
+                    "allocation_pct": None,
+                    "gate_effective": gate_eff,
+                    "three_factor_missing": False,
+                    "three_factor_breakdown": {
+                        "momentum_score": tf.get("momentum_score"),
+                        "capital_resonance_score": tf.get("capital_resonance_score"),
+                        "environment_gate": tf.get("environment_gate"),
+                    },
+                }
+            )
+            seen_codes.add(code)
+            if len(out) >= 10:
+                break
+        return out
+
+    for i, row in enumerate((ranked_payload or [])[:10]):
+        if not isinstance(row, dict):
+            continue
+        code = str(row.get("symbol") or "").strip()
+        tf = row.get("three_factor") if isinstance(row.get("three_factor"), dict) else {}
+        cautions = ["sector_rotation_recommendations_empty"]
+        out.append(
+            {
+                "rank": i + 1,
+                "etf_code": code,
+                "etf_name": str(row.get("name") or ""),
+                "sector": str(row.get("pool_type") or ""),
+                "unified_score": float(row.get("score") or row.get("composite_score") or 0.0),
+                "components": {
+                    "rps_20d": None,
+                    "rps_5d": None,
+                    "rps_change": None,
+                    "three_factor_score": row.get("score"),
+                    "volume_ratio": None,
+                },
+                "cautions": cautions,
+                "allocation_pct": None,
+                "gate_effective": gate_eff,
+                "three_factor_missing": False,
+                "three_factor_breakdown": {
+                    "momentum_score": tf.get("momentum_score"),
+                    "capital_resonance_score": tf.get("capital_resonance_score"),
+                    "environment_gate": tf.get("environment_gate"),
+                },
+            }
+        )
+    return out
+
+
 def _persist_rotation_artifacts(
     *,
     task_id: str,
@@ -220,8 +471,10 @@ def _persist_rotation_artifacts(
     warnings: List[str],
     errors: List[str],
     three_factor_context: Dict[str, Any],
+    sector_rotation: Optional[Dict[str, Any]] = None,
     trade_date: str,
     generated_at: str,
+    structured_warnings: Optional[List[Dict[str, Any]]] = None,
 ) -> Dict[str, str]:
     root = _project_root()
     events_path = root / "data" / "decisions" / "orchestration" / "events" / f"{trade_date}.jsonl"
@@ -237,19 +490,42 @@ def _persist_rotation_artifacts(
     semantic_heatmap_path.parent.mkdir(parents=True, exist_ok=True)
     semantic_share_path.parent.mkdir(parents=True, exist_ok=True)
 
+    swarn = [x for x in (structured_warnings or []) if isinstance(x, dict)]
+
     quality_status = "ok"
     degraded_reasons = list(readiness.get("degraded_reasons") or [])
-    if bool(readiness.get("degraded")) or warnings:
+    critical_warning_prefixes = (
+        "pipeline_timeout",
+        "pipeline_result_missing",
+        "pipeline_child_failed",
+        "pipeline_direct_failed",
+    )
+    has_critical_warning = any(
+        isinstance(w, str) and any(str(w).startswith(p) for p in critical_warning_prefixes)
+        for w in (warnings or [])
+    )
+    if bool(readiness.get("degraded")) or has_critical_warning:
         quality_status = "degraded"
     # errors 多数是“个别标的缺历史/加载失败”，并不代表结果不可用；
     # 仅当结果为空或明显不可用时才升级为 error。
     if errors:
         if not ranked_payload and not top5_payload:
-            quality_status = "error"
+            # Allow a degraded-but-usable snapshot when sector RPS recommendations are available,
+            # even if the legacy rotation pipeline produced no ranked ETFs.
+            if isinstance(sector_rotation, dict) and sector_rotation.get("success"):
+                quality_status = "degraded"
+                if "rotation_pipeline_empty_using_sector_rotation" not in degraded_reasons:
+                    degraded_reasons.append("rotation_pipeline_empty_using_sector_rotation")
+            else:
+                quality_status = "error"
         else:
-            quality_status = "degraded"
-            if "partial_symbol_data_missing" not in degraded_reasons:
-                degraded_reasons.append("partial_symbol_data_missing")
+            total_symbols = max(1, len(symbols))
+            error_ratio = float(len(errors)) / float(total_symbols)
+            # 少量标的缺数不再一刀切降级，避免“结果可用但状态长期 degraded”。
+            if error_ratio >= 0.30:
+                quality_status = "degraded"
+                if "partial_symbol_data_missing" not in degraded_reasons:
+                    degraded_reasons.append("partial_symbol_data_missing")
 
     event_time = generated_at
     event_id = f"{task_id}.{run_id}.{uuid.uuid4().hex[:8]}"
@@ -260,6 +536,9 @@ def _persist_rotation_artifacts(
         "tool_fetch_northbound_flow",
         "pre-market-sentiment-check",
     ]
+    if isinstance(sector_rotation, dict) and sector_rotation.get("success"):
+        source_tools.append("tool_sector_rotation_recommend")
+    display_top5 = list(top5_payload)
     event_payload = {
         "_meta": {
             "schema_name": "etf_rotation_research_event_v1",
@@ -278,9 +557,9 @@ def _persist_rotation_artifacts(
             "event_time": event_time,
             "initial_pool": symbols,
             "scores": ranked_payload,
-            "top5": top5_payload,
+            "top5": display_top5,
             "environment_gate": (three_factor_context.get("gate") or {}),
-            "capital_resonance_signals": [x.get("capital_resonance_type") for x in top5_payload],
+            "capital_resonance_signals": [x.get("capital_resonance_type") for x in display_top5],
             "degraded_reasons": degraded_reasons,
             "warnings": warnings,
             "errors": errors,
@@ -291,11 +570,72 @@ def _persist_rotation_artifacts(
     with events_path.open("a", encoding="utf-8") as f:
         f.write(json.dumps(event_payload, ensure_ascii=False) + "\n")
 
+    sector_recommendations = (
+        (sector_rotation.get("data") or {}).get("recommendations")
+        if isinstance(sector_rotation, dict) and sector_rotation.get("success")
+        else []
+    )
+    sector_recommendations = sector_recommendations if isinstance(sector_recommendations, list) else []
+    sector_env: Dict[str, Any] = {}
+    if isinstance(sector_rotation, dict) and sector_rotation.get("success"):
+        raw_env = (sector_rotation.get("data") or {}).get("environment")
+        sector_env = raw_env if isinstance(raw_env, dict) else {}
+
+    display_top10 = list(ranked_payload[:10])
+    if not display_top5 and isinstance(sector_recommendations, list) and sector_recommendations:
+        # Degraded fallback: map RPS recommendations into top rows for the legacy panel.
+        mapped_rows: List[Dict[str, Any]] = []
+        for rec in sector_recommendations[:10]:
+            if not isinstance(rec, dict):
+                continue
+            sig = rec.get("signals") if isinstance(rec.get("signals"), dict) else {}
+            gate = (sector_rotation.get("data") or {}).get("environment", {}).get("gate") if isinstance(sector_rotation, dict) else None
+            mapped_rows.append(
+                {
+                    "symbol": str(rec.get("etf_code") or ""),
+                    "name": str(rec.get("etf_name") or rec.get("sector") or ""),
+                    "score": rec.get("composite_score"),
+                    "composite_score": rec.get("composite_score"),
+                    "pool_type": "industry_rps",
+                    "three_factor": {
+                        "momentum_score": sig.get("momentum_score"),
+                        "capital_resonance_score": None,
+                        "environment_gate": gate,
+                    },
+                }
+            )
+        if mapped_rows:
+            display_top5 = mapped_rows[:5]
+            display_top10 = mapped_rows[:10]
+
     heat_counter: Dict[str, int] = {}
-    for row in top5_payload:
+    for row in display_top5:
         sec = str(row.get("pool_type") or "unknown")
         heat_counter[sec] = heat_counter.get(sec, 0) + 1
     heatmap = [{"sector_name": k, "count": v} for k, v in sorted(heat_counter.items(), key=lambda x: (-x[1], x[0]))]
+
+    unified_next_day = _build_unified_next_day(
+        sector_recommendations=sector_recommendations,
+        ranked_payload=list(ranked_payload or []),
+        sector_env=sector_env,
+        three_factor_context=three_factor_context,
+    )
+    sector_environment_effective = _sector_environment_effective(
+        sector_env=sector_env,
+        three_factor_context=three_factor_context,
+    )
+    legacy_views: Dict[str, Any] = {
+        "three_factor_top5": list(top5_payload),
+        "three_factor_top10": list(ranked_payload[:10]),
+        "rps_recommendations": list(sector_recommendations),
+    }
+    if isinstance(sector_rotation, dict) and sector_rotation.get("success"):
+        data_sr = sector_rotation.get("data") if isinstance(sector_rotation.get("data"), dict) else {}
+        legacy_views["sector_rotation_raw_excerpt"] = {
+            "environment": data_sr.get("environment"),
+            "trade_date": data_sr.get("trade_date"),
+            "recommendation_count": len(sector_recommendations),
+        }
 
     v3 = compute_three_factor_v3_candidates(ranked_payload)
     decision_candidates = v3.get("candidates") if isinstance(v3, dict) else []
@@ -303,7 +643,7 @@ def _persist_rotation_artifacts(
     semantic_payload = {
         "_meta": {
             "schema_name": "etf_rotation_latest_semantic_v1",
-            "schema_version": "1.0.0",
+            "schema_version": "1.1.0",
             "task_id": task_id,
             "run_id": run_id,
             "data_layer": "L4",
@@ -314,19 +654,34 @@ def _persist_rotation_artifacts(
         },
         "data": {
             "trade_date": trade_date,
-            "top5": top5_payload,
-            "top10": ranked_payload[:10],
+            "top5": display_top5,
+            "top10": display_top10,
             "heatmap": heatmap,
+            "unified_next_day": unified_next_day,
+            "legacy_views": legacy_views,
+            "sector_environment_effective": sector_environment_effective,
             "environment": {
                 "stage": (three_factor_context.get("sentiment") or {}).get("stage"),
                 "dispersion": (three_factor_context.get("sentiment") or {}).get("dispersion"),
                 "gate_multiplier": (three_factor_context.get("gate") or {}).get("total_multiplier"),
             },
+            "recommendations": sector_recommendations if isinstance(sector_recommendations, list) else [],
+            "sector_environment": (
+                (sector_rotation.get("data") or {}).get("environment")
+                if isinstance(sector_rotation, dict) and sector_rotation.get("success")
+                else {}
+            ),
+            "sector_rotation_meta": (
+                sector_rotation.get("_meta")
+                if isinstance(sector_rotation, dict) and isinstance(sector_rotation.get("_meta"), dict)
+                else {}
+            ),
             "data_quality": {
                 "quality_status": quality_status,
                 "degraded_reasons": degraded_reasons,
                 "warnings": warnings,
                 "errors": errors,
+                "structured_warnings": swarn,
             },
             "links": {
                 "event_file": str(events_path),
@@ -419,7 +774,7 @@ def _persist_rotation_artifacts(
             "data": {
                 "trade_date": trade_date,
                 "heatmap": heatmap,
-                "top5": top5_payload,
+                "top5": display_top5,
                 "environment": semantic_payload["data"]["environment"],
                 "explanations": {"degraded_reasons": degraded_reasons, "warnings": warnings},
             },
@@ -781,6 +1136,7 @@ def tool_etf_rotation_research(
     *,
     etf_pool: str = "",
     etal_pool: Optional[str] = None,
+    trade_date: str = "",
     lookback_days: int = 120,
     top_k: int = 3,
     mode: str = "prod",
@@ -820,6 +1176,34 @@ def tool_etf_rotation_research(
     cfg = load_rotation_config(config_path)
     explicit_pool = bool((etf_pool or "").strip())
     symbols = resolve_etf_pool(etf_pool if explicit_pool else None, cfg)
+    if not explicit_pool:
+        # Guardrail: rotation pipeline is ETF-only. Watchlist merge may inject stocks
+        # and drastically increase cache-miss scanning latency in cron windows.
+        try:
+            from src.symbols_loader import load_symbols_config
+
+            sym_cfg = load_symbols_config()
+            groups = list((cfg.get("pool") or {}).get("symbol_groups") or [])
+            allowed: set[str] = set()
+            for gname in groups:
+                g = sym_cfg.get(str(gname))
+                if g:
+                    allowed.update([str(x) for x in (g.etf_codes or []) if str(x)])
+            allowed.update([str(x) for x in ((cfg.get("pool") or {}).get("extra_etf_codes") or []) if str(x)])
+            if allowed:
+                symbols = [s for s in symbols if s in allowed]
+            # Cron/cache-only path: prioritize industry+concept core universe to avoid
+            # long-tail symbols with sparse history causing timeout/degrade.
+            if not bool(allow_online_backfill):
+                core_only: set[str] = set()
+                for gname in ("industry_etf", "concept_etf"):
+                    g = sym_cfg.get(gname)
+                    if g:
+                        core_only.update([str(x) for x in (g.etf_codes or []) if str(x)])
+                if core_only:
+                    symbols = [s for s in symbols if s in core_only]
+        except Exception:
+            pass
     if not symbols:
         return {"success": False, "message": "etf_pool 解析为空", "data": None}
 
@@ -853,6 +1237,18 @@ def tool_etf_rotation_research(
             f["correlation_lookback"] = min(int(f.get("correlation_lookback") or 252), 60)
         except Exception:
             f["correlation_lookback"] = 60
+        try:
+            f["ma_period"] = min(int(f.get("ma_period") or 200), 120)
+        except Exception:
+            f["ma_period"] = 120
+        try:
+            f["trend_r2_window"] = min(int(f.get("trend_r2_window") or 60), 40)
+        except Exception:
+            f["trend_r2_window"] = 40
+        try:
+            f["min_history_days"] = min(int(f.get("min_history_days") or 70), 60)
+        except Exception:
+            f["min_history_days"] = 60
         cfg["filters"] = f
         feats = dict(cfg.get("features") or {})
         feats["use_correlation"] = False
@@ -885,7 +1281,14 @@ def tool_etf_rotation_research(
         allow_multiprocessing=(str(mode).lower() != "test"),
     )
     shadow_compare: Dict[str, Any] = {}
-    if rt.dual_run and (not light_mode) and (not any("pipeline_timeout" in w for w in timeout_warnings)):
+    # Cache-only runs are the cron default path; running shadow engine doubles read cost
+    # and is a major source of timeout/degrade. Keep dual-run for richer interactive analysis.
+    if (
+        rt.dual_run
+        and (not light_mode)
+        and bool(allow_online_backfill)
+        and (not any("pipeline_timeout" in w for w in timeout_warnings))
+    ):
         try:
             shadow_pipe, _shadow_warn = _run_rotation_pipeline_with_timeout(
                 symbols=symbols,
@@ -913,6 +1316,7 @@ def tool_etf_rotation_research(
     ranked = pipe.get("ranked_active") or []
     ranked_by_pool = pipe.get("ranked_by_pool") or {}
     warnings = list(pipe.get("warnings") or []) + sentiment_warnings + timeout_warnings
+    structured_warnings = list(pipe.get("structured_warnings") or [])
     fallback = bool(pipe.get("fallback_legacy_ranking"))
     corr_mat = pipe.get("correlation_matrix")
     corr_syms = pipe.get("correlation_symbols") or []
@@ -921,14 +1325,49 @@ def tool_etf_rotation_research(
     three_factor_context = pipe.get("three_factor_context") or {}
 
     if not ranked:
+        task_id = "etf-rotation-research"
+        run_id = datetime.now(ZoneInfo("Asia/Shanghai")).strftime("%Y%m%dT%H%M%S")
+        generated_at = datetime.now().isoformat()
+        trade_date = (trade_date or "").strip() or datetime.now(ZoneInfo("Asia/Shanghai")).strftime("%Y-%m-%d")
+        sector_rotation: Dict[str, Any] = {}
+        artifact_refs = {}
+        if mode != "test":
+            try:
+                sector_rotation = _call_data_plugin_tool(
+                    "tool_sector_rotation_recommend",
+                    {"top_k": 5, "trade_date": trade_date, "min_liquidity": 100000000},
+                    timeout_s=180,
+                )
+                if not (isinstance(sector_rotation, dict) and sector_rotation.get("success")):
+                    warnings.append("sector_rotation_recommend_unavailable")
+            except Exception:
+                warnings.append("sector_rotation_recommend_exception")
+            artifact_refs = _persist_rotation_artifacts(
+                task_id=task_id,
+                run_id=run_id,
+                symbols=symbols,
+                ranked_payload=[],
+                top5_payload=[],
+                ranked_by_pool={"industry": [], "concept": []},
+                readiness=readiness,
+                warnings=warnings,
+                errors=errors,
+                three_factor_context=three_factor_context,
+                sector_rotation=sector_rotation if isinstance(sector_rotation, dict) else None,
+                trade_date=trade_date,
+                generated_at=generated_at,
+                structured_warnings=structured_warnings,
+            )
         return {
-            "success": False,
-            "message": "无法生成轮动评分（无可用ETF数据）",
+            "success": True,
+            "message": "rotation_pipeline_empty_degraded",
             "data": {
                 "errors": errors,
                 "warnings": warnings,
                 "config_snapshot": config_snap,
                 "data_readiness": readiness,
+                "sector_rotation": sector_rotation,
+                "artifacts": artifact_refs,
             },
         }
 
@@ -1162,7 +1601,7 @@ def tool_etf_rotation_research(
         }
         for r in ranked
     ]
-    trade_date = datetime.now(ZoneInfo("Asia/Shanghai")).strftime("%Y-%m-%d")
+    trade_date = (trade_date or "").strip() or datetime.now(ZoneInfo("Asia/Shanghai")).strftime("%Y-%m-%d")
     nikkei_snap = _read_nikkei_premium_gate_snapshot(trade_date)
     ranked_payload, cross_border_warn = _apply_cross_border_premium_penalty(ranked_payload, nikkei_snap=nikkei_snap)
     warnings.extend(cross_border_warn)
@@ -1172,7 +1611,19 @@ def tool_etf_rotation_research(
     run_id = datetime.now(ZoneInfo("Asia/Shanghai")).strftime("%Y%m%dT%H%M%S")
     generated_at = datetime.now().isoformat()
     artifact_refs = {}
+    sector_rotation: Dict[str, Any] = {}
     if mode != "test":
+        # Phase A: use openclaw-data-china-stock for RPS-based sector ETF recommendations.
+        try:
+            sector_rotation = _call_data_plugin_tool(
+                "tool_sector_rotation_recommend",
+                {"top_k": 5, "trade_date": trade_date, "min_liquidity": 100000000},
+                timeout_s=180,
+            )
+            if not (isinstance(sector_rotation, dict) and sector_rotation.get("success")):
+                warnings.append("sector_rotation_recommend_unavailable")
+        except Exception:
+            warnings.append("sector_rotation_recommend_exception")
         artifact_refs = _persist_rotation_artifacts(
             task_id=task_id,
             run_id=run_id,
@@ -1187,8 +1638,10 @@ def tool_etf_rotation_research(
             warnings=warnings,
             errors=errors,
             three_factor_context=three_factor_context,
+            sector_rotation=sector_rotation if isinstance(sector_rotation, dict) else None,
             trade_date=trade_date,
             generated_at=generated_at,
+            structured_warnings=structured_warnings,
         )
 
     # 落盘：给“发送工具（按 last report 读取）”提供稳定数据源，避免 agent 大段传参导致 summary 丢失/退化。
@@ -1199,6 +1652,7 @@ def tool_etf_rotation_research(
             "llm_summary": llm_summary,
             "raw": {
                 "ranked": ranked_payload,
+                "sector_rotation": sector_rotation,
                 "errors": errors,
                 "shadow_compare": shadow_compare,
                 "artifact_refs": artifact_refs,
@@ -1270,6 +1724,7 @@ def tool_etf_rotation_research(
                 # 易达数万 token，触发 LLM 空闲超时 / 模型降级后工具路由失败（cron 误调 research 时尤甚）。
                 "raw": {
                     "ranked": ranked_payload,
+                    "sector_rotation": sector_rotation,
                     "errors": errors,
                     "shadow_compare": shadow_compare,
                     "three_factor_context": three_factor_context,

@@ -13,6 +13,8 @@ import logging
 import math
 import json
 import time
+import re
+from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError, as_completed
 from datetime import datetime, timedelta
 from threading import Semaphore
@@ -24,6 +26,7 @@ except ImportError:  # pragma: no cover
     pytz = None  # type: ignore
 
 logger = logging.getLogger(__name__)
+_OPENING_GLOBAL_SPOT_TIMEOUT_S = 8.0
 
 # 与日报外盘推荐集合对齐：美股三大 + 日韩现货开盘参考 + 港股 + 欧股收市口径（开盘前展示更稳定）
 _OPENING_GLOBAL_INDEX_CODES = "^DJI,^GSPC,^IXIC,^N225,^KS11,^HSI,^GDAXI,^STOXX50E,^FTSE"
@@ -248,6 +251,484 @@ def _to_float(v: Any) -> Optional[float]:
         return None
 
 
+def _project_root() -> Path:
+    return Path(__file__).resolve().parents[2]
+
+
+def _parse_trade_date(value: Any) -> Optional[datetime]:
+    s = str(value or "").strip()
+    if not s:
+        return None
+    for fmt in ("%Y-%m-%d", "%Y%m%d"):
+        try:
+            return datetime.strptime(s, fmt)
+        except Exception:
+            continue
+    return None
+
+
+def _normalize_trade_date_ymd(value: Any) -> str:
+    dt = _parse_trade_date(value)
+    if dt is None:
+        return str(value or "").strip()
+    return dt.strftime("%Y-%m-%d")
+
+
+def _previous_trading_day_ymd(trade_date: str) -> str:
+    """
+    返回给定报告日对应的上一交易日（YYYY-MM-DD）。
+    非交易日也返回最近可用上一交易日，供轮动前日基准读取。
+    """
+    try:
+        from src.config_loader import load_system_config
+        from src.system_status import get_last_trading_day_on_or_before
+
+        td = _parse_trade_date(trade_date) or _now_sh()
+        anchor = (td - timedelta(days=1)).replace(hour=12, minute=0, second=0, microsecond=0)
+        try:
+            cfg = load_system_config(use_cache=True)
+        except Exception:
+            cfg = None
+        prev = get_last_trading_day_on_or_before(anchor, cfg if isinstance(cfg, dict) else None)
+        return _normalize_trade_date_ymd(prev)
+    except Exception:
+        td = _parse_trade_date(trade_date)
+        if td is None:
+            return _now_sh().strftime("%Y-%m-%d")
+        return (td - timedelta(days=1)).strftime("%Y-%m-%d")
+
+
+def _load_rotation_validation_config() -> Dict[str, Any]:
+    default = {
+        "open_change_strong_threshold": 0.5,
+        "open_change_weak_threshold": -1.0,
+        "volume_ratio_strong_threshold": 1.2,
+        "volume_ratio_weak_threshold": 0.7,
+        "observe_band_pct": 0.3,
+        "max_rotation_etf_in_report": 8,
+        "signal_position_multiplier": {
+            "STRONG": 1.0,
+            "CAUTIOUS": 0.5,
+            "OBSERVE": 0.0,
+            "WEAK": 0.0,
+            "NEUTRAL": 0.0,
+        },
+    }
+    try:
+        from src.config_loader import load_system_config
+
+        cfg = load_system_config(use_cache=True)
+        if not isinstance(cfg, dict):
+            return default
+        notification = cfg.get("notification") if isinstance(cfg.get("notification"), dict) else {}
+        opening_cfg = notification.get("opening_rotation_validation") if isinstance(notification, dict) else {}
+        if not isinstance(opening_cfg, dict):
+            return default
+        merged = dict(default)
+        for k in (
+            "open_change_strong_threshold",
+            "open_change_weak_threshold",
+            "volume_ratio_strong_threshold",
+            "volume_ratio_weak_threshold",
+            "observe_band_pct",
+            "max_rotation_etf_in_report",
+        ):
+            if opening_cfg.get(k) is not None:
+                merged[k] = opening_cfg.get(k)
+        spm = opening_cfg.get("signal_position_multiplier")
+        if isinstance(spm, dict):
+            merged_spm = dict(default["signal_position_multiplier"])
+            for kk, vv in spm.items():
+                merged_spm[str(kk).upper()] = vv
+            merged["signal_position_multiplier"] = merged_spm
+        return merged
+    except Exception:
+        return default
+
+
+def _load_rotation_latest_for_opening(opening_trade_date: str) -> Dict[str, Any]:
+    root = _project_root()
+    base = root / "data" / "semantic" / "rotation_latest"
+    prev_td = _previous_trading_day_ymd(opening_trade_date)
+    out: Dict[str, Any] = {
+        "quality_status": "degraded",
+        "degraded_reason": "rotation_latest_missing",
+        "rotation_trade_date": prev_td,
+        "opening_trade_date": _normalize_trade_date_ymd(opening_trade_date),
+        "data": {},
+        "path": str(base / f"{prev_td}.json"),
+    }
+    if not base.exists():
+        return out
+
+    primary = base / f"{prev_td}.json"
+    candidates: List[Path] = [primary]
+    if not primary.exists():
+        try:
+            all_paths = sorted([p for p in base.glob("*.json") if p.is_file()], reverse=True)
+            candidates.extend(all_paths[:5])
+        except Exception:
+            pass
+    chosen: Optional[Path] = None
+    payload: Dict[str, Any] = {}
+    for p in candidates:
+        try:
+            obj = json.loads(p.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        data = obj.get("data") if isinstance(obj, dict) and isinstance(obj.get("data"), dict) else {}
+        if data:
+            payload = data
+            chosen = p
+            break
+    if chosen is None:
+        out["degraded_reason"] = "rotation_latest_invalid"
+        return out
+
+    chosen_td = chosen.stem
+    out.update(
+        {
+            "quality_status": "ok",
+            "degraded_reason": "",
+            "rotation_trade_date": _normalize_trade_date_ymd(chosen_td),
+            "path": str(chosen),
+            "data": payload,
+        }
+    )
+    return out
+
+
+def _build_rotation_candidate_union(rotation_payload: Dict[str, Any], max_candidates: int = 10) -> List[Dict[str, Any]]:
+    unified = rotation_payload.get("unified_next_day")
+    unified = [x for x in unified if isinstance(x, dict)] if isinstance(unified, list) else []
+    legacy = rotation_payload.get("legacy_views") if isinstance(rotation_payload.get("legacy_views"), dict) else {}
+    rps_rows = legacy.get("rps_recommendations")
+    rps_rows = [x for x in rps_rows if isinstance(x, dict)] if isinstance(rps_rows, list) else []
+    tf_rows = legacy.get("three_factor_top5")
+    tf_rows = [x for x in tf_rows if isinstance(x, dict)] if isinstance(tf_rows, list) else []
+
+    by_code: Dict[str, Dict[str, Any]] = {}
+
+    for row in unified:
+        code = str(row.get("etf_code") or "").strip()
+        if not code:
+            continue
+        by_code[code] = {
+            "etf_code": code,
+            "etf_name": str(row.get("etf_name") or row.get("name") or ""),
+            "rotation_score": _to_float(row.get("unified_score")),
+            "rotation_rank": row.get("rank"),
+            "from_rps": False,
+            "from_three_factor": False,
+            "from_unified": True,
+            "source_tags": ["unified"],
+        }
+
+    for row in rps_rows:
+        code = str(row.get("etf_code") or "").strip()
+        if not code:
+            continue
+        rec = by_code.setdefault(
+            code,
+            {
+                "etf_code": code,
+                "etf_name": str(row.get("etf_name") or ""),
+                "rotation_score": _to_float(row.get("composite_score")),
+                "rotation_rank": row.get("rank"),
+                "from_rps": False,
+                "from_three_factor": False,
+                "from_unified": False,
+                "source_tags": [],
+            },
+        )
+        rec["from_rps"] = True
+        if "rps" not in rec["source_tags"]:
+            rec["source_tags"].append("rps")
+        if not rec.get("etf_name"):
+            rec["etf_name"] = str(row.get("etf_name") or "")
+        if rec.get("rotation_score") is None:
+            rec["rotation_score"] = _to_float(row.get("composite_score"))
+
+    for row in tf_rows:
+        code = str(row.get("symbol") or row.get("etf_code") or "").strip()
+        if not code:
+            continue
+        rec = by_code.setdefault(
+            code,
+            {
+                "etf_code": code,
+                "etf_name": str(row.get("name") or row.get("etf_name") or ""),
+                "rotation_score": _to_float(row.get("score") if row.get("score") is not None else row.get("composite_score")),
+                "rotation_rank": row.get("rank"),
+                "from_rps": False,
+                "from_three_factor": False,
+                "from_unified": False,
+                "source_tags": [],
+            },
+        )
+        rec["from_three_factor"] = True
+        if "three_factor" not in rec["source_tags"]:
+            rec["source_tags"].append("three_factor")
+        if not rec.get("etf_name"):
+            rec["etf_name"] = str(row.get("name") or row.get("etf_name") or "")
+        if rec.get("rotation_score") is None:
+            rec["rotation_score"] = _to_float(row.get("score") if row.get("score") is not None else row.get("composite_score"))
+
+    rows = list(by_code.values())
+    rows.sort(
+        key=lambda x: (
+            -9999.0 if _to_float(x.get("rotation_score")) is None else -float(_to_float(x.get("rotation_score")) or 0.0),
+            9999 if _to_float(x.get("rotation_rank")) is None else int(_to_float(x.get("rotation_rank")) or 0),
+            str(x.get("etf_code") or ""),
+        )
+    )
+    return rows[: max(1, int(max_candidates or 10))]
+
+
+def _extract_volume_ratio(row: Dict[str, Any]) -> Optional[float]:
+    for key in ("volume_ratio", "vol_ratio", "turnover_ratio", "amount_ratio", "ratio"):
+        v = _to_float(row.get(key))
+        if v is not None and not (isinstance(v, float) and (math.isnan(v) or math.isinf(v))):
+            return v
+    return None
+
+
+def _extract_realtime_rows(resp: Any) -> List[Dict[str, Any]]:
+    if not isinstance(resp, dict):
+        return []
+    data = resp.get("data")
+    if isinstance(data, list):
+        return [x for x in data if isinstance(x, dict)]
+    return []
+
+
+def _derive_rotation_market_gate(rotation_payload: Dict[str, Any]) -> str:
+    sec_env_eff = rotation_payload.get("sector_environment_effective")
+    if isinstance(sec_env_eff, dict):
+        gate = str(sec_env_eff.get("effective_gate") or "").strip().upper()
+        if gate:
+            return gate
+    sec_env = rotation_payload.get("sector_environment")
+    if isinstance(sec_env, dict):
+        gate = str(sec_env.get("gate") or "").strip().upper()
+        if gate:
+            return gate
+    env = rotation_payload.get("environment")
+    if isinstance(env, dict):
+        gate = str(env.get("gate") or env.get("stage") or "").strip().upper()
+        if gate:
+            return gate
+    return "UNKNOWN"
+
+
+def _validate_rotation_opening(
+    candidates: List[Dict[str, Any]],
+    realtime_rows: List[Dict[str, Any]],
+    cfg: Dict[str, Any],
+) -> Tuple[List[Dict[str, Any]], List[str]]:
+    by_code = {}
+    for row in realtime_rows:
+        code = str(row.get("code") or row.get("symbol") or "").strip()
+        if code:
+            by_code[code] = row
+
+    st = _to_float(cfg.get("open_change_strong_threshold")) or 0.5
+    wt = _to_float(cfg.get("open_change_weak_threshold")) or -1.0
+    vt = _to_float(cfg.get("volume_ratio_strong_threshold")) or 1.2
+    vwt = _to_float(cfg.get("volume_ratio_weak_threshold")) or 0.7
+    obs = abs(_to_float(cfg.get("observe_band_pct")) or 0.3)
+
+    out: List[Dict[str, Any]] = []
+    missing: List[str] = []
+    for rec in candidates:
+        code = str(rec.get("etf_code") or "").strip()
+        row = by_code.get(code)
+        if row is None:
+            missing.append(code)
+            out.append(
+                {
+                    **rec,
+                    "signal": "OBSERVE",
+                    "signal_reason": "实时行情缺失，降级观察",
+                    "confidence": "low",
+                    "open_change_pct": None,
+                    "volume_ratio": None,
+                    "validation_status": "missing_realtime",
+                }
+            )
+            continue
+        open_change = _to_float(row.get("change_pct") if row.get("change_pct") is not None else row.get("change_percent"))
+        volume_ratio = _extract_volume_ratio(row)
+        if volume_ratio is None:
+            volume_ratio = 1.0
+
+        signal = "NEUTRAL"
+        reason = "常规波动，维持观察"
+        confidence = "medium"
+        if open_change is not None and open_change > st and volume_ratio >= vt:
+            signal = "STRONG"
+            reason = "高开放量，动量延续"
+            confidence = "high"
+        elif open_change is not None and open_change > 0 and volume_ratio >= 1.0:
+            signal = "CAUTIOUS"
+            reason = "小幅高开，量能温和"
+        elif open_change is not None and open_change <= wt and volume_ratio >= max(vt, 1.5):
+            signal = "WEAK"
+            reason = "低开放量，抛压加重"
+            confidence = "high"
+        elif open_change is not None and abs(open_change) <= obs:
+            signal = "OBSERVE"
+            reason = "平开震荡，等待方向"
+        elif volume_ratio <= vwt and open_change is not None and open_change <= 0:
+            signal = "OBSERVE"
+            reason = "缩量偏弱，等待确认"
+
+        out.append(
+            {
+                **rec,
+                "open_change_pct": open_change,
+                "volume_ratio": volume_ratio,
+                "signal": signal,
+                "signal_reason": reason,
+                "confidence": confidence,
+                "validation_status": "confirmed" if signal in ("STRONG", "CAUTIOUS") else "observed",
+            }
+        )
+    return out, missing
+
+
+def _build_rotation_suggestions(
+    validations: List[Dict[str, Any]],
+    market_gate: str,
+    cfg: Dict[str, Any],
+) -> Dict[str, Any]:
+    mp = cfg.get("signal_position_multiplier") if isinstance(cfg.get("signal_position_multiplier"), dict) else {}
+    gate_u = str(market_gate or "UNKNOWN").upper()
+    gate_multiplier = 1.0
+    if gate_u == "CAUTION":
+        gate_multiplier = 0.5
+    elif gate_u == "STOP":
+        gate_multiplier = 0.0
+
+    main_actions: List[Dict[str, Any]] = []
+    observe_list: List[Dict[str, Any]] = []
+    for row in validations:
+        signal = str(row.get("signal") or "OBSERVE").upper()
+        base = _to_float(mp.get(signal) if isinstance(mp, dict) else None)
+        base = 0.0 if base is None else max(0.0, min(1.0, base))
+        effective = round(base * gate_multiplier, 2)
+        item = {
+            "etf_code": row.get("etf_code"),
+            "etf_name": row.get("etf_name"),
+            "signal": signal,
+            "position_multiplier": effective,
+            "signal_reason": row.get("signal_reason"),
+            "open_change_pct": row.get("open_change_pct"),
+            "volume_ratio": row.get("volume_ratio"),
+        }
+        if gate_u != "STOP" and signal in ("STRONG", "CAUTIOUS") and effective > 0:
+            main_actions.append(item)
+        else:
+            observe_list.append(item)
+
+    risk_controls = [
+        f"市场门闸：{gate_u}；门闸系数 {gate_multiplier:.1f}",
+        "单只ETF仓位不超过20%，总仓位遵循当日总策略上限。",
+        "若开盘30分钟内涨幅回吐超过一半，降低预期并回归观察。",
+        "溢价提示仅可使用实时IOPV同点比较，禁止跨时点净值比价。",
+    ]
+    if gate_u == "STOP":
+        risk_controls.insert(0, "环境门闸为 STOP，本栏目仅保留观察，不输出主建议。")
+
+    return {
+        "market_gate": gate_u,
+        "gate_multiplier": gate_multiplier,
+        "main_actions": main_actions[:5],
+        "observe_list": observe_list[:10],
+        "risk_controls": risk_controls,
+    }
+
+
+def _attach_rotation_opening_block(
+    rd: Dict[str, Any],
+    errors: List[Dict[str, str]],
+    *,
+    fetch_etf_fn: Callable[..., Any],
+    fetch_mode: str,
+    allow_realtime_validation: bool,
+) -> None:
+    cfg = _load_rotation_validation_config()
+    opening_td = _normalize_trade_date_ymd(rd.get("trade_date") or rd.get("date") or _now_sh().strftime("%Y-%m-%d"))
+    rot_loaded = _load_rotation_latest_for_opening(opening_td)
+    rot_payload = rot_loaded.get("data") if isinstance(rot_loaded.get("data"), dict) else {}
+    candidates = _build_rotation_candidate_union(rot_payload, max_candidates=10)
+    market_gate = _derive_rotation_market_gate(rot_payload)
+    codes = [str(x.get("etf_code") or "").strip() for x in candidates if str(x.get("etf_code") or "").strip()]
+    rt_rows: List[Dict[str, Any]] = []
+    if codes and allow_realtime_validation:
+        rt_resp = _safe_step(
+            "fetch_rotation_etf_realtime",
+            fetch_etf_fn,
+            errors,
+            data_type="realtime",
+            etf_code=",".join(codes),
+            mode=fetch_mode,
+        )
+        rt_rows = _extract_realtime_rows(rt_resp)
+        rd["tool_fetch_rotation_etf_realtime"] = rt_resp
+    if allow_realtime_validation:
+        validations, missing_fields = _validate_rotation_opening(candidates, rt_rows, cfg)
+    else:
+        validations = [
+            {
+                **rec,
+                "signal": "OBSERVE",
+                "signal_reason": "非开盘复盘：跳过开盘验证（仅展示轮动清单）",
+                "confidence": "low",
+                "open_change_pct": None,
+                "volume_ratio": None,
+                "validation_status": "skipped_non_opening_window",
+            }
+            for rec in candidates
+        ]
+        missing_fields = []
+    suggestions = _build_rotation_suggestions(validations, market_gate=market_gate, cfg=cfg)
+
+    prev_td = _previous_trading_day_ymd(opening_td)
+    rot_td = _normalize_trade_date_ymd(rot_loaded.get("rotation_trade_date") or "")
+    freshness = {
+        "rotation_trade_date": rot_td,
+        "opening_trade_date": opening_td,
+        "is_prev_trading_day": bool(rot_td and rot_td == prev_td),
+        "note": f"轮动数据基准：{rot_td or 'N/A'}；开盘验证基于当日实时行情。",
+    }
+    quality_status = "ok"
+    degraded_reason = ""
+    if not allow_realtime_validation:
+        quality_status = "degraded"
+        degraded_reason = "not_opening_window_skip_validation"
+    elif str(rot_loaded.get("quality_status") or "") != "ok":
+        quality_status = "degraded"
+        degraded_reason = str(rot_loaded.get("degraded_reason") or "rotation_latest_missing")
+    elif not candidates:
+        quality_status = "degraded"
+        degraded_reason = "rotation_candidates_empty"
+    elif len(missing_fields) >= max(1, len(candidates) // 2):
+        quality_status = "degraded"
+        degraded_reason = "rotation_realtime_partially_missing"
+
+    rd["rotation_opening_candidates"] = candidates
+    rd["rotation_opening_validation"] = validations
+    rd["rotation_trading_suggestions"] = suggestions
+    rd["rotation_validation_quality"] = {
+        "quality_status": quality_status,
+        "degraded_reason": degraded_reason,
+        "missing_fields": missing_fields,
+        "rotation_source_path": rot_loaded.get("path"),
+    }
+    rd["rotation_data_freshness"] = freshness
+
+
 def _extract_pct(row: Dict[str, Any]) -> Optional[float]:
     return _to_float(row.get("change_pct") if row.get("change_pct") is not None else row.get("change_percent"))
 
@@ -261,6 +742,89 @@ def _asset_strength_from_pct(pct: Optional[float]) -> str:
     if pct <= -0.15:
         return "弱"
     return "中"
+
+
+def _parse_snapshot_ts(v: Any) -> Optional[datetime]:
+    s = str(v or "").strip()
+    if not s:
+        return None
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M"):
+        try:
+            return datetime.strptime(s[:19], fmt)
+        except Exception:
+            continue
+    return None
+
+
+def _sign(x: Optional[float], eps: float = 1e-9) -> int:
+    if x is None:
+        return 0
+    if x > eps:
+        return 1
+    if x < -eps:
+        return -1
+    return 0
+
+
+def _cross_check_index_etf_consistency(
+    *,
+    idx_rows: List[Dict[str, Any]],
+    etf_rows: List[Dict[str, Any]],
+    snapshot_time: str,
+) -> List[Dict[str, Any]]:
+    flags: List[Dict[str, Any]] = []
+    idx = next((x for x in idx_rows if str(x.get("code") or "").strip() == "000300"), None)
+    etf = next((x for x in etf_rows if str(x.get("code") or "").strip() == "510300"), None)
+    idx_pct = _extract_pct(idx or {}) if isinstance(idx, dict) else None
+    etf_pct = _extract_pct(etf or {}) if isinstance(etf, dict) else None
+
+    if _sign(idx_pct) != 0 and _sign(etf_pct) != 0 and _sign(idx_pct) != _sign(etf_pct):
+        flags.append(
+            {
+                "code": "direction_conflict",
+                "severity": "medium",
+                "index_code": "000300",
+                "etf_code": "510300",
+                "index_pct": idx_pct,
+                "etf_pct": etf_pct,
+            }
+        )
+
+    if idx_pct is not None and etf_pct is not None and abs(float(etf_pct) - float(idx_pct)) > 0.8:
+        flags.append(
+            {
+                "code": "large_basis_gap",
+                "severity": "low",
+                "index_code": "000300",
+                "etf_code": "510300",
+                "index_pct": idx_pct,
+                "etf_pct": etf_pct,
+                "gap_pct": round(abs(float(etf_pct) - float(idx_pct)), 4),
+                "threshold_pct": 0.8,
+            }
+        )
+
+    snap_dt = _parse_snapshot_ts(snapshot_time)
+    stale_candidates = []
+    for label, row in (("000300", idx), ("510300", etf)):
+        if not isinstance(row, dict):
+            continue
+        row_ts = _parse_snapshot_ts(row.get("timestamp") or row.get("as_of"))
+        if row_ts is None or snap_dt is None:
+            continue
+        drift_s = abs((snap_dt - row_ts).total_seconds())
+        if drift_s > 300:
+            stale_candidates.append({"symbol": label, "drift_s": int(drift_s)})
+    if stale_candidates:
+        flags.append(
+            {
+                "code": "stale_data",
+                "severity": "low",
+                "threshold_s": 300,
+                "items": stale_candidates,
+            }
+        )
+    return flags
 
 
 def _mark_analysis_health(
@@ -331,6 +895,320 @@ def _extract_change_pct(row: Dict[str, Any]) -> Optional[float]:
         return None if v is None else float(v)
     except Exception:
         return None
+
+
+_OVERNIGHT_CODE_ALIASES: Dict[str, Tuple[str, ...]] = {
+    "^N225": ("^N225", "N225", "NKY", "NI225", "日经225", "日经"),
+    "^DJI": ("^DJI", "DJI", "DOW", "INT_DJI", "US30", "道琼斯", "道指"),
+    "^GSPC": ("^GSPC", "GSPC", "SPX", "SP500", "标普500", "标普"),
+    "^IXIC": ("^IXIC", "IXIC", "NDX", "NASDAQ", "纳斯达克", "纳指"),
+    "A50": ("A50", "CN00Y", "XIN9", "富时A50", "A50期指"),
+}
+
+_OVERNIGHT_DEFAULT_WEIGHTS: Dict[str, float] = {
+    "A50": 0.25,
+    "^N225": 0.15,
+    "^DJI": 0.20,
+    "^GSPC": 0.20,
+    "^IXIC": 0.20,
+}
+
+
+def _normalize_code(v: Any) -> str:
+    s = str(v or "").strip().upper()
+    if not s:
+        return ""
+    return s.replace("-", "").replace("_", "")
+
+
+def _find_index_row(rows: List[Dict[str, Any]], canonical: str) -> Optional[Dict[str, Any]]:
+    aliases = _OVERNIGHT_CODE_ALIASES.get(canonical, (canonical,))
+    alias_norm = {_normalize_code(x) for x in aliases}
+    for row in rows:
+        code_norm = _normalize_code(row.get("code") or row.get("name"))
+        if code_norm in alias_norm:
+            return row
+    return None
+
+
+def _overnight_strength_factor(change_pct: Optional[float]) -> float:
+    if change_pct is None:
+        return 0.0
+    if change_pct > 1.0:
+        return 1.0
+    if change_pct > 0.3:
+        return 0.6
+    if change_pct >= -0.3:
+        return 0.0
+    if change_pct >= -1.0:
+        return -0.6
+    return -1.0
+
+
+def _overnight_label(score: float) -> str:
+    if score > 0.25:
+        return "偏强"
+    if score < -0.25:
+        return "谨慎偏弱"
+    return "分化"
+
+
+def _extract_local_trend_score(rd: Dict[str, Any]) -> float:
+    analysis = rd.get("analysis") if isinstance(rd.get("analysis"), dict) else {}
+    vals: List[float] = []
+    for v in (
+        rd.get("trend_strength"),
+        analysis.get("trend_strength"),
+        analysis.get("final_strength"),
+        (analysis.get("summary") or {}).get("sentiment_score") if isinstance(analysis.get("summary"), dict) else None,
+        (analysis.get("report_meta") or {}).get("market_sentiment_score") if isinstance(analysis.get("report_meta"), dict) else None,
+    ):
+        if isinstance(v, (int, float)):
+            vals.append(float(v))
+    if vals:
+        return float(max(-1.0, min(1.0, vals[0])))
+    return 0.0
+
+
+def _build_overnight_bias(rd: Dict[str, Any]) -> Dict[str, Any]:
+    mo = rd.get("market_overview") if isinstance(rd.get("market_overview"), dict) else {}
+    rows = [x for x in (mo.get("indices") or []) if isinstance(x, dict)]
+    votes: List[Dict[str, Any]] = []
+    weighted_sum = 0.0
+    available_weight = 0.0
+    up_count = down_count = flat_count = 0
+    matched_count = 0
+    missing_codes: List[str] = []
+    for code, weight in _OVERNIGHT_DEFAULT_WEIGHTS.items():
+        row = _find_index_row(rows, code)
+        pct = _extract_change_pct(row or {})
+        sf = _overnight_strength_factor(pct)
+        contrib = round(weight * sf, 4)
+        has_data = row is not None and pct is not None
+        if has_data:
+            matched_count += 1
+            if sf > 0:
+                up_count += 1
+            elif sf < 0:
+                down_count += 1
+            else:
+                flat_count += 1
+            available_weight += weight
+        else:
+            missing_codes.append(code)
+        weighted_sum += contrib
+        votes.append(
+            {
+                "index_code": code,
+                "weight": weight,
+                "change_pct": pct,
+                "strength_factor": sf,
+                "weighted_contribution": contrib,
+                "has_data": has_data,
+            }
+        )
+    score = round(weighted_sum, 4)
+    return {
+        "votes": votes,
+        "score": score,
+        "label": _overnight_label(score),
+        "up_count": up_count,
+        "down_count": down_count,
+        "flat_count": flat_count,
+        "matched_count": matched_count,
+        "target_count": len(_OVERNIGHT_DEFAULT_WEIGHTS),
+        "missing_codes": missing_codes,
+        "available_weight": round(available_weight, 4),
+        "scope": "A50,^N225,^DJI,^GSPC,^IXIC",
+    }
+
+
+def _apply_opening_trend_resolution(rd: Dict[str, Any]) -> None:
+    overnight = _build_overnight_bias(rd)
+    rd["overnight_bias_vote"] = overnight.get("votes")
+    rd["overnight_bias_score"] = overnight.get("score")
+    rd["overnight_bias_label"] = overnight.get("label")
+    rd["up_count"] = overnight.get("up_count")
+    rd["down_count"] = overnight.get("down_count")
+    rd["flat_count"] = overnight.get("flat_count")
+    rd["matched_count"] = overnight.get("matched_count")
+    rd["target_count"] = overnight.get("target_count")
+    rd["scope"] = overnight.get("scope")
+    local_score = _extract_local_trend_score(rd)
+    overnight_score = float(overnight.get("score") or 0.0)
+    conflict = (
+        (local_score * overnight_score) < 0
+        and abs(local_score - overnight_score) > 0.3
+    )
+    resolved_trend = str(overnight.get("label") or "分化")
+    if conflict:
+        if overnight_score <= -0.2:
+            resolved_trend = "分化/谨慎偏弱"
+        elif overnight_score >= 0.2:
+            resolved_trend = "分化/谨慎偏强"
+    # 无论是否冲突，都必须写入结论字段；否则会在“同向”场景落入 N/A。
+    rd["overall_trend"] = resolved_trend
+    rd["trend_strength"] = round(overnight_score, 4)
+    rd["trend_resolution"] = {
+        "local_score": round(local_score, 4),
+        "overnight_score": round(overnight_score, 4),
+        "conflict": conflict,
+        "conflict_threshold": 0.3,
+        "resolved_overall_trend": resolved_trend,
+        "matched_count": overnight.get("matched_count"),
+        "target_count": overnight.get("target_count"),
+        "scope": overnight.get("scope"),
+    }
+
+
+def _build_policy_event_signals(rd: Dict[str, Any]) -> None:
+    pn = rd.get("tool_fetch_policy_news")
+    payload = pn.get("data") if isinstance(pn, dict) else None
+    if not isinstance(payload, dict):
+        rd["policy_event_signals"] = []
+        rd["policy_event_quality"] = {
+            "quality_status": "degraded",
+            "degraded_reason": "policy_news_payload_missing",
+        }
+        return
+    items = [x for x in (payload.get("items") or []) if isinstance(x, dict)]
+    brief = str(payload.get("brief_answer") or "")
+    full_text = "\n".join([brief] + [str(x.get("title") or "") + " " + str(x.get("summary") or "") for x in items])
+    events: List[Dict[str, Any]] = []
+
+    def _extract_vote_split(text: str) -> str:
+        m = re.search(r"(\d+)\s*[-比:]\s*(\d+)", text)
+        if not m:
+            return ""
+        return f"{m.group(1)}-{m.group(2)}"
+
+    def _extract_rate_decision(text: str) -> str:
+        if re.search(r"维持|不变|hold|unchanged", text, re.I):
+            return "hold"
+        if re.search(r"加息|上调|hike|raise", text, re.I):
+            return "hike"
+        if re.search(r"降息|下调|cut", text, re.I):
+            return "cut"
+        return "unknown"
+
+    if re.search(r"美联储|FOMC|Federal Reserve", full_text, re.I):
+        vote_split = _extract_vote_split(full_text)
+        has_rate = bool(re.search(r"利率|bps|基点|维持|加息|降息|hold|cut|hike", full_text, re.I))
+        stance = "neutral"
+        if re.search(r"加息|hawk|偏鹰|higher for longer", full_text, re.I):
+            stance = "hawkish"
+        elif re.search(r"降息|dovish|偏鸽", full_text, re.I):
+            stance = "dovish"
+        rate_decision = _extract_rate_decision(full_text)
+        events.append(
+            {
+                "event_type": "FOMC",
+                "policy_stance": stance,
+                "rate_decision": rate_decision,
+                "vote_split": vote_split,
+                "market_impact_chain": "利率路径预期 -> 全球风险偏好 -> A股开盘风险偏好",
+                "confidence": 0.85 if vote_split and has_rate and rate_decision != "unknown" else 0.6,
+            }
+        )
+
+    if re.search(r"油价|原油|布油|WTI|伊朗|封锁|港口", full_text, re.I):
+        events.append(
+            {
+                "event_type": "OilShock",
+                "policy_stance": "inflationary_risk",
+                "vote_split": "",
+                "market_impact_chain": "能源价格上行 -> 通胀预期抬升 -> 利率预期偏紧 -> 权益风险偏好回落",
+                "confidence": 0.75,
+            }
+        )
+
+    if re.search(r"Meta|并购|收购|AI|监管|国家安全", full_text, re.I):
+        events.append(
+            {
+                "event_type": "CrossBorderAIMnA",
+                "policy_stance": "regulatory_tightening",
+                "vote_split": "",
+                "market_impact_chain": "跨境并购监管趋严 -> 科技估值风险溢价上升 -> 情绪影响中长期大于短期",
+                "confidence": 0.65,
+            }
+        )
+
+    fed_expected = bool(re.search(r"美联储|FOMC|Federal Reserve", full_text, re.I))
+    fed_event = next((e for e in events if e.get("event_type") == "FOMC"), None)
+    reason_codes: List[str] = []
+    if fed_expected and fed_event is None:
+        reason_codes.append("missing_fomc_core_event")
+    if fed_event is not None:
+        if not str(fed_event.get("vote_split") or "").strip():
+            reason_codes.append("missing_fomc_vote_split")
+        if not re.match(r"^\d+-\d+$", str(fed_event.get("vote_split") or "").strip()):
+            reason_codes.append("invalid_vote_split_format")
+        if str(fed_event.get("rate_decision") or "unknown") == "unknown":
+            reason_codes.append("missing_fomc_rate_decision")
+        stance = str(fed_event.get("policy_stance") or "")
+        rate_decision = str(fed_event.get("rate_decision") or "")
+        if rate_decision == "cut" and stance == "hawkish":
+            reason_codes.append("fomc_stance_conflict")
+        if rate_decision == "hike" and stance == "dovish":
+            reason_codes.append("fomc_stance_conflict")
+
+    if reason_codes:
+        severity = "error" if any(x.startswith("missing_fomc") or x in ("invalid_vote_split_format", "fomc_stance_conflict") for x in reason_codes) else "degraded"
+        q = {
+            "quality_status": severity,
+            "degraded_reason": reason_codes[0],
+            "reason_codes": reason_codes,
+            "required_fields": ["event_type", "rate_decision", "vote_split", "policy_stance"],
+        }
+    elif not events:
+        q = {
+            "quality_status": "degraded",
+            "degraded_reason": "policy_events_not_structured",
+            "reason_codes": ["policy_events_not_structured"],
+            "required_fields": ["event_type", "rate_decision", "vote_split", "policy_stance"],
+        }
+    else:
+        q = {
+            "quality_status": "ok",
+            "degraded_reason": "",
+            "reason_codes": [],
+            "required_fields": ["event_type", "rate_decision", "vote_split", "policy_stance"],
+        }
+    rd["policy_event_signals"] = events
+    rd["policy_event_quality"] = q
+    if q.get("quality_status") != "ok":
+        rd.setdefault("degraded", {})
+        rd["degraded"]["policy_event_quality"] = q.get("degraded_reason")
+
+
+def _compute_holiday_position_hint(rd: Dict[str, Any]) -> None:
+    try:
+        from src.config_loader import load_system_config
+        from src.system_status import is_trading_day
+        cfg = load_system_config(use_cache=True)
+    except Exception:
+        cfg = None
+        is_trading_day = None  # type: ignore
+    td_raw = str(rd.get("trade_date") or "").strip()
+    hint: Dict[str, Any] = {"enabled": False, "non_trading_days_ahead": 0}
+    try:
+        dt = datetime.strptime(td_raw, "%Y-%m-%d")
+    except Exception:
+        rd["holiday_position_hint"] = hint
+        return
+    cnt = 0
+    if is_trading_day is not None:
+        for i in range(1, 8):
+            d = dt + timedelta(days=i)
+            if is_trading_day(d, cfg):
+                break
+            cnt += 1
+    hint["non_trading_days_ahead"] = cnt
+    hint["enabled"] = cnt >= 3
+    if hint["enabled"]:
+        hint["title"] = "节前持仓提示"
+        hint["bias_label"] = rd.get("overnight_bias_label") or "分化"
+    rd["holiday_position_hint"] = hint
 
 
 def _change_pct_is_usable(row: Optional[Dict[str, Any]]) -> bool:
@@ -582,6 +1460,7 @@ def build_opening_report_data(fetch_mode: str = "production") -> Tuple[Dict[str,
     )
     if pn is not None:
         rd["tool_fetch_policy_news"] = pn
+    _build_policy_event_signals(rd)
 
     macro = _safe_step("fetch_macro_commodities", tool_fetch_macro_commodities, errors)
     if macro is not None:
@@ -685,6 +1564,7 @@ def build_opening_report_data(fetch_mode: str = "production") -> Tuple[Dict[str,
             if isinstance(data, dict) and data:
                 rd["analysis"] = data
     _mark_analysis_health(rd, analysis_tool_key="tool_analyze_market")
+    _apply_opening_trend_resolution(rd)
 
     vol = _safe_step(
         "predict_volatility",
@@ -808,11 +1688,19 @@ def build_opening_report_data(fetch_mode: str = "production") -> Tuple[Dict[str,
     tsd = ts.get("data") if isinstance(ts, dict) else None
     if isinstance(tsd, dict) and tsd.get("allows_intraday_continuous_wording") is False:
         intraday_allowed = False
+    _attach_rotation_opening_block(
+        rd,
+        errors,
+        fetch_etf_fn=tool_fetch_etf_data,
+        fetch_mode=mode,
+        allow_realtime_validation=bool(intraday_allowed),
+    )
     rd["runtime_context"] = {
         "is_opening_window": bool(intraday_allowed),
         "snapshot_time": rd.get("generated_at"),
         "fallback_mode": "replay" if not intraday_allowed else "realtime",
     }
+    _compute_holiday_position_hint(rd)
 
     if errors:
         rd["runner_errors"] = errors
@@ -1000,24 +1888,6 @@ def tool_run_opening_analysis_and_send(
                     txt = rule.strip()
                     rd["a_share_regime_note"] = txt if txt.startswith("- ") else f"- {txt}"
 
-        gspot = None
-        if not _guard_budget_or_skip("tool_fetch_global_index_spot"):
-            gspot = _call_tool(
-                stage,
-                "tool_fetch_global_index_spot",
-                "fetch_global_index_spot",
-                tool_fetch_index_data,
-                errors,
-                data_type="global_spot",
-                mode=mode_inner,
-                index_codes=_OPENING_GLOBAL_INDEX_CODES,
-            )
-        if gspot is not None:
-            rd["tool_fetch_global_index_spot"] = gspot
-            emb = gspot.get("global_market_digest") if isinstance(gspot, dict) else None
-            if isinstance(emb, dict) and str(emb.get("summary") or "").strip():
-                rd["global_market_digest"] = emb
-
         idx_opening = None
         if not _guard_budget_or_skip("tool_fetch_index_opening"):
             idx_opening = _call_tool(
@@ -1031,14 +1901,6 @@ def tool_run_opening_analysis_and_send(
             )
         if idx_opening is not None:
             rd["tool_fetch_index_opening"] = idx_opening
-
-        mo = _merge_market_overview(gspot, idx_opening)
-        if mo:
-            rd["market_overview"] = mo
-
-        # Tavily digest attach (best-effort; budget guarded)
-        if not sb.expired():
-            _maybe_attach_global_market_tavily_digest(rd, gspot)
 
         # critical realtime snapshots
         rt_idx = None
@@ -1084,41 +1946,9 @@ def tool_run_opening_analysis_and_send(
         if kl is not None:
             rd["tool_compute_index_key_levels"] = kl
 
-        _ind_rt = resolve_indicator_runtime("opening_analysis")
-        tech = None
-        if not _guard_budget_or_skip("tool_calculate_technical_indicators"):
-            tech = _call_tool(
-                stage,
-                "tool_calculate_technical_indicators",
-                "technical_indicators",
-                calculate_indicators_via_tool,
-                errors,
-                symbol="510300",
-                data_type="etf_daily",
-                indicators=["ma", "macd", "rsi", "bollinger", "atr"],
-            )
-        if tech is not None:
-            rd["tool_calculate_technical_indicators"] = tech
-            rd["indicator_runtime"] = {"task": "opening_analysis", "route": _ind_rt.route, "notes": _ind_rt.notes}
-
-        opening_analysis = None
-        if not _guard_budget_or_skip("tool_analyze_market"):
-            opening_analysis = _call_tool(
-                stage,
-                "tool_analyze_market",
-                "analyze_opening_market",
-                tool_analyze_market,
-                errors,
-                moment="opening",
-            )
-        if opening_analysis is not None:
-            rd["tool_analyze_market"] = opening_analysis
-            rd["analyze_opening_market"] = opening_analysis
-            if isinstance(opening_analysis, dict) and opening_analysis.get("success"):
-                data = opening_analysis.get("data")
-                if isinstance(data, dict) and data:
-                    rd["analysis"] = data
-        _mark_analysis_health(rd, analysis_tool_key="tool_analyze_market")
+        mo = _merge_market_overview(None, idx_opening)
+        if mo:
+            rd["market_overview"] = mo
 
         _record_stage_timing(
             stage_timing,
@@ -1137,6 +1967,13 @@ def tool_run_opening_analysis_and_send(
 
         slow_results: Dict[str, Any] = {}
         slow_tasks: List[Tuple[str, str, Callable[..., Any], Tuple[Any, ...], Dict[str, Any]]] = [
+            (
+                "tool_fetch_global_index_spot",
+                "fetch_global_index_spot",
+                tool_fetch_index_data,
+                tuple(),
+                {"data_type": "global_spot", "mode": mode_inner, "index_codes": _OPENING_GLOBAL_INDEX_CODES},
+            ),
             ("tool_fetch_policy_news", "fetch_policy_news", tool_fetch_policy_news, tuple(), {"max_items": 5}),
             ("tool_fetch_macro_commodities", "fetch_macro_commodities", tool_fetch_macro_commodities, tuple(), {}),
             ("tool_fetch_overnight_futures_digest", "fetch_overnight_futures_digest", tool_fetch_overnight_futures_digest, tuple(), {"disable_network": False}),
@@ -1151,7 +1988,51 @@ def tool_run_opening_analysis_and_send(
                 if sb.expired():
                     skipped_tasks.append(tool_key)
                     continue
-                res = _call_tool(stage, tool_key, step_name, fn, errors, *args, **kwargs)
+                if tool_key == "tool_fetch_global_index_spot":
+                    started = time.perf_counter()
+                    provider = _provider_key_for_step(step_name)
+                    sem = sem_pool.get(provider) or sem_pool["default"]
+                    def _provider_run() -> Any:
+                        sem.acquire()
+                        try:
+                            return fn(*args, **kwargs)
+                        finally:
+                            sem.release()
+
+                    with ThreadPoolExecutor(max_workers=1) as ex:
+                        fut = ex.submit(_provider_run)
+                        timeout_s = min(_OPENING_GLOBAL_SPOT_TIMEOUT_S, sb.remaining_s() or _OPENING_GLOBAL_SPOT_TIMEOUT_S)
+                        try:
+                            res = fut.result(timeout=max(0.1, timeout_s))
+                            _append_lineage(
+                                lineage_struct,
+                                stage=stage,
+                                tool_key=tool_key,
+                                started_at=started,
+                                success=bool(isinstance(res, dict) and res.get("success")),
+                                quality_status="ok" if isinstance(res, dict) and res.get("success") else "degraded",
+                                degraded_reason=None if isinstance(res, dict) and res.get("success") else "fetch_failed_or_empty",
+                                source_hint=f"provider={provider}",
+                            )
+                        except FuturesTimeoutError:
+                            res = None
+                            skipped_tasks.append(tool_key)
+                            rd.setdefault("degraded", {})
+                            rd["degraded"]["slow_source_timeout"] = "slow_source_timeout"
+                            rd["degraded"]["slow_source_timeout_tool"] = tool_key
+                            rd["degraded"]["slow_source_timeout_s"] = _OPENING_GLOBAL_SPOT_TIMEOUT_S
+                            _append_lineage(
+                                lineage_struct,
+                                stage=stage,
+                                tool_key=tool_key,
+                                started_at=started,
+                                success=None,
+                                quality_status="degraded",
+                                degraded_reason="slow_source_timeout",
+                                source_hint="skipped_by_timeout",
+                            )
+                else:
+                    res = _call_tool(stage, tool_key, step_name, fn, errors, *args, **kwargs)
                 slow_results[tool_key] = res
         else:
             with ThreadPoolExecutor(max_workers=max(1, int(max_concurrency))) as ex:
@@ -1160,7 +2041,60 @@ def tool_run_opening_analysis_and_send(
                     if sb.expired():
                         skipped_tasks.append(tool_key)
                         continue
-                    fut = ex.submit(_call_tool, stage, tool_key, step_name, fn, errors, *args, **kwargs)
+                    if tool_key == "tool_fetch_global_index_spot":
+                        def _run_global_with_timeout(
+                            _fn: Callable[..., Any],
+                            _args: Tuple[Any, ...],
+                            _kwargs: Dict[str, Any],
+                            _stage: str,
+                            _tool_key: str,
+                            _step_name: str,
+                        ) -> Any:
+                            started = time.perf_counter()
+                            provider = _provider_key_for_step(_step_name)
+                            sem = sem_pool.get(provider) or sem_pool["default"]
+                            def _provider_run() -> Any:
+                                sem.acquire()
+                                try:
+                                    return _fn(*_args, **_kwargs)
+                                finally:
+                                    sem.release()
+
+                            with ThreadPoolExecutor(max_workers=1) as local_ex:
+                                local_fut = local_ex.submit(_provider_run)
+                                try:
+                                    out = local_fut.result(timeout=_OPENING_GLOBAL_SPOT_TIMEOUT_S)
+                                    _append_lineage(
+                                        lineage_struct,
+                                        stage=_stage,
+                                        tool_key=_tool_key,
+                                        started_at=started,
+                                        success=bool(isinstance(out, dict) and out.get("success")),
+                                        quality_status="ok" if isinstance(out, dict) and out.get("success") else "degraded",
+                                        degraded_reason=None if isinstance(out, dict) and out.get("success") else "fetch_failed_or_empty",
+                                        source_hint=f"provider={provider}",
+                                    )
+                                    return out
+                                except FuturesTimeoutError:
+                                    rd.setdefault("degraded", {})
+                                    rd["degraded"]["slow_source_timeout"] = "slow_source_timeout"
+                                    rd["degraded"]["slow_source_timeout_tool"] = _tool_key
+                                    rd["degraded"]["slow_source_timeout_s"] = _OPENING_GLOBAL_SPOT_TIMEOUT_S
+                                    _append_lineage(
+                                        lineage_struct,
+                                        stage=_stage,
+                                        tool_key=_tool_key,
+                                        started_at=started,
+                                        success=None,
+                                        quality_status="degraded",
+                                        degraded_reason="slow_source_timeout",
+                                        source_hint="skipped_by_timeout",
+                                    )
+                                    return None
+
+                        fut = ex.submit(_run_global_with_timeout, fn, args, kwargs, stage, tool_key, step_name)
+                    else:
+                        fut = ex.submit(_call_tool, stage, tool_key, step_name, fn, errors, *args, **kwargs)
                     futures[fut] = tool_key
 
                 # Budgeted collection; on expiry, cancel not-yet-run futures and skip.
@@ -1193,9 +2127,26 @@ def tool_run_opening_analysis_and_send(
                         futures.clear()
                         break
 
+        gspot = slow_results.get("tool_fetch_global_index_spot")
+        if gspot is not None:
+            rd["tool_fetch_global_index_spot"] = gspot
+            emb = gspot.get("global_market_digest") if isinstance(gspot, dict) else None
+            if isinstance(emb, dict) and str(emb.get("summary") or "").strip():
+                rd["global_market_digest"] = emb
+        if isinstance(gspot, dict):
+            attempts = gspot.get("attempts")
+            if isinstance(attempts, list):
+                fail_codes = [str((x or {}).get("failure_code") or "") for x in attempts if isinstance(x, dict)]
+                rd["global_spot_failure_codes"] = [x for x in fail_codes if x]
+                rd["global_spot_attempts"] = len(attempts)
+            src = str(gspot.get("source") or "").strip()
+            if src:
+                rd["global_spot_source_used"] = src
+
         pn = slow_results.get("tool_fetch_policy_news")
         if pn is not None:
             rd["tool_fetch_policy_news"] = pn
+        _build_policy_event_signals(rd)
         macro = slow_results.get("tool_fetch_macro_commodities")
         if macro is not None:
             rd["tool_fetch_macro_commodities"] = macro
@@ -1222,6 +2173,12 @@ def tool_run_opening_analysis_and_send(
             if skipped_tasks is not None:
                 skipped_tasks.append("tool_fetch_global_index_hist_sina(fill)")
 
+        mo2 = _merge_market_overview(rd.get("tool_fetch_global_index_spot"), rd.get("tool_fetch_index_opening"))
+        if mo2:
+            rd["market_overview"] = mo2
+        if not sb.expired():
+            _maybe_attach_global_market_tavily_digest(rd, rd.get("tool_fetch_global_index_spot"))
+
         if skipped_tasks:
             rd.setdefault("degraded", {})
             rd["degraded"]["slow_sources_skipped"] = skipped_tasks
@@ -1242,6 +2199,50 @@ def tool_run_opening_analysis_and_send(
         sb = _StageBudget(budget)
 
         vol = intr = dvol = prev = sig = None
+        # Prefer core market analysis in analytics stage (separate budget) to avoid
+        # being skipped when critical stage is consumed by slow network sources.
+        if not sb.expired():
+            opening_analysis = _call_tool(
+                stage,
+                "tool_analyze_market",
+                "analyze_opening_market",
+                tool_analyze_market,
+                errors,
+                moment="opening",
+            )
+            if opening_analysis is not None:
+                rd["tool_analyze_market"] = opening_analysis
+                rd["analyze_opening_market"] = opening_analysis
+                if isinstance(opening_analysis, dict) and opening_analysis.get("success"):
+                    data = opening_analysis.get("data")
+                    if isinstance(data, dict) and data:
+                        rd["analysis"] = data
+        _mark_analysis_health(rd, analysis_tool_key="tool_analyze_market")
+
+        _ind_rt = resolve_indicator_runtime("opening_analysis")
+        if not sb.expired():
+            tech = _call_tool(
+                stage,
+                "tool_calculate_technical_indicators",
+                "technical_indicators",
+                calculate_indicators_via_tool,
+                errors,
+                symbol="510300",
+                data_type="etf_daily",
+                indicators=["ma", "macd", "rsi", "bollinger", "atr"],
+            )
+            if tech is not None:
+                rd["tool_calculate_technical_indicators"] = tech
+                rd["indicator_runtime"] = {
+                    "task": "opening_analysis",
+                    "route": _ind_rt.route,
+                    "notes": _ind_rt.notes,
+                }
+
+        # Trend resolution depends on market_overview + (optional) local analysis;
+        # run after analysis tool has had a chance to populate rd["analysis"].
+        _apply_opening_trend_resolution(rd)
+
         if not sb.expired():
             vol = _call_tool(
                 stage,
@@ -1354,6 +2355,20 @@ def tool_run_opening_analysis_and_send(
             "indices_realtime": idx_rows[:12],
             "etf_realtime": etf_rows[:12],
         }
+        flags = _cross_check_index_etf_consistency(
+            idx_rows=idx_rows,
+            etf_rows=etf_rows,
+            snapshot_time=str(rd.get("generated_at") or ""),
+        )
+        rd["data_quality_flags"] = flags
+        rd["data_quality_status"] = "degraded" if flags else "ok"
+        ah = rd.get("analysis_health") if isinstance(rd.get("analysis_health"), dict) else {}
+        if flags:
+            # 仅写入质量提示，不覆盖分析主状态/主 reason（避免“慢源/一致性提示”误判为分析失败）。
+            ah["data_quality_flags"] = flags
+            rd["analysis_health"] = ah
+            rd.setdefault("degraded", {})
+            rd["degraded"]["core_snapshot_incomplete"] = [str(x.get("code") or "") for x in flags]
         rd["tracked_assets_snapshot"] = {"etf": tracked_etf, "stocks": []}
         strong_cnt = len([x for x in tracked_etf if x.get("strength") == "强"])
         weak_cnt = len([x for x in tracked_etf if x.get("strength") == "弱"])
@@ -1375,11 +2390,19 @@ def tool_run_opening_analysis_and_send(
         tsd = (rd.get("trading_status") or {}).get("data") if isinstance(rd.get("trading_status"), dict) else None
         if isinstance(tsd, dict) and tsd.get("allows_intraday_continuous_wording") is False:
             intraday_allowed = False
+        _attach_rotation_opening_block(
+            rd,
+            errors,
+            fetch_etf_fn=tool_fetch_etf_data,
+            fetch_mode=mode_inner,
+            allow_realtime_validation=bool(intraday_allowed),
+        )
         rd["runtime_context"] = {
             "is_opening_window": bool(intraday_allowed),
             "snapshot_time": rd.get("generated_at"),
             "fallback_mode": "replay" if not intraday_allowed else "realtime",
         }
+        _compute_holiday_position_hint(rd)
 
         if errors:
             rd["runner_errors"] = errors
@@ -1419,12 +2442,19 @@ def tool_run_opening_analysis_and_send(
     report_data["opening_report_variant"] = "realtime" if rv == "realtime" else "legacy"
     ah = report_data.get("analysis_health") if isinstance(report_data.get("analysis_health"), dict) else {}
     analysis_degraded = bool(ah.get("status") == "degraded")
+    policy_quality = report_data.get("policy_event_quality") if isinstance(report_data.get("policy_event_quality"), dict) else {}
+    policy_is_error = str(policy_quality.get("quality_status") or "").strip().lower() == "error"
+    policy_is_degraded = str(policy_quality.get("quality_status") or "").strip().lower() == "degraded"
     runner_errs = report_data.get("runner_errors") if isinstance(report_data.get("runner_errors"), list) else []
     has_stage_degraded = any(
         isinstance(v, dict) and v.get("status") == "degraded"
         for v in (report_data.get("stage_timing") or {}).values()
     )
-    report_data["run_quality"] = "error" if runner_errs else ("ok_degraded" if (analysis_degraded or has_stage_degraded) else "ok_full")
+    report_data["run_quality"] = (
+        "error"
+        if (runner_errs or policy_is_error)
+        else ("ok_degraded" if (analysis_degraded or has_stage_degraded or policy_is_degraded) else "ok_full")
+    )
     out = tool_send_analysis_report(
         report_data=report_data,
         mode=mode,
@@ -1435,15 +2465,46 @@ def tool_run_opening_analysis_and_send(
         max_chars_per_message=max_chars_per_message,
     )
     if isinstance(out, dict):
+        out_delivery = out.get("delivery") if isinstance(out.get("delivery"), dict) else {}
+        delivery_ok = bool(out_delivery.get("ok"))
+        delivery_status = str(out_delivery.get("status") or "").strip() or (
+            "ok" if delivery_ok else "failed"
+        )
+        if not delivery_ok:
+            report_data["run_quality"] = "error"
         data = dict(out.get("data") or {})
         data["runner_errors"] = report_data.get("runner_errors") or []
         data["report_type"] = "opening"
         data["run_quality"] = report_data.get("run_quality") or "ok_full"
         data["analysis_health"] = report_data.get("analysis_health") or {"status": "unknown", "reason": ""}
-        # explicit delivery semantics for test/dry-run verification
+        data["overnight_bias_vote"] = report_data.get("overnight_bias_vote") or []
+        data["overnight_bias_score"] = report_data.get("overnight_bias_score")
+        data["overnight_bias_label"] = report_data.get("overnight_bias_label")
+        data["trend_resolution"] = report_data.get("trend_resolution") or {}
+        data["policy_event_quality"] = report_data.get("policy_event_quality") or {}
+        data["holiday_position_hint"] = report_data.get("holiday_position_hint") or {}
+        data["data_quality_flags"] = report_data.get("data_quality_flags") or []
+        data["slow_sources_skipped"] = (report_data.get("degraded") or {}).get("slow_sources_skipped") or []
+        data["global_spot_source_used"] = report_data.get("global_spot_source_used")
+        data["global_spot_attempts"] = report_data.get("global_spot_attempts")
+        data["global_spot_failure_code"] = (report_data.get("global_spot_failure_codes") or [None])[0]
+        st = report_data.get("stage_timing") if isinstance(report_data.get("stage_timing"), dict) else {}
+        critical = st.get("critical") if isinstance(st.get("critical"), dict) else {}
+        data["critical_elapsed_ms"] = critical.get("elapsed_ms")
+        lineage_rows = report_data.get("lineage_struct") if isinstance(report_data.get("lineage_struct"), list) else []
+        g_rows = [
+            x for x in lineage_rows
+            if isinstance(x, dict) and str(x.get("tool_key") or "") == "tool_fetch_global_index_spot"
+        ]
+        data["global_spot_elapsed_ms"] = (g_rows[-1].get("elapsed_ms") if g_rows else None)
+        # explicit delivery semantics for cron ACK verification
         data["delivery"] = {
             "attempted": bool((mode or "").strip().lower() == "prod"),
             "mode": "prod_send" if (mode or "").strip().lower() == "prod" else "skip_test",
+            "ok": delivery_ok,
+            "status": delivery_status,
+            "channel": out_delivery.get("channel"),
+            "attempts": out_delivery.get("attempts"),
         }
         if emit_stage_timing:
             data["stage_timing"] = report_data.get("stage_timing") or {}

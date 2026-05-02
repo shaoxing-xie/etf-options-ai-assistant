@@ -8,6 +8,13 @@ set +a
 
 cd /home/xie/etf-options-ai-assistant
 
+lock_file="/tmp/intraday_tail_screening_cron.lock"
+exec 9>"${lock_file}"
+if ! flock -n 9; then
+  echo "SKIP_ALREADY_RUNNING:intraday_tail_screening"
+  exit 0
+fi
+
 # 交易日与编排 state 对齐（上海日历），避免 orchestration 默认 UTC --trade-date 与落盘 run_date 漂移。
 ORCH_TRADE_DATE="$(TZ=Asia/Shanghai date +%F)"
 export ORCH_TRADE_DATE

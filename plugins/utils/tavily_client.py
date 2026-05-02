@@ -15,8 +15,12 @@ from __future__ import annotations
 import json
 import os
 import re
+import time
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
+
+_TAVILY_USAGE_LIMIT_UNTIL_TS = 0.0
+_TAVILY_USAGE_LIMIT_COOLDOWN_SEC = 1800.0
 
 
 def _ensure_config_env_loaded() -> None:
@@ -131,6 +135,7 @@ def tavily_post_search(
 
     返回 ``{success, data?, message?, http_status?}``；``data`` 为响应 JSON。
     """
+    global _TAVILY_USAGE_LIMIT_UNTIL_TS
     keys = collect_tavily_api_keys()
     if not keys:
         return {
@@ -139,6 +144,17 @@ def tavily_post_search(
             "data": None,
             "http_status": None,
         }
+    now_ts = time.time()
+    if _TAVILY_USAGE_LIMIT_UNTIL_TS and now_ts < _TAVILY_USAGE_LIMIT_UNTIL_TS:
+        # Cooldown should block only when there is no alternate key to rotate.
+        if len(keys) <= 1:
+            wait_s = int(max(0.0, _TAVILY_USAGE_LIMIT_UNTIL_TS - now_ts))
+            return {
+                "success": False,
+                "message": f"tavily_usage_limit_cooldown:{wait_s}s",
+                "data": None,
+                "http_status": 432,
+            }
     try:
         import requests
     except ImportError:
@@ -154,7 +170,7 @@ def tavily_post_search(
 
     last_status: Optional[int] = None
     last_msg = ""
-    for key in keys:
+    for idx, key in enumerate(keys):
         body = dict(body_without_api_key)
         body["api_key"] = key
         try:
@@ -182,6 +198,12 @@ def tavily_post_search(
                 last_msg = f"{last_msg} {j.get('detail')}"
         except Exception:
             pass
+        if resp.status_code == 432:
+            # Per-key quota can be exhausted; try remaining keys first.
+            if idx >= len(keys) - 1:
+                _TAVILY_USAGE_LIMIT_UNTIL_TS = time.time() + float(_TAVILY_USAGE_LIMIT_COOLDOWN_SEC)
+                break
+            continue
         if not _tavily_status_try_next_key(resp.status_code):
             break
     return {

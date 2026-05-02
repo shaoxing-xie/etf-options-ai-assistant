@@ -187,6 +187,43 @@ def _resolve_env_template(value: Any) -> str:
     return str(os.environ.get(var, default) or "").strip()
 
 
+def resolve_feishu_webhook_url(
+    webhook_url: Optional[str] = None,
+    config: Optional[Dict[str, Any]] = None,
+) -> str:
+    """
+    解析飞书 webhook：显式参数 > notification.feishu_webhook（含 ${VAR}）> 环境变量。
+
+    OpenClaw 子进程若未把占位符展开或 YAML 为 null 时，直接读 FEISHU_WEBHOOK_URL 等兜底。
+    """
+    import os
+
+    notification_cfg: Dict[str, Any] = {}
+    if isinstance(config, dict):
+        raw = config.get("notification")
+        if isinstance(raw, dict):
+            notification_cfg = raw
+
+    for candidate in (webhook_url, notification_cfg.get("feishu_webhook")):
+        if candidate is None:
+            continue
+        if isinstance(candidate, str) and not candidate.strip():
+            continue
+        w = _resolve_env_template(candidate)
+        if isinstance(w, str) and w.startswith("http"):
+            return w.strip()
+
+    try:
+        from src.feishu_webhook_envfile import effective_feishu_webhook_url
+
+        w = effective_feishu_webhook_url().strip()
+    except Exception:
+        w = (os.getenv("FEISHU_WEBHOOK_URL") or "").strip()
+    if w.lower().startswith("http"):
+        return w
+    return ""
+
+
 def tool_send_feishu_notification(
     notification_type: str,
     message: Optional[str] = None,
@@ -264,11 +301,9 @@ def tool_send_feishu_notification(
         decision = None
         key = ""
 
-    # 4) 发送：优先 webhook（无需 chat_id）
-    notification_cfg = (config or {}).get("notification", {}) if isinstance(config, dict) else {}
-    webhook_raw = webhook_url or notification_cfg.get("feishu_webhook")
-    webhook = _resolve_env_template(webhook_raw)
-    if webhook and webhook.startswith("http"):
+    # 4) 发送：优先 webhook（无需 chat_id）；配置为空时回退 FEISHU_WEBHOOK_URL
+    webhook = resolve_feishu_webhook_url(webhook_url, config if isinstance(config, dict) else None)
+    if webhook:
         send_result = _send_via_webhook(webhook, text)
         # 成功发送后记录冷却 key
         try:

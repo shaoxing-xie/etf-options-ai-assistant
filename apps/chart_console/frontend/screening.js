@@ -47,6 +47,7 @@ let lastDates = [];
 let cachedSummary = null;
 let tailCached = null;
 let researchCache = { dashboard: {}, view: {}, timeline: [] };
+let researchSixIndexSnapshot = {};
 let fallbackBannerTimer = null;
 const RESEARCH_ALERT_DEFAULTS = {
   hit_rate_5d_pct: { warn_below: 0.45, bad_below: 0.35 },
@@ -59,7 +60,9 @@ const ROTATION_ETF_NAME_MAP = {
   "510050": "上证50ETF",
   "512100": "1000ETF",
   "512480": "半导体ETF",
+  "516880": "光伏ETF",
   "515880": "通信ETF",
+  "518880": "黄金ETF",
   "588080": "科创50ETF",
   "159915": "创业板ETF",
   "512760": "芯片ETF",
@@ -90,6 +93,7 @@ const ROTATION_ETF_NAME_MAP = {
   "513880": "日经225ETF",
   "515400": "资源ETF",
 };
+const SIX_INDEX_ORDER = ["000001.SH", "000300.SH", "000688.SH", "399006.SZ", "000905.SH", "000852.SH"];
 
 async function jgetWithFallback(primaryUrl, fallbackUrl) {
   try {
@@ -1046,6 +1050,185 @@ function renderResearchKV(elId, rows) {
     .join("");
 }
 
+function fmtNum(v, digits = 2) {
+  const n = Number(v);
+  return Number.isFinite(n) ? n.toFixed(digits) : "—";
+}
+
+function fmtPctNumber(v, digits = 2) {
+  const n = Number(v);
+  return Number.isFinite(n) ? `${n.toFixed(digits)}%` : "—";
+}
+
+function renderSixIndexSummaryCards(payload) {
+  const el = qs("researchSixIndexSummaryCards");
+  if (!el) return;
+  const summary = payload && typeof payload.summary === "object" ? payload.summary : {};
+  const meta = payload && typeof payload._meta === "object" ? payload._meta : {};
+  const verify = payload && typeof payload.verification_summary === "object" ? payload.verification_summary : {};
+  const weekly = payload && typeof payload.weekly_metrics_summary === "object" ? payload.weekly_metrics_summary : {};
+  const verifyAcc =
+    verify.available && Number.isFinite(Number(verify.accuracy)) ? `${(Number(verify.accuracy) * 100).toFixed(1)}%` : "—";
+  const weeklyHit =
+    weekly.available && Number.isFinite(Number(weekly.hit_rate)) ? `${(Number(weekly.hit_rate) * 100).toFixed(1)}%` : "—";
+  const weeklyBrier = weekly.available && Number.isFinite(Number(weekly.brier_score)) ? Number(weekly.brier_score).toFixed(4) : "—";
+  const cards = [
+    { label: "看多", value: summary.up_count ?? 0, hint: "direction=up" },
+    { label: "看空", value: summary.down_count ?? 0, hint: "direction=down" },
+    { label: "中性", value: summary.neutral_count ?? 0, hint: "direction=neutral" },
+    { label: "质量", value: meta.quality_status || "unknown", hint: meta.generated_at || "—" },
+    { label: "最新验证命中", value: verifyAcc, hint: verify.target_date || "无已验证样本" },
+    { label: "20日命中率", value: weeklyHit, hint: `n=${weekly.samples ?? 0}` },
+    { label: "20日Brier", value: weeklyBrier, hint: weekly.as_of_target_date || "—" },
+  ];
+  el.innerHTML = cards
+    .map(
+      (c) => `<div class="kpi-card">
+        <div class="kpi-label">${esc(c.label)}</div>
+        <div class="kpi-value">${esc(c.value)}</div>
+        <div class="kpi-hint">${esc(c.hint)}</div>
+      </div>`,
+    )
+    .join("");
+}
+
+function renderSixIndexMeta(payload) {
+  const meta = payload && typeof payload._meta === "object" ? payload._meta : {};
+  const verify = payload && typeof payload.verification_summary === "object" ? payload.verification_summary : {};
+  const weekly = payload && typeof payload.weekly_metrics_summary === "object" ? payload.weekly_metrics_summary : {};
+  researchSixIndexSnapshot = payload && typeof payload === "object" ? payload : {};
+  const generatedAt = String(meta.generated_at || "");
+  const generatedAtDisplay = generatedAt ? generatedAt.replace("T", " ").replace("+08:00", " +08:00") : "—";
+  renderResearchKV("researchSixIndexMeta", [
+    { k: "交易日", v: payload?.trade_date || "—" },
+    { k: "预测目标日", v: payload?.predict_for_trade_date || "—" },
+    { k: "整体质量", v: meta.quality_status || "unknown" },
+    { k: "生成时间", v: generatedAtDisplay },
+    { k: "最近已验证目标日", v: verify.available ? verify.target_date || "—" : "无" },
+    { k: "最近已验证样本数", v: verify.available ? verify.verified_count ?? 0 : 0 },
+    { k: "20日样本覆盖", v: weekly.available ? fmtPctNumber(Number(weekly.coverage || 0) * 100, 1) : "—" },
+  ]);
+  const statusEl = qs("researchSixIndexStatus");
+  if (statusEl) {
+    const reasons = (Array.isArray(payload?.predictions) ? payload.predictions : [])
+      .flatMap((row) => {
+        const raw = String(row?.degraded_reason || "").trim();
+        if (!raw) return [];
+        return raw
+          .split(",")
+          .map((item) => item.trim())
+          .filter(Boolean)
+          .map((item) => ({ indexName: row?.index_name || row?.index_code || "—", reason: item }));
+      });
+    if (!reasons.length) {
+      statusEl.textContent = "当前快照质量正常。";
+    } else {
+      statusEl.innerHTML = `<div class="research-six-index-status-title">当前存在质量提示项</div><ul class="research-six-index-status-list">${reasons
+        .map((item) => `<li><strong>${esc(item.indexName)}</strong>: ${esc(item.reason)}</li>`)
+        .join("")}</ul>`;
+    }
+  }
+}
+
+function buildSixIndexClipboardText(payload) {
+  const p = payload && typeof payload === "object" ? payload : {};
+  const predictions = Array.isArray(p.predictions) ? p.predictions.slice() : [];
+  const ordered = predictions.sort((a, b) => {
+    const ai = SIX_INDEX_ORDER.indexOf(String(a?.index_code || ""));
+    const bi = SIX_INDEX_ORDER.indexOf(String(b?.index_code || ""));
+    return (ai === -1 ? 999 : ai) - (bi === -1 ? 999 : bi);
+  });
+  const lines = [
+    "六指数次日预测",
+    `交易日: ${p.trade_date || "—"}`,
+    `预测目标日: ${p.predict_for_trade_date || "—"}`,
+    `方向统计: up=${p?.summary?.up_count ?? 0}, down=${p?.summary?.down_count ?? 0}, neutral=${p?.summary?.neutral_count ?? 0}`,
+    `最新验证: ${
+      p?.verification_summary?.available
+        ? `${p.verification_summary.target_date} 命中率 ${fmtPctNumber(Number(p.verification_summary.accuracy || 0) * 100, 1)}`
+        : "暂无"
+    }`,
+    `20日指标: ${
+      p?.weekly_metrics_summary?.available
+        ? `hit=${fmtPctNumber(Number(p.weekly_metrics_summary.hit_rate || 0) * 100, 1)}, brier=${fmtNum(
+            p.weekly_metrics_summary.brier_score,
+            4,
+          )}, n=${p.weekly_metrics_summary.samples ?? 0}`
+        : "暂无"
+    }`,
+    "",
+  ];
+  for (const row of ordered) {
+    lines.push(
+      `${row?.index_name || "—"}(${row?.index_code || "—"}): ${row?.direction || "—"} / 概率 ${fmtPctNumber(row?.probability)} / 置信度 ${
+        row?.confidence || "—"
+      } / 质量 ${row?.quality_status || "unknown"}`,
+    );
+  }
+  return lines.join("\n");
+}
+
+function renderSixIndexCards(payload) {
+  const wrap = qs("researchSixIndexCards");
+  const empty = qs("researchSixIndexEmpty");
+  if (!wrap) return;
+  const predictions = Array.isArray(payload?.predictions) ? payload.predictions.slice() : [];
+  const ordered = predictions.sort((a, b) => {
+    const ai = SIX_INDEX_ORDER.indexOf(String(a?.index_code || ""));
+    const bi = SIX_INDEX_ORDER.indexOf(String(b?.index_code || ""));
+    return (ai === -1 ? 999 : ai) - (bi === -1 ? 999 : bi);
+  });
+  if (empty) empty.style.display = ordered.length ? "none" : "block";
+  if (!ordered.length) {
+    wrap.innerHTML = "";
+    return;
+  }
+  wrap.innerHTML = ordered
+    .map((row) => {
+      const direction = String(row?.direction || "neutral");
+      const quality = String(row?.quality_status || "unknown");
+      const signalItems = Object.entries(row?.signals || {});
+      const score = row?.score_breakdown?.total_score;
+      return `<section class="research-six-index-card">
+        <div class="research-six-index-head">
+          <div>
+            <div class="research-six-index-title">${esc(row?.index_name || "—")}</div>
+            <div class="small screening-muted">${esc(row?.index_code || "—")}</div>
+          </div>
+          <div class="research-six-index-badges">
+            <span class="research-dir-badge tone-${esc(direction)}">${esc(direction)}</span>
+            <span class="research-quality-badge tone-${esc(quality)}">${esc(quality)}</span>
+          </div>
+        </div>
+        <div class="research-six-index-stats">
+          <div class="research-kv"><div class="research-k">概率</div><div class="research-v research-v-mono research-v-probability">${esc(fmtPctNumber(row?.probability))}</div></div>
+          <div class="research-kv"><div class="research-k">置信度</div><div class="research-v">${esc(row?.confidence || "—")}</div></div>
+          <div class="research-kv research-six-index-score"><div class="research-k">总分</div><div class="research-v research-v-mono">${esc(fmtNum(score, 4))}</div></div>
+        </div>
+        <div class="small">${esc(row?.reasoning || "—")}</div>
+        <details class="screening-details">
+          <summary>查看因子与降级细节</summary>
+          <div class="research-six-index-detail">
+            <div class="research-kv"><div class="research-k">降级原因</div><div class="research-v">${esc(row?.degraded_reason || "无")}</div></div>
+            <div class="research-kv"><div class="research-k">模型</div><div class="research-v">${esc(row?.model_family || "—")}</div></div>
+            <div class="research-kv"><div class="research-k">signals</div><div class="research-v"><pre class="research-json-pre">${esc(JSON.stringify(row?.signals || {}, null, 2))}</pre></div></div>
+            <div class="research-kv"><div class="research-k">score_breakdown</div><div class="research-v"><pre class="research-json-pre">${esc(
+              JSON.stringify(row?.score_breakdown || {}, null, 2),
+            )}</pre></div></div>
+            ${
+              signalItems.length
+                ? `<div class="research-six-index-pill-row">${signalItems
+                    .map(([k, v]) => `<span class="screening-factor-pill">${esc(k)}=${esc(typeof v === "number" ? fmtNum(v, 4) : v)}</span>`)
+                    .join("")}</div>`
+                : ""
+            }
+          </div>
+        </details>
+      </section>`;
+    })
+    .join("");
+}
+
 function renderResearchTimeline(events) {
   const el = qs("researchTimeline");
   if (!el) return;
@@ -1184,7 +1367,9 @@ function renderResearchHeatmap(rows) {
     const c = Number(r.count) || 0;
     const pct = Math.round((c / max) * 100);
     const tr = document.createElement("tr");
-    tr.innerHTML = `<td>${esc(r.sector_name || "未标注")}</td><td>${esc(c)}</td><td><div class="research-heat-bar" style="width:${pct}%"></div></td>`;
+    const label = r.sector_name || "未标注";
+    tr.title = `${label}：${c} 只（相对本表最大值的条形占比 ${pct}%）`;
+    tr.innerHTML = `<td>${esc(label)}</td><td>${esc(c)}</td><td><div class="research-heat-bar" style="width:${pct}%"></div></td>`;
     tbody.appendChild(tr);
   }
 }
@@ -1400,41 +1585,177 @@ function setResearchSubview(name) {
   const t2 = qs("subtab-research-nightly");
   const t3 = qs("subtab-research-tail");
   const t4 = qs("subtab-research-rotation");
+  const t5 = qs("subtab-research-six-index");
   if (t1) t1.setAttribute("aria-selected", String(name === "overview"));
   if (t2) t2.setAttribute("aria-selected", String(name === "nightly"));
   if (t3) t3.setAttribute("aria-selected", String(name === "tail"));
   if (t4) t4.setAttribute("aria-selected", String(name === "rotation"));
+  if (t5) t5.setAttribute("aria-selected", String(name === "six-index"));
 
   const drawer = qs("researchAnomalyDrawer");
   if (drawer && name !== "overview") drawer.style.display = "none";
 }
 
 function renderRotationPanel(payload) {
+  const ROTATION_UI_BUILD = "20260501-2028";
   const sumEl = qs("researchRotationSummary");
-  const tbody = qs("researchRotationTbody");
+  const unifiedTbody = qs("researchRotationUnifiedTbody");
+  const tbody = qs("researchRotationLegacyTbody");
+  const secSumEl = qs("researchSectorRotationSummary");
+  const secTbody = qs("researchSectorRotationLegacyTbody");
+  if (unifiedTbody) unifiedTbody.innerHTML = "";
   if (tbody) tbody.innerHTML = "";
+  if (secTbody) secTbody.innerHTML = "";
   const p = payload && typeof payload === "object" ? payload : {};
   const dq = p.data_quality && typeof p.data_quality === "object" ? p.data_quality : {};
   const gateObj = p.three_factor_context && typeof p.three_factor_context === "object" ? p.three_factor_context.gate || {} : {};
   const gateDisplay = gateObj.total_multiplier ?? gateObj.stage_multiplier ?? "—";
+  const effEnv = p.sector_environment_effective && typeof p.sector_environment_effective === "object" ? p.sector_environment_effective : {};
+  const effGate = effEnv.effective_gate ?? "—";
   const degradedReasons = Array.isArray(dq.degraded_reasons) ? dq.degraded_reasons : [];
   const warnings = Array.isArray(dq.warnings) ? dq.warnings : [];
   const errors = Array.isArray(dq.errors) ? dq.errors : [];
   const reasonText = [...degradedReasons, ...warnings, ...errors].filter(Boolean).join("；");
   const top = Array.isArray(p.top5) ? p.top5 : [];
+  const recs = Array.isArray(p.recommendations) ? p.recommendations : [];
+  const unifiedRaw = Array.isArray(p.unified_next_day) ? p.unified_next_day : [];
+  const unified = unifiedRaw.length
+    ? unifiedRaw
+    : recs.map((r, idx) => ({
+        rank: r.rank ?? idx + 1,
+        etf_code: r.etf_code || r.symbol || "",
+        etf_name: r.etf_name || "",
+        sector: r.sector || "",
+        unified_score: r.composite_score ?? r.score,
+        components: {
+          rps_20d: r.signals?.rps_20d,
+          rps_5d: r.signals?.rps_5d,
+          rps_change: r.signals?.rps_change,
+          three_factor_score: null,
+          volume_ratio: r.signals?.volume_ratio,
+        },
+        gate_effective: effGate,
+        allocation_pct: r.allocation_pct,
+        three_factor_missing: true,
+        cautions: Array.isArray(r.cautions) ? r.cautions : [],
+        explain_bullets: Array.isArray(r.explain_bullets) ? r.explain_bullets : [],
+      }));
+  const secEnv = p.sector_environment && typeof p.sector_environment === "object" ? p.sector_environment : {};
+  const deriveGateFromRecs = () => {
+    const vals = recs
+      .map((r) => Number(r?.signals?.rps_20d))
+      .filter((x) => Number.isFinite(x));
+    if (!vals.length) return "UNKNOWN";
+    const strongRatio = vals.filter((x) => x >= 85).length / vals.length;
+    if (strongRatio > 0.3) return "GO";
+    if (strongRatio > 0.1) return "CAUTION";
+    return "STOP";
+  };
+  const secGateRaw = String(secEnv.gate || "").trim();
+  const secGateDisplay = secGateRaw && secGateRaw !== "UNKNOWN" ? secGateRaw : (effGate && effGate !== "UNKNOWN" ? effGate : deriveGateFromRecs());
+  const secReasonCodes = Array.isArray(secEnv.reason_codes) ? secEnv.reason_codes : [];
+  const secReasonDisplay =
+    secReasonCodes.length && secReasonCodes[0] !== "phase_a_no_environment_gate"
+      ? secReasonCodes.join("；")
+      : `ui_derived_from_recommendations:${secGateDisplay}`;
+  const gateSource =
+    secGateRaw && secGateRaw !== "UNKNOWN"
+      ? "api.sector_environment.gate"
+      : effGate && effGate !== "UNKNOWN"
+      ? "api.sector_environment_effective.effective_gate"
+      : "ui.derived_from_recommendations";
   const quality = String((p._meta || {}).quality_status || p.quality_status || "unknown");
+  const displayDate = String(p.trade_date || (p._meta || {}).trade_date || "");
+  const requestedDate = String(p._requested_trade_date || displayDate || "");
+  const autoFallback = Boolean(p._auto_fallback_to_prev_trade_date);
   if (sumEl) {
+    const rpsCountHint = recs.length < 5 ? `（低于目标5，可能受当日数据可用性影响）` : "";
     sumEl.innerHTML = `<div><strong>交易日</strong>：${esc(p.trade_date || (p._meta || {}).trade_date || "—")}</div>
       <div><strong>质量状态</strong>：${esc(quality)}</div>
-      <div><strong>门闸</strong>：${esc(gateDisplay)}</div>
+      <div><strong>UI版本</strong>：${esc(ROTATION_UI_BUILD)}</div>
+      <div><strong>三维门闸（乘子）</strong>：${esc(gateDisplay)}</div>
+      <div><strong>合成环境门闸</strong>：${esc(effGate)}</div>
+      <div><strong>RPS条数</strong>：${esc(recs.length)}${esc(rpsCountHint)}</div>
       <div><strong>降级说明</strong>：${esc(reasonText || "无")}</div>`;
+    if (autoFallback && requestedDate && displayDate && requestedDate !== displayDate) {
+      sumEl.innerHTML += `<div><strong>非交易日回退</strong>：当前为非交易日/低可用日，已自动从 ${esc(
+        requestedDate,
+      )} 回退到上一交易日 ${esc(displayDate)}</div>`;
+    }
   }
+  if (secSumEl) {
+    secSumEl.innerHTML = `<div><strong>插件环境 gate</strong>：${esc(secGateDisplay || "—")}</div>
+      <div><strong>reason_codes</strong>：${esc(secReasonDisplay || "无")}</div>
+      <div><strong>gate_source</strong>：${esc(gateSource)}</div>`;
+  }
+
+  if (unifiedTbody) {
+    if (!unified.length) {
+      const tr = document.createElement("tr");
+      tr.innerHTML = "<td colspan='13'>暂无统一轮动建议</td>";
+      unifiedTbody.appendChild(tr);
+    } else {
+      for (const r of unified) {
+        const comp = r.components && typeof r.components === "object" ? r.components : {};
+        const code = String(r.etf_code || "");
+        const name = r.etf_name || ROTATION_ETF_NAME_MAP[code] || "—";
+        const cautions = Array.isArray(r.cautions) ? r.cautions.join("；") : "";
+        const tr = document.createElement("tr");
+        tr.innerHTML = `<td>${esc(r.rank ?? "—")}</td>
+          <td>${esc(code)}</td>
+          <td>${esc(name)}</td>
+          <td>${esc(r.sector || "—")}</td>
+          <td>${esc(r.unified_score ?? "—")}</td>
+          <td>${esc(comp.rps_20d ?? "—")}</td>
+          <td>${esc(comp.rps_5d ?? "—")}</td>
+          <td>${esc(comp.rps_change ?? "—")}</td>
+          <td>${esc(comp.three_factor_score ?? "—")}</td>
+          <td>${esc(r.gate_effective ?? "—")}</td>
+          <td>${esc(r.allocation_pct ?? "—")}</td>
+          <td>${esc(r.three_factor_missing ? "是" : "否")}</td>
+          <td>${esc(cautions || "—")}</td>`;
+        unifiedTbody.appendChild(tr);
+      }
+    }
+  }
+
+  const bulletEl = qs("researchRotationUnifiedBullets");
+  if (bulletEl) {
+    bulletEl.innerHTML = "";
+    let anyBullets = false;
+    const fallbackBullets = (r) => {
+      const comp = r.components && typeof r.components === "object" ? r.components : {};
+      const b = [];
+      if (comp.rps_20d != null || comp.rps_5d != null || comp.rps_change != null) {
+        b.push(`RPS20=${comp.rps_20d ?? "—"} / RPS5=${comp.rps_5d ?? "—"} / Δ=${comp.rps_change ?? "—"}`);
+      }
+      if (r.gate_effective) b.push(`门闸=${r.gate_effective}`);
+      if (comp.volume_ratio != null) b.push(`量比=${comp.volume_ratio}`);
+      return b;
+    };
+    for (const r of unified) {
+      const bulletsRaw = Array.isArray(r.explain_bullets) ? r.explain_bullets : [];
+      const bullets = bulletsRaw.length ? bulletsRaw : fallbackBullets(r);
+      if (!bullets.length) continue;
+      anyBullets = true;
+      const li = document.createElement("li");
+      li.style.marginBottom = "4px";
+      li.innerHTML = `<strong>${esc(String(r.etf_code || ""))}</strong>：${esc(bullets.join(" / "))}`;
+      bulletEl.appendChild(li);
+    }
+    if (!anyBullets) {
+      const li = document.createElement("li");
+      li.className = "screening-muted";
+      li.textContent = "暂无可解释要点";
+      bulletEl.appendChild(li);
+    }
+  }
+
   if (!tbody) return;
   if (!top.length) {
     const tr = document.createElement("tr");
-    tr.innerHTML = "<td colspan='6'>暂无轮动推荐</td>";
+    tr.innerHTML = "<td colspan='6'>暂无轮动推荐（legacy）</td>";
     tbody.appendChild(tr);
-    return;
   }
   for (const r of top) {
     const tf = r.three_factor || {};
@@ -1446,6 +1767,27 @@ function renderRotationPanel(payload) {
     )}</td><td>${esc(tf.capital_resonance_score ?? "—")}</td><td>${esc(tf.environment_gate ?? "—")}</td>`;
     tbody.appendChild(tr);
   }
+
+  if (!secTbody) return;
+  if (!recs.length) {
+    const tr = document.createElement("tr");
+    tr.innerHTML = "<td colspan='6'>暂无行业ETF建议（RPS，legacy）</td>";
+    secTbody.appendChild(tr);
+    return;
+  }
+  for (const r of recs) {
+    const tr = document.createElement("tr");
+    const etf = String(r.etf_code || r.symbol || "");
+    const name = r.etf_name || ROTATION_ETF_NAME_MAP[etf] || "—";
+    const cautions = Array.isArray(r.cautions) ? r.cautions.join("；") : "";
+    tr.innerHTML = `<td>${esc(r.rank ?? "—")}</td>
+      <td>${esc(r.sector || "—")}</td>
+      <td>${esc(etf)}(${esc(name)})</td>
+      <td>${esc(r.composite_score ?? r.score ?? "—")}</td>
+      <td>${esc(r.allocation_pct ?? "—")}%</td>
+      <td>${esc(cautions || "—")}</td>`;
+    secTbody.appendChild(tr);
+  }
 }
 
 async function loadResearch(tradeDateOverride = "") {
@@ -1456,6 +1798,12 @@ async function loadResearch(tradeDateOverride = "") {
     const dates = Array.isArray(hist.data)
       ? hist.data.map((x) => (typeof x === "string" ? x : x.date)).filter(Boolean)
       : [];
+    const rotationDatesResp = await jgetWithFallback("/api/semantic/rotation_trade_dates", "");
+    const rotationDates = Array.isArray(rotationDatesResp.data) ? rotationDatesResp.data.filter(Boolean) : [];
+    const latestRotationDate = rotationDates.length
+      ? rotationDates.reduce((acc, d) => (String(d) > String(acc) ? d : acc), "")
+      : "";
+
     const metricsResp = await jgetWithFallback(
       tradeDateOverride
         ? `/api/semantic/research_metrics?trade_date=${encodeURIComponent(tradeDateOverride)}&window=5`
@@ -1463,11 +1811,8 @@ async function loadResearch(tradeDateOverride = "") {
       "/api/semantic/dashboard",
     );
     const metricsData = metricsResp.data || {};
-    let tradeDate = (metricsData?._meta || {}).trade_date || "";
+    let tradeDate = tradeDateOverride || latestRotationDate || (metricsData?._meta || {}).trade_date || "";
     if (!tradeDate && dates.length) tradeDate = dates[dates.length - 1];
-    if (tradeDateOverride) {
-      tradeDate = tradeDateOverride;
-    }
     const diagnosticsResp = await jgetWithFallback(
       `/api/semantic/research_diagnostics?trade_date=${encodeURIComponent(tradeDate)}&window=5`,
       `/api/semantic/timeline?trade_date=${encodeURIComponent(tradeDate)}`,
@@ -1489,14 +1834,53 @@ async function loadResearch(tradeDateOverride = "") {
           `/api/screening/by-date?date=${encodeURIComponent(tradeDate)}`,
         )
       : { data: {} };
-    const rotation = await jgetWithFallback(
+    let rotation = await jgetWithFallback(
       tradeDate
         ? `/api/semantic/rotation_latest?trade_date=${encodeURIComponent(tradeDate)}`
         : "/api/semantic/rotation_latest",
       "",
     );
+    // Non-trading-day fallback:
+    // when user did not explicitly pick a date and current snapshot has too few RPS rows,
+    // fall back to the previous available rotation trade date for a more stable default view.
+    if (!tradeDateOverride && rotationDates.length > 1) {
+      const curRecs = Array.isArray((rotation.data || {}).recommendations) ? rotation.data.recommendations : [];
+      if (curRecs.length > 0 && curRecs.length < 5) {
+        const sorted = rotationDates.slice().sort();
+        const prev = sorted.filter((d) => String(d) < String(tradeDate)).pop();
+        if (prev) {
+          const prevRot = await jgetWithFallback(`/api/semantic/rotation_latest?trade_date=${encodeURIComponent(prev)}`, "");
+          const prevRecs = Array.isArray((prevRot.data || {}).recommendations) ? prevRot.data.recommendations : [];
+          if (prevRecs.length >= curRecs.length) {
+            rotation = prevRot;
+            if (!rotation.data || typeof rotation.data !== "object") rotation.data = {};
+            rotation.data._requested_trade_date = tradeDate;
+            rotation.data._auto_fallback_to_prev_trade_date = true;
+            tradeDate = prev;
+          }
+        }
+      }
+    }
+    const sixIndexDatesResp = await jget("/api/semantic/six_index_next_day_trade_dates");
+    const sixIndexDates = Array.isArray(sixIndexDatesResp.data) ? sixIndexDatesResp.data.filter(Boolean) : [];
+    // "默认选中最新交易日"必须做成与数组顺序无关的选择（避免出现显示最旧日期）。
+    // YYYY-MM-DD 字典序与时间序一致，因此直接取最大值即可。
+    const sixIndexLatestTradeDate = sixIndexDates.reduce(
+      (acc, d) => (String(d) > String(acc) ? d : acc),
+      "",
+    );
+    const sixIndexTradeDate =
+      (tradeDateOverride && sixIndexDates.includes(tradeDateOverride) ? tradeDateOverride : "") ||
+      (tradeDate && sixIndexDates.includes(tradeDate) ? tradeDate : "") ||
+      sixIndexLatestTradeDate;
+    const sixIndexResp = await jget(
+      sixIndexTradeDate
+        ? `/api/semantic/six_index_next_day?trade_date=${encodeURIComponent(sixIndexTradeDate)}`
+        : "/api/semantic/six_index_next_day",
+    );
     const viewData = view.data || {};
     const rotationData = rotation.data || {};
+    const sixIndexData = sixIndexResp.data || {};
     const sent = metricsData.sentiment_trend || {};
     const market = data.market_state || {};
     const risk = data.risk_snapshot || {};
@@ -1529,6 +1913,9 @@ async function loadResearch(tradeDateOverride = "") {
     renderResearchTaskPools(viewData);
     renderResearchTop(data.top_recommendations || []);
     renderRotationPanel(rotationData);
+    renderSixIndexMeta(sixIndexData);
+    renderSixIndexSummaryCards(sixIndexData);
+    renderSixIndexCards(sixIndexData);
     const pick = qs("researchDatePick");
     if (pick) {
       pick.innerHTML = dates
@@ -1558,12 +1945,21 @@ async function loadResearch(tradeDateOverride = "") {
     }
     const rotationPick = qs("researchRotationDatePick");
     if (rotationPick) {
-      rotationPick.innerHTML = dates
+      const opts = (rotationDates.length ? rotationDates : dates).slice().reverse();
+      rotationPick.innerHTML = opts
+        .slice()
+        .map((d) => `<option value="${esc(d)}">${esc(d)}</option>`)
+        .join("");
+      rotationPick.value = tradeDate;
+    }
+    const sixIndexPick = qs("researchSixIndexDatePick");
+    if (sixIndexPick) {
+      sixIndexPick.innerHTML = sixIndexDates
         .slice()
         .reverse()
         .map((d) => `<option value="${esc(d)}">${esc(d)}</option>`)
         .join("");
-      rotationPick.value = tradeDate;
+      sixIndexPick.value = sixIndexData.trade_date || sixIndexTradeDate || "";
     }
     if (tradeDate) {
       const timeline = await jgetWithFallback(`/api/semantic/timeline?trade_date=${encodeURIComponent(tradeDate)}`, "");
@@ -1653,11 +2049,47 @@ qs("subtab-research-overview")?.addEventListener("click", () => setResearchSubvi
 qs("subtab-research-nightly")?.addEventListener("click", () => setResearchSubview("nightly"));
 qs("subtab-research-tail")?.addEventListener("click", () => setResearchSubview("tail"));
 qs("subtab-research-rotation")?.addEventListener("click", () => setResearchSubview("rotation"));
+qs("subtab-research-six-index")?.addEventListener("click", () => setResearchSubview("six-index"));
+qs("btnResearchSixIndexCopy")?.addEventListener("click", async () => {
+  const btn = qs("btnResearchSixIndexCopy");
+  const text = buildSixIndexClipboardText(researchSixIndexSnapshot);
+  if (!text.trim() || text.includes("交易日: —")) {
+    if (btn) btn.textContent = "暂无可复制内容";
+    setTimeout(() => {
+      if (btn) btn.textContent = "复制当日摘要";
+    }, 1200);
+    return;
+  }
+  try {
+    if (navigator?.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+    } else {
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand("copy");
+      ta.remove();
+    }
+    if (btn) btn.textContent = "已复制";
+  } catch (_) {
+    if (btn) btn.textContent = "复制失败";
+  }
+  setTimeout(() => {
+    if (btn) btn.textContent = "复制当日摘要";
+  }, 1200);
+});
 qs("researchRotationDatePick")?.addEventListener("change", async (e) => {
   const v = e.target?.value || "";
   if (!v) return;
   await loadResearch(v);
   setResearchSubview("rotation");
+});
+qs("researchSixIndexDatePick")?.addEventListener("change", async (e) => {
+  const v = e.target?.value || "";
+  if (!v) return;
+  await loadResearch(v);
+  setResearchSubview("six-index");
 });
 qs("btnResearchAnomalyDrawer")?.addEventListener("click", () => {
   const el = qs("researchAnomalyDrawer");

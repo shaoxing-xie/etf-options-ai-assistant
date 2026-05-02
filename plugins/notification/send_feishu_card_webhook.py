@@ -15,13 +15,15 @@ from typing import Any, Dict, Optional, Union
 def _load_webhook_from_config() -> Optional[str]:
     try:
         from src.config_loader import load_system_config
+        from plugins.merged.send_feishu_notification import resolve_feishu_webhook_url
 
         cfg = load_system_config()
-        if isinstance(cfg, dict):
-            return (cfg.get("notification") or {}).get("feishu_webhook")
+        if not isinstance(cfg, dict):
+            return None
+        url = resolve_feishu_webhook_url(None, cfg)
+        return url or None
     except Exception:
         return None
-    return None
 
 
 def _as_card_payload(card: Union[str, Dict[str, Any]]) -> Optional[Dict[str, Any]]:
@@ -67,7 +69,11 @@ def tool_send_feishu_card_webhook(
 
     webhook = (webhook_url or "").strip() or _load_webhook_from_config()
     if not webhook:
-        return {"success": False, "message": "Missing feishu webhook_url (notification.feishu_webhook)", "data": None}
+        return {
+            "success": False,
+            "message": "Missing feishu webhook_url（notification.feishu_webhook 或环境变量 FEISHU_WEBHOOK_URL）",
+            "data": None,
+        }
 
     try:
         import requests

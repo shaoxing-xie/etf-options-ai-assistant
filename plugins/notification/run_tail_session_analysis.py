@@ -769,63 +769,33 @@ def _calc_streak_and_return(closes: List[float]) -> Tuple[int, float, Optional[f
 
 def _fetch_yf_index_closes(symbol: str, lookback_days: int = 120) -> List[float]:
     """
-    yfinance 后备：用于 global_hist_sina 不支持某些海外指数代码时的日线序列补齐。
-    仅返回 close 序列；失败时返回空列表。
+    插件优先：通过统一工具拉取海外指数日线，返回 close 序列。
+    失败时返回空列表。
     """
     try:
-        import yfinance as yf  # type: ignore
-    except Exception:
-        return []
-
-    # yfinance 不可用时，尝试 AkShare 美股指数日线（.IXIC/.DJI/.INX）
-    ak_symbol_map = {
-        "^IXIC": ".IXIC",
-        "^DJI": ".DJI",
-        "^GSPC": ".INX",
-    }
-    ak_symbol = ak_symbol_map.get(str(symbol).strip().upper())
-    if not ak_symbol:
-        return []
-    try:
-        import akshare as ak  # type: ignore
+        from plugins.data_collection.index.fetch_global_hist_sina import (  # type: ignore
+            tool_fetch_global_index_hist_sina,
+        )
     except Exception:
         return []
     try:
-        df = ak.index_us_stock_sina(symbol=ak_symbol)  # type: ignore[union-attr]
-        if df is None or getattr(df, "empty", True):
+        hist = tool_fetch_global_index_hist_sina(symbol=symbol, limit=max(2, int(lookback_days)))
+        if not isinstance(hist, dict) or not bool(hist.get("success")):
             return []
-        close_col = None
-        for c in ("close", "收盘", "收盘价", "最新价"):
-            if c in df.columns:
-                close_col = c
-                break
-        if close_col is None:
+        rows = hist.get("data")
+        if not isinstance(rows, list):
             return []
         closes: List[float] = []
-        for v in list(df[close_col]):
-            x = _safe_float(v)
-            if x is not None:
-                closes.append(x)
-        if len(closes) > lookback_days:
-            closes = closes[-lookback_days:]
-        return closes
-    except Exception:
-        return []
-    try:
-        with _yfinance_proxy_ctx():
-            t = yf.Ticker(symbol)
-            # 6mo 基本覆盖 120 个交易日窗口
-            hist = t.history(period="6mo")
-        if hist is None or getattr(hist, "empty", True):
-            return []
-        closes: List[float] = []
-        col = hist.get("Close")
-        if col is None:
-            return []
-        for v in list(col):
-            x = _safe_float(v)
-            if x is not None:
-                closes.append(x)
+        for r in rows:
+            if not isinstance(r, dict):
+                continue
+            c = _safe_float(r.get("close"))
+            if c is None:
+                c = _safe_float(r.get("Close"))
+            if c is None:
+                c = _safe_float(r.get("收盘"))
+            if c is not None:
+                closes.append(c)
         if len(closes) > lookback_days:
             closes = closes[-lookback_days:]
         return closes
@@ -842,73 +812,88 @@ def _fetch_nikkei_futures_snapshot() -> Dict[str, Any]:
     """
     symbols = ("NIY=F", "NKD=F")
     try:
-        import yfinance as yf  # type: ignore
+        from plugins.merged.fetch_index_data import tool_fetch_index_data  # type: ignore
     except Exception as e:
         return {"status": "unavailable", "reason": f"import_error:{e}"}
-
+    try:
+        resp = tool_fetch_index_data(data_type="global_spot", index_codes=",".join(symbols), mode="production")
+    except Exception as e:
+        return {"status": "unavailable", "reason": f"query_error:{e}"}
+    rows = (resp or {}).get("data") if isinstance(resp, dict) else None
+    if not isinstance(rows, list):
+        return {"status": "unavailable", "reason": "no_data"}
+    by_code = {
+        str(r.get("code") or r.get("symbol") or "").strip().upper(): r
+        for r in rows
+        if isinstance(r, dict)
+    }
     for sym in symbols:
-        try:
-            with _yfinance_proxy_ctx():
-                t = yf.Ticker(sym)
-                fi = getattr(t, "fast_info", {}) or {}
-            last = _safe_float(fi.get("lastPrice"))
-            prev = _safe_float(fi.get("previousClose"))
-            day_high = _safe_float(fi.get("dayHigh"))
-            day_low = _safe_float(fi.get("dayLow"))
-            if last is None:
-                with _yfinance_proxy_ctx():
-                    hist = t.history(period="2d", interval="1h")
-                if hist is not None and not getattr(hist, "empty", True):
-                    last = _safe_float(hist["Close"].iloc[-1])
-                    if len(hist) >= 2:
-                        prev = _safe_float(hist["Close"].iloc[-2])
-                    if day_high is None:
-                        day_high = _safe_float(hist["High"].max())
-                    if day_low is None:
-                        day_low = _safe_float(hist["Low"].min())
-            if last is None:
-                continue
-            change_pct = ((last - prev) / prev * 100.0) if (prev is not None and prev != 0) else None
-            return {
-                "status": "ok",
-                "symbol": sym,
-                "price": last,
-                "prev_close": prev,
-                "change_pct": change_pct,
-                "day_high": day_high,
-                "day_low": day_low,
-                "exchange": str(fi.get("exchange") or ""),
-                "currency": str(fi.get("currency") or ""),
-            }
-        except Exception:
+        row = by_code.get(sym)
+        if not isinstance(row, dict):
             continue
+        last = _safe_float(row.get("price"))
+        if last is None:
+            last = _safe_float(row.get("latest_price"))
+        prev = _safe_float(row.get("prev_close"))
+        change_pct = _safe_float(row.get("change_pct"))
+        if change_pct is None and prev not in (None, 0) and last is not None:
+            change_pct = (last - prev) / prev * 100.0
+        if last is None:
+            continue
+        return {
+            "status": "ok",
+            "symbol": sym,
+            "price": last,
+            "prev_close": prev,
+            "change_pct": change_pct,
+            "day_high": _safe_float(row.get("day_high") or row.get("high")),
+            "day_low": _safe_float(row.get("day_low") or row.get("low")),
+            "exchange": str(row.get("exchange") or ""),
+            "currency": str(row.get("currency") or ""),
+            "source": "tool_fetch_index_data:global_spot",
+        }
     return {"status": "unavailable", "reason": "all_symbols_failed"}
 
 
 def _fetch_nq_futures_snapshot() -> Dict[str, Any]:
     try:
-        import yfinance as yf  # type: ignore
+        from plugins.merged.fetch_index_data import tool_fetch_index_data  # type: ignore
     except Exception as e:
         return {"status": "unavailable", "reason": f"import_error:{e}"}
     try:
-        with _yfinance_proxy_ctx():
-            ticker = yf.Ticker("NQ=F")
-            fi = getattr(ticker, "fast_info", {}) or {}
-        last = _safe_float(fi.get("lastPrice"))
-        prev = _safe_float(fi.get("previousClose"))
-        if last is None:
-            with _yfinance_proxy_ctx():
-                hist = ticker.history(period="2d", interval="15m")
-            if hist is not None and not getattr(hist, "empty", True):
-                last = _safe_float(hist["Close"].iloc[-1])
-                if len(hist) >= 2:
-                    prev = _safe_float(hist["Close"].iloc[-2])
-        if last is None:
-            return {"status": "unavailable", "reason": "no_quote"}
-        change_pct = ((last - prev) / prev * 100.0) if (prev is not None and prev != 0) else None
-        return {"status": "ok", "symbol": "NQ=F", "price": last, "prev_close": prev, "change_pct": change_pct}
+        resp = tool_fetch_index_data(data_type="global_spot", index_codes="NQ=F", mode="production")
     except Exception as e:
         return {"status": "unavailable", "reason": f"query_error:{e}"}
+    rows = (resp or {}).get("data") if isinstance(resp, dict) else None
+    if not isinstance(rows, list):
+        return {"status": "unavailable", "reason": "no_quote"}
+    row = next(
+        (
+            r
+            for r in rows
+            if isinstance(r, dict) and str(r.get("code") or r.get("symbol") or "").strip().upper() == "NQ=F"
+        ),
+        None,
+    )
+    if not isinstance(row, dict):
+        return {"status": "unavailable", "reason": "no_quote"}
+    last = _safe_float(row.get("price"))
+    if last is None:
+        last = _safe_float(row.get("latest_price"))
+    prev = _safe_float(row.get("prev_close"))
+    change_pct = _safe_float(row.get("change_pct"))
+    if change_pct is None and prev not in (None, 0) and last is not None:
+        change_pct = (last - prev) / prev * 100.0
+    if last is None:
+        return {"status": "unavailable", "reason": "no_quote"}
+    return {
+        "status": "ok",
+        "symbol": "NQ=F",
+        "price": last,
+        "prev_close": prev,
+        "change_pct": change_pct,
+        "source": "tool_fetch_index_data:global_spot",
+    }
 
 
 def _nasdaq_futures_weight(monitor_point: str) -> float:

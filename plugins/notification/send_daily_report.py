@@ -1271,6 +1271,35 @@ def _build_opening_overnight_index_lines(report_data: Dict[str, Any]) -> List[st
     return _build_opening_overnight_four_lines_section(report_data)
 
 
+def _build_opening_global_spot_diagnostics_line(report_data: Dict[str, Any]) -> Optional[str]:
+    """
+    开盘「隔夜/外盘」数据源诊断：用于监控与复盘（尽量一行，不影响正文阅读）。
+    """
+    src = report_data.get("global_spot_source_used")
+    attempts = report_data.get("global_spot_attempts")
+    failure = report_data.get("global_spot_failure_code")
+    elapsed_ms = report_data.get("global_spot_elapsed_ms")
+    if not any(x is not None and str(x).strip() for x in (src, attempts, failure, elapsed_ms)):
+        return None
+    parts: List[str] = []
+    if src is not None and str(src).strip():
+        parts.append(f"source={str(src).strip()}")
+    if attempts is not None:
+        try:
+            parts.append(f"attempts={int(attempts)}")
+        except Exception:
+            parts.append(f"attempts={str(attempts)[:16]}")
+    if failure is not None and str(failure).strip():
+        parts.append(f"failure={str(failure).strip()[:40]}")
+    if elapsed_ms is not None:
+        try:
+            parts.append(f"elapsed_ms={int(elapsed_ms)}")
+        except Exception:
+            parts.append(f"elapsed_ms={str(elapsed_ms)[:16]}")
+    joined = " ".join(parts).strip()
+    return f"数据源诊断（global_spot）：`{joined}`" if joined else None
+
+
 def _build_opening_overnight_outer_lines(report_data: Dict[str, Any]) -> List[str]:
     """
     兼容旧版外盘隔夜展示；四类与 `_build_opening_overnight_index_lines` 同源。
@@ -1399,6 +1428,15 @@ def _build_key_levels_lines(report_data: Dict[str, Any]) -> List[str]:
     sup = data.get("support")
     res = data.get("resistance")
     lines: List[str] = []
+    index_code = str(data.get("index_code") or "").strip()
+    if index_code:
+        index_name = {
+            "000300": "沪深300",
+            "000016": "上证50",
+            "000001": "上证指数",
+            "399006": "创业板指",
+        }.get(index_code, index_code)
+        lines.append(f"适用指数：{index_name}（{index_code}，关键位按日线近似计算）")
     if isinstance(sup, list) and sup:
         lines.append("支撑：" + " / ".join(str(x) for x in sup[:3]))
     if isinstance(res, list) and res:
@@ -1951,6 +1989,43 @@ def _resolve_trend_fields(
     return overall_trend, strength
 
 
+def _build_opening_conclusion_evidence_lines(report_data: Dict[str, Any]) -> List[str]:
+    tr = report_data.get("trend_resolution") if isinstance(report_data.get("trend_resolution"), dict) else {}
+    if not tr:
+        return []
+    up = int(report_data.get("up_count") or 0)
+    down = int(report_data.get("down_count") or 0)
+    flat = int(report_data.get("flat_count") or 0)
+    if not (up or down or flat):
+        vote_rows = report_data.get("overnight_bias_vote") if isinstance(report_data.get("overnight_bias_vote"), list) else []
+        matched = [x for x in vote_rows if isinstance(x, dict) and x.get("has_data")]
+        up = len([x for x in matched if float(x.get("strength_factor") or 0) > 0])
+        down = len([x for x in matched if float(x.get("strength_factor") or 0) < 0])
+        flat = len([x for x in matched if float(x.get("strength_factor") or 0) == 0])
+    matched_count = int(report_data.get("trend_resolution") and report_data.get("trend_resolution").get("matched_count") or report_data.get("matched_count") or (up + down + flat))
+    target_count = int(report_data.get("trend_resolution") and report_data.get("trend_resolution").get("target_count") or report_data.get("target_count") or 5)
+    scope = str(report_data.get("scope") or "A50,^N225,^DJI,^GSPC,^IXIC")
+    lines = [
+        f"外盘投票：上涨 {up} / 下跌 {down} / 中性 {flat}（命中 {matched_count}/{target_count}；口径 {scope}）",
+        f"隔夜加权得分：{float(tr.get('overnight_score') or 0.0):.2f}（{report_data.get('overnight_bias_label') or '分化'}）",
+        f"本地信号得分：{float(tr.get('local_score') or 0.0):.2f}；一致性：{'背离' if tr.get('conflict') else '同向'}",
+    ]
+    return lines
+
+
+def _build_holiday_position_hint_lines(report_data: Dict[str, Any]) -> List[str]:
+    hint = report_data.get("holiday_position_hint") if isinstance(report_data.get("holiday_position_hint"), dict) else {}
+    if not hint or not hint.get("enabled"):
+        return []
+    bias = str(hint.get("bias_label") or report_data.get("overnight_bias_label") or "分化")
+    days = int(hint.get("non_trading_days_ahead") or 0)
+    return [
+        f"### 📅 节前持仓提示（连续非交易日约 {days} 天）",
+        f"- 外盘投票结论：{bias}",
+        "- 若低开(<-0.5%)：优先防守与减仓；若高开(>0.5%)：先看前5分钟量能，警惕诱多。",
+    ]
+
+
 def _allows_intraday_wording(report_data: Dict[str, Any]) -> bool:
     ts = report_data.get("trading_status")
     if isinstance(ts, dict):
@@ -1997,7 +2072,7 @@ def _tail_layer_label(layer_name: str) -> str:
     return m.get(str(layer_name).strip(), str(layer_name))
 
 
-def _format_next_open_direction_block(report_data: Dict[str, Any]) -> List[str]:
+def _format_next_open_direction_block(report_data: Dict[str, Any], quick_mode: bool = False) -> List[str]:
     """
     次日开盘方向预测（纳指 513300 尾盘任务扩展字段）。
     仅做展示：不改变原有报告结构与风险提示。
@@ -2017,6 +2092,10 @@ def _format_next_open_direction_block(report_data: Dict[str, Any]) -> List[str]:
     similarity_debug = pred.get("similarity_debug") if isinstance(pred.get("similarity_debug"), dict) else {}
     method_note = str(pred.get("method_note") or "").strip()
     limitation_note = str(pred.get("limitation_note") or "").strip()
+    confidence_reason = str(pred.get("confidence_reason") or "").strip()
+    event_gate = pred.get("event_gate") if isinstance(pred.get("event_gate"), dict) else {}
+    monitor_ctx = report_data.get("monitor_context") if isinstance(report_data.get("monitor_context"), dict) else {}
+    monitor_point = str(monitor_ctx.get("monitor_point") or "").strip().upper()
 
     arrow = "↑" if direction == "up" else ("↓" if direction == "down" else "—")
     dir_txt = "看涨" if direction == "up" else ("看跌" if direction == "down" else "未知")
@@ -2030,12 +2109,28 @@ def _format_next_open_direction_block(report_data: Dict[str, Any]) -> List[str]:
         lines.append(f"- 方向：{arrow} {dir_txt}")
         lines.append("- 概率：N/A")
     lines.append(f"- 置信度：{conf}")
+    if confidence_reason:
+        lines.append(f"- 置信度说明：{confidence_reason}")
     source = str(llm_fusion.get("source") or "").strip() or "rule"
     lines.append(f"- 概率来源：{source}")
     p_raw = _safe_float(prob_debug.get("p_up_raw_pre_gate"))
     p_final = _safe_float(prob_debug.get("p_up_final"))
     if p_raw is not None and p_final is not None:
         lines.append(f"- 概率口径：raw={_fmt_num(p_raw, 4) or 'N/A'} → final={_fmt_num(p_final, 4) or 'N/A'}（event gate后）")
+    if quick_mode:
+        if event_gate:
+            er = _safe_float(event_gate.get("event_risk"))
+            lines.append(f"- 事件风险：{_fmt_num(er, 3) or 'N/A'}")
+            if monitor_point == "M1":
+                trg = event_gate.get("event_triggers") if isinstance(event_gate.get("event_triggers"), list) else []
+                if trg:
+                    lines.append(f"- 关键事件：{', '.join(str(x) for x in trg[:2])}")
+        llm_called = llm_fusion.get("called")
+        llm_shift = _safe_float(prob_debug.get("llm_shift"))
+        if llm_called is not None:
+            lines.append(f"- LLM调用：{bool(llm_called)} / shift={_fmt_num(llm_shift, 4) or 'N/A'}")
+        lines.append("")
+        return lines
     rationale = str(llm_fusion.get("rationale") or "").strip()
     if rationale:
         lines.append(f"- LLM理由摘要：{rationale}")
@@ -2097,6 +2192,22 @@ def _format_next_open_direction_block(report_data: Dict[str, Any]) -> List[str]:
             lines.append(
                 f"- {k}: success={bool(s.get('success'))} / risk={_fmt_num(s.get('event_risk'), 3) or 'N/A'} / note={s.get('note') or 'N/A'}"
             )
+            ev = s.get("events") if isinstance(s.get("events"), list) else []
+            if ev:
+                lines.append(f"  - 触发事件：{', '.join(str(x) for x in ev[:6])}")
+    if event_gate:
+        er = _safe_float(event_gate.get("event_risk"))
+        lines.append("")
+        lines.append("#### 事件门闸")
+        lines.append(f"- 风险等级：{_fmt_num(er, 3) or 'N/A'}")
+        trg = event_gate.get("event_triggers") if isinstance(event_gate.get("event_triggers"), list) else []
+        if trg:
+            lines.append(f"- 触发事件：{', '.join(str(x) for x in trg[:4])}")
+        impacts = event_gate.get("impact_templates") if isinstance(event_gate.get("impact_templates"), list) else []
+        if impacts:
+            first = impacts[0] if isinstance(impacts[0], dict) else {}
+            if first:
+                lines.append(f"- 影响说明：{first.get('impact_note') or '事件扰动提升隔夜不确定性'}")
 
     if backtest:
         n = backtest.get("n_60d")
@@ -2118,6 +2229,27 @@ def _format_next_open_direction_block(report_data: Dict[str, Any]) -> List[str]:
             lines.append(f"- 积累进度：{cur if cur is not None else 'N/A'} / {req if req is not None else 'N/A'}")
         if eta:
             lines.append(f"- 预计可用日期：{eta}")
+        vol_ctx = backtest.get("volatility_context") if isinstance(backtest.get("volatility_context"), dict) else {}
+        cur_width = _safe_float(vol_ctx.get("current_core_width_pct"))
+        cur_bucket = str(vol_ctx.get("current_bucket") or "").strip()
+        b_n = vol_ctx.get("bucket_sample_n")
+        b_up = _safe_float(vol_ctx.get("bucket_up_probability"))
+        if cur_width is not None:
+            bucket_label = {"low": "低", "medium": "中", "high": "高"}.get(cur_bucket, "未知")
+            lines.append("")
+            lines.append("#### 波动预期")
+            lines.append(f"- 预期波动幅度：±{_fmt_num(cur_width / 2.0, 2) or 'N/A'}%（{bucket_label}波动）")
+            if b_up is not None and isinstance(b_n, int) and b_n >= 10:
+                lines.append(f"- 历史同等级波动日次日上涨概率：{_fmt_num(b_up * 100.0, 2) or 'N/A'}%（样本{b_n}次）")
+    if not backtest:
+        ana = report_data.get("analysis") if isinstance(report_data.get("analysis"), dict) else {}
+        rp = ana.get("range_prediction") if isinstance(ana.get("range_prediction"), dict) else {}
+        core_w = _safe_float(rp.get("core_width_pct"))
+        if core_w is not None:
+            lines.append("")
+            lines.append("#### 波动预期")
+            label = "低" if core_w < 2.0 else ("中" if core_w <= 4.0 else "高")
+            lines.append(f"- 预期波动幅度：±{_fmt_num(core_w / 2.0, 2) or 'N/A'}%（{label}波动）")
 
     lines.append("")
     return lines
@@ -2219,7 +2351,8 @@ def _format_tail_session_report(
     lines.append("")
 
     # 新增：次日开盘方向预测（若有）
-    next_open_block = _format_next_open_direction_block(report_data)
+    next_open_quick = quick_mode or str(monitor_ctx.get("monitor_point") or "").strip().upper() == "M1"
+    next_open_block = _format_next_open_direction_block(report_data, quick_mode=next_open_quick)
     if next_open_block:
         lines.extend(next_open_block)
 
@@ -2410,6 +2543,105 @@ def _format_tail_session_report(
     lines.append("---")
     lines.append(f"*分析完成时间：{now}*")
     return title, _dingtalk_trim("\n".join(lines).strip())
+
+
+def _fmt_ratio(v: Any) -> str:
+    try:
+        if v is None:
+            return "N/A"
+        return f"{float(v):.2f}"
+    except Exception:
+        return "N/A"
+
+
+def _build_opening_rotation_section_lines(report_data: Dict[str, Any]) -> List[str]:
+    lines: List[str] = []
+    quality = report_data.get("rotation_validation_quality") if isinstance(report_data.get("rotation_validation_quality"), dict) else {}
+    freshness = report_data.get("rotation_data_freshness") if isinstance(report_data.get("rotation_data_freshness"), dict) else {}
+    suggestions = report_data.get("rotation_trading_suggestions") if isinstance(report_data.get("rotation_trading_suggestions"), dict) else {}
+    validations = report_data.get("rotation_opening_validation") if isinstance(report_data.get("rotation_opening_validation"), list) else []
+
+    lines.append("### 七、轮动推荐ETF开盘验证与当日建议")
+    note = str(freshness.get("note") or "").strip()
+    if note:
+        lines.append(f"> 📅 {note}")
+    gate = str(suggestions.get("market_gate") or "UNKNOWN").upper()
+    lines.append(f"- 市场门闸：{gate}")
+
+    q_status = str(quality.get("quality_status") or "unknown").lower()
+    if q_status != "ok":
+        reason = str(quality.get("degraded_reason") or "rotation_validation_degraded").strip()
+        if reason == "not_opening_window_skip_validation":
+            lines.append("> ℹ️ 非开盘复盘：跳过开盘量价验证，仅展示轮动清单与门闸。")
+        else:
+            lines.append("> ⚠️ 轮动数据加载失败，本栏目暂不可用（仅观察）。")
+        lines.append(f"- 降级原因：{reason}")
+        lines.append("")
+        # non-ok 仍可能有候选清单；继续向下渲染（如果存在）
+
+    if validations:
+        lines.append("#### 验证表（9:30-10:00）")
+        lines.append("| 排名 | ETF | 轮动分 | 开盘涨幅 | 量比 | 信号 | 建议 |")
+        lines.append("|------|-----|--------|----------|------|------|------|")
+        for row in validations[:8]:
+            if not isinstance(row, dict):
+                continue
+            code = str(row.get("etf_code") or "").strip()
+            name = str(row.get("etf_name") or code)
+            score = _safe_float(row.get("rotation_score"))
+            rank = row.get("rotation_rank") or "-"
+            signal = str(row.get("signal") or "OBSERVE").upper()
+            icon = "✅" if signal in ("STRONG", "CAUTIOUS") else "⚠️"
+            suggest_tag = "主建议" if signal in ("STRONG", "CAUTIOUS") and gate != "STOP" else "观察"
+            lines.append(
+                f"| {rank} | {name}({code}) | "
+                f"{(f'{score:.2f}' if score is not None else 'N/A')} | "
+                f"{_fmt_pct(row.get('open_change_pct')) or 'N/A'} | "
+                f"{_fmt_ratio(row.get('volume_ratio'))} | {icon} {signal} | {suggest_tag} |"
+            )
+    else:
+        lines.append("- 轮动候选验证结果暂缺。")
+    lines.append("")
+
+    main_actions = suggestions.get("main_actions") if isinstance(suggestions.get("main_actions"), list) else []
+    lines.append("#### 📈 主建议")
+    if gate == "STOP":
+        lines.append("- 环境门闸 STOP：仅观察，不输出主建议。")
+    elif main_actions:
+        for row in main_actions[:5]:
+            if not isinstance(row, dict):
+                continue
+            code = str(row.get("etf_code") or "")
+            name = str(row.get("etf_name") or code)
+            mult = _safe_float(row.get("position_multiplier"))
+            mult_txt = f"{int(round((mult or 0.0) * 100))}%"
+            lines.append(f"- **{name}({code})**：{row.get('signal_reason') or '量价验证通过'}（仓位系数参考 {mult_txt}）")
+    else:
+        lines.append("- 暂无满足条件的主建议标的。")
+    lines.append("")
+
+    observe_list = suggestions.get("observe_list") if isinstance(suggestions.get("observe_list"), list) else []
+    lines.append("#### 👀 观察名单")
+    if observe_list:
+        for row in observe_list[:5]:
+            if not isinstance(row, dict):
+                continue
+            code = str(row.get("etf_code") or "")
+            name = str(row.get("etf_name") or code)
+            lines.append(f"- **{name}({code})**：{row.get('signal_reason') or '等待确认'}")
+    else:
+        lines.append("- 暂无观察名单。")
+    lines.append("")
+
+    risk_controls = suggestions.get("risk_controls") if isinstance(suggestions.get("risk_controls"), list) else []
+    lines.append("#### ⚠️ 风控提示")
+    if risk_controls:
+        for r in risk_controls[:5]:
+            lines.append(f"- {r}")
+    else:
+        lines.append("- 风控提示暂缺。")
+    lines.append("")
+    return lines
 
 
 def _format_daily_report(
@@ -2799,12 +3031,25 @@ def _format_daily_report(
                     lines.append(f"- {ln}")
             else:
                 lines.append(_opening_policy_placeholder_line(report_data))
+            pq = report_data.get("policy_event_quality") if isinstance(report_data.get("policy_event_quality"), dict) else {}
+            qs = str(pq.get("quality_status") or "").strip().lower()
+            if qs in ("degraded", "error"):
+                reason = str(pq.get("degraded_reason") or "policy_quality_degraded").strip()
+                codes = pq.get("reason_codes") if isinstance(pq.get("reason_codes"), list) else []
+                code_txt = f"，原因码: {','.join(str(x) for x in codes[:4])}" if codes else ""
+                lines.append(f"- 质量提示：政策事件结构化为 {qs}（{reason}）{code_txt}")
             lines.append("")
 
             lines.append("### 三、隔夜指示（A50｜日韩｜欧股｜美股）")
             for ln in _build_opening_overnight_index_lines(report_data):
                 lines.append(f"- {ln}")
             lines.append("")
+            ev = _build_opening_conclusion_evidence_lines(report_data)
+            if ev:
+                lines.append("### 结论依据（多空投票）")
+                for ln in ev:
+                    lines.append(f"- {ln}")
+                lines.append("")
 
             lines.append("### 四、关键位（技术近似）")
             kl_lines = _build_key_levels_lines(report_data)
@@ -2819,6 +3064,8 @@ def _format_daily_report(
             lines.append("- **开盘前：** 先核对外盘与政策要闻是否同向。")
             lines.append("- **开盘后 30 分钟：** 观察量价共振与主线扩散，避免情绪追单。")
             lines.append("- **午前复核：** 若趋势强度回落或信号冲突，主动降仓并等待二次确认。")
+            for ln in _build_holiday_position_hint_lines(report_data):
+                lines.append(ln)
             lines.append("")
 
             lines.extend(
@@ -2849,8 +3096,22 @@ def _format_daily_report(
         oms = report_data.get("opening_market_snapshot") if isinstance(report_data.get("opening_market_snapshot"), dict) else {}
         idx_rt = oms.get("indices_realtime") if isinstance(oms.get("indices_realtime"), list) else []
         etf_rt = oms.get("etf_realtime") if isinstance(oms.get("etf_realtime"), list) else []
+        idx_open = oms.get("indices_opening") if isinstance(oms.get("indices_opening"), list) else []
+
+        def _tool_rows(tool_key: str) -> list[dict]:
+            blk = report_data.get(tool_key)
+            if not (isinstance(blk, dict) and blk.get("success") and isinstance(blk.get("data"), list)):
+                return []
+            return [x for x in (blk.get("data") or []) if isinstance(x, dict)]
+
+        # 兜底：发送层可能已补采 tool_fetch_*，但 runner 早期构造的 opening_market_snapshot 未更新。
+        if not idx_rt:
+            idx_rt = _tool_rows("tool_fetch_index_realtime")
+        if not etf_rt:
+            etf_rt = _tool_rows("tool_fetch_etf_realtime")
         lines.append("- **指数类：**")
-        for row in idx_rt[:4]:
+        shown_idx = idx_rt[:4] if idx_rt else idx_open[:4]
+        for row in shown_idx:
             if not isinstance(row, dict):
                 continue
             nm = row.get("name") or row.get("code") or "指数"
@@ -2869,7 +3130,25 @@ def _format_daily_report(
             lines.append(f"  - **{nm}** 现价 {p_txt}，涨跌幅 {_fmt_pct(cp) or 'N/A'}")
         lines.append("")
 
+        dq_flags = report_data.get("data_quality_flags") if isinstance(report_data.get("data_quality_flags"), list) else []
+        if dq_flags:
+            lines.append("### ⚠️ 数据一致性提示")
+            for fg in dq_flags[:5]:
+                if not isinstance(fg, dict):
+                    continue
+                code = str(fg.get("code") or "").strip()
+                if code == "direction_conflict":
+                    lines.append("- 000300 与 510300 涨跌方向不一致，请复核同秒快照。")
+                elif code == "large_basis_gap":
+                    gap = fg.get("gap_pct")
+                    gap_txt = f"{float(gap):.2f}%" if isinstance(gap, (int, float)) else "N/A"
+                    lines.append(f"- 000300 与 510300 涨跌幅偏离较大（差值 {gap_txt}）。")
+                elif code == "stale_data":
+                    lines.append("- 实时快照存在时间漂移（>300秒），请谨慎解读。")
+            lines.append("")
+
         lines.append("### 二、板块温度（开盘前15分钟）")
+        lines.append("- ⚠️ 板块热度为前一个交易日数据，仅供参考开盘情绪；盘中热度请以实时行情为准。")
         hot_b = _build_opening_hot_sector_bullets(report_data)
         if hot_b:
             lines.extend(hot_b[:8])
@@ -2883,6 +3162,22 @@ def _format_daily_report(
         sc = int(mb.get("tracked_etf_strong_count") or 0)
         wc = int(mb.get("tracked_etf_weak_count") or 0)
         tc = int(mb.get("tracked_etf_total") or 0)
+        if tc <= 0 and etf_rt:
+            # 兜底：runner 因预算跳过实时抓取时，opening_flow_signals 可能未能填充；这里按 ETF 快照重算。
+            sc = wc = 0
+            for row in etf_rt[:12]:
+                if not isinstance(row, dict):
+                    continue
+                cp = row.get("change_pct") if row.get("change_pct") is not None else row.get("change_percent")
+                try:
+                    pct = float(cp)
+                except (TypeError, ValueError):
+                    continue
+                if pct >= 0.15:
+                    sc += 1
+                elif pct <= -0.15:
+                    wc += 1
+            tc = len([x for x in etf_rt[:12] if isinstance(x, dict)])
         breadth = (sc / tc * 100.0) if tc > 0 else 0.0
         lines.append(f"- 市场广度：强势ETF {sc} / 弱势ETF {wc} / 样本 {tc}（强势占比 {breadth:.0f}%）")
         lines.append(f"- 资金风格：{ofs.get('flow_bias') or '中性'}（基于ETF强弱 + 板块热度的开盘近似）")
@@ -2894,6 +3189,30 @@ def _format_daily_report(
         lines.append("### 四、跟踪标的（ETF/股票）")
         tas = report_data.get("tracked_assets_snapshot") if isinstance(report_data.get("tracked_assets_snapshot"), dict) else {}
         te = tas.get("etf") if isinstance(tas.get("etf"), list) else []
+        if (not te) and etf_rt:
+            # 兜底：runner 未产出 tracked_assets_snapshot 时，用 ETF 实时快照按同阈值生成强弱标签。
+            tmp = []
+            for row in etf_rt[:8]:
+                if not isinstance(row, dict):
+                    continue
+                cp = row.get("change_pct") if row.get("change_pct") is not None else row.get("change_percent")
+                try:
+                    pct = float(cp)
+                except (TypeError, ValueError):
+                    pct = None
+                strength = "中"
+                if pct is not None:
+                    strength = "强" if pct >= 0.15 else ("弱" if pct <= -0.15 else "中")
+                tmp.append(
+                    {
+                        "code": row.get("code"),
+                        "name": row.get("name") or row.get("code"),
+                        "change_pct": pct,
+                        "strength": strength,
+                    }
+                )
+            te = tmp
+
         if te:
             for row in te[:8]:
                 if not isinstance(row, dict):
@@ -2936,9 +3255,14 @@ def _format_daily_report(
         lines.append("- 执行纪律：首30分钟不追单；放量背离、信号冲突或跌破关键位时先降仓后复核。")
         lines.append("")
 
+        lines.extend(_build_opening_rotation_section_lines(report_data))
+
         lines.append("### 背景（隔夜）")
         for ln in _build_opening_overnight_index_lines(report_data)[:4]:
             lines.append(f"- {ln}")
+        diag = _build_opening_global_spot_diagnostics_line(report_data)
+        if diag:
+            lines.append(f"- {diag}")
         lines.append("")
 
         if llm_text:

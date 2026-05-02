@@ -407,6 +407,29 @@ def test_normalize_autofills_key_levels_when_empty(mock_kl: MagicMock, monkeypat
     assert _build_key_levels_lines(out)
 
 
+@patch("plugins.analysis.key_levels.tool_compute_index_key_levels")
+def test_opening_normalize_autofills_key_levels_when_skipped_by_budget(
+    mock_kl: MagicMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """盘前 opening：critical 阶段跳过 key_levels 时，发送层应补算，避免正文“关键位数据暂缺”."""
+    monkeypatch.setenv("DAILY_REPORT_DISABLE_VOLATILITY_AUTOFILL", "1")
+    monkeypatch.setenv("DAILY_REPORT_DISABLE_ETF_REALTIME_AUTOFILL", "1")
+    monkeypatch.setenv("DAILY_REPORT_DISABLE_GLOBAL_TAVILY_LLM", "1")
+    mock_kl.return_value = {
+        "success": True,
+        "data": {
+            "index_code": "000300",
+            "last_close": 4000.0,
+            "support": [3900.0],
+            "resistance": [4100.0],
+        },
+    }
+    rd = {"report_type": "opening", "overall_trend": "中性", "trend_strength": 0.0}
+    out, _ = _normalize_daily_report_fields(rd, {})
+    assert out.get("key_levels_fill_source") == "send_layer_autofill"
+    assert _build_key_levels_lines(out)
+
+
 @patch("plugins.data_collection.index.fetch_global._fetch_sina")
 @patch("plugins.data_collection.index.fetch_global._fetch_yfinance")
 def test_fetch_global_merges_sina_when_yf_partial(

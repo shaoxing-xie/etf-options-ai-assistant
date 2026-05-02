@@ -1,8 +1,8 @@
 """
 Build L4 semantic snapshots for global market dashboard and QDII futures MVP.
 
-Reads A-share index spot via AkShare; global indices and futures via symlinked
-openclaw-data-china-stock collectors + yfinance (per-source proxy from market_data.yaml).
+Reads A-share index spot via AkShare; global indices and futures via
+openclaw-data-china-stock plugin tools.
 """
 from __future__ import annotations
 
@@ -10,12 +10,11 @@ import json
 import math
 import os
 import re
-import signal
 import threading
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
@@ -36,7 +35,7 @@ def _repo_root() -> Path:
 ROOT = _repo_root()
 _EM_FUTURES_CACHE: dict[str, Any] = {"ts": 0.0, "rows": None}
 _SOURCE_LAST_CALL_TS: dict[str, float] = {}
-_YF_MIN_INTERVAL_SEC = 0.35
+_YF_MIN_INTERVAL_SEC = 0.6
 _GLOBAL_SPOT_MIN_INTERVAL_SEC = 0.8
 _PACE_LOCK = threading.Lock()
 _A50_ITEM_CACHE: dict[str, Any] = {"ts": 0.0, "item": None}
@@ -171,16 +170,6 @@ def _lineage_event(lineage: list[str], stage: str, ok: bool, elapsed_ms: int, de
     lineage.append(f"{stage}|ok={1 if ok else 0}|ms={elapsed_ms}{suffix}")
 
 
-def _akshare_cn_index_table() -> Tuple[Optional[Any], str]:
-    try:
-        import akshare as ak  # type: ignore
-
-        df = ak.stock_zh_index_spot_sina()
-        return df, "akshare.stock_zh_index_spot_sina"
-    except Exception as e:
-        return None, f"akshare_error:{e}"
-
-
 def _normalize_sina_index_code(raw: str) -> str:
     s = str(raw or "").strip().lower()
     for pfx in ("sh", "sz", "bj"):
@@ -215,6 +204,132 @@ _CN_INDEX_YF_FALLBACK: dict[str, list[str]] = {
 }
 
 
+def _cn_hist_metrics(
+    index_code: str,
+    trade_date: str,
+) -> Tuple[Optional[float], Optional[float], Optional[float], str]:
+    """A-share specific fallback via local index_daily cache (fast), else historical tool."""
+    cache_resp: Optional[dict[str, Any]] = None
+    try:
+        # Prefer local parquet cache to avoid repeated online calls during refresh polling.
+        from plugins.data_access.read_cache_data import read_cache_data  # type: ignore
+
+        td = datetime.strptime(trade_date, "%Y-%m-%d")
+        end = td.strftime("%Y%m%d")
+        # Calendar window; cache loader will internally filter to trading days.
+        start = (td - timedelta(days=15)).strftime("%Y%m%d")
+        cache_resp = read_cache_data(
+            data_type="index_daily",
+            symbol=index_code,
+            start_date=start,
+            end_date=end,
+            return_df=False,
+            skip_online_refill=True,
+        )
+    except Exception:
+        cache_resp = None
+
+    # If cache layer exists but misses/incomplete, return None and let outer fallbacks (yfinance/proxy) handle.
+    if isinstance(cache_resp, dict):
+        if not bool(cache_resp.get("success")):
+            return None, None, None, f"cn_hist_cache_miss:{cache_resp.get('message') or 'miss'}"
+        records = (cache_resp.get("data") or {}).get("records") or []
+        if not isinstance(records, list) or not records:
+            return None, None, None, "cn_hist_cache_empty"
+
+        # Expect records like {'日期': 'YYYY-MM-DD', '收盘': ...}
+        rows = [r for r in records if isinstance(r, dict)]
+        rows.sort(key=lambda r: str(r.get("日期") or r.get("date") or ""))
+
+        closes: list[float] = []
+        for r in rows[-8:]:
+            c = _safe_float(r.get("收盘") if "收盘" in r else r.get("close"))
+            if c is None or (math.isnan(c) or math.isinf(c)) or float(c) <= 0:
+                continue
+            closes.append(float(c))
+
+        if not closes:
+            return None, None, None, "cn_hist_cache_no_closes"
+
+        last = closes[-1]
+        if len(closes) >= 2:
+            prev = closes[-2]
+            if prev not in (None, 0):
+                chg_a = last - prev
+                chg_p = (last / prev - 1.0) * 100.0
+            else:
+                chg_a, chg_p = None, None
+        else:
+            chg_a, chg_p = None, None
+        return last, chg_a, chg_p, "cn_hist_cache_daily"
+
+    # Fallback: unified historical index tool.
+    try:
+        from plugins.merged.fetch_index_data import tool_fetch_index_data  # type: ignore
+    except Exception as e:
+        return None, None, None, f"cn_hist_import:{e}"
+    try:
+        resp = tool_fetch_index_data(
+            data_type="historical",
+            index_code=index_code,
+            period="daily",
+            lookback_days=5,
+            mode="production",
+        )
+    except Exception as e:
+        return None, None, None, f"cn_hist_err:{e}"
+    if not isinstance(resp, dict) or not bool(resp.get("success")):
+        return None, None, None, f"cn_hist_err:{(resp or {}).get('message') or 'failed'}"
+    data = resp.get("data")
+    if not isinstance(data, dict):
+        return None, None, None, "cn_hist_empty"
+    rows = data.get("klines")
+    if not isinstance(rows, list) or not rows:
+        return None, None, None, "cn_hist_empty"
+    closes: list[float] = []
+    for r in rows:
+        if not isinstance(r, dict):
+            continue
+        c = _safe_float(r.get("close"))
+        if c is None or (math.isnan(c) or math.isinf(c)) or float(c) <= 0:
+            continue
+        closes.append(float(c))
+    if not closes:
+        return None, None, None, "cn_hist_empty"
+    last = closes[-1]
+    if len(closes) >= 2 and closes[-2] not in (None, 0):
+        prev = closes[-2]
+        chg_a = last - prev
+        chg_p = (last / prev - 1.0) * 100.0
+    else:
+        chg_a = None
+        chg_p = None
+    return last, chg_a, chg_p, "cn_hist_daily"
+
+
+def _cn_proxy_etf_metrics(etf_code: str) -> Tuple[Optional[float], Optional[float], Optional[float], str]:
+    """Last-resort proxy for unsupported indices (e.g. 北证50 via ETF proxy)."""
+    try:
+        from plugins.data_collection.etf.fetch_realtime import fetch_etf_realtime  # type: ignore
+    except Exception as e:
+        return None, None, None, f"cn_proxy_import:{e}"
+    try:
+        resp = fetch_etf_realtime(etf_code=etf_code)
+    except Exception as e:
+        return None, None, None, f"cn_proxy_err:{e}"
+    if not isinstance(resp, dict) or not bool(resp.get("success")):
+        return None, None, None, f"cn_proxy_err:{(resp or {}).get('message') or 'failed'}"
+    data = resp.get("data")
+    if not isinstance(data, dict):
+        return None, None, None, "cn_proxy_empty"
+    last = _safe_float(data.get("current_price"))
+    chg_a = _safe_float(data.get("change"))
+    chg_p = _safe_float(data.get("change_percent"))
+    if last is None:
+        return None, None, None, "cn_proxy_empty"
+    return last, chg_a, chg_p, "cn_proxy_etf"
+
+
 def _build_cn_index_items(trade_date: str) -> Tuple[list[dict[str, Any]], str, list[str]]:
     specs: list[tuple[str, str]] = [
         ("000001", "上证指数"),
@@ -231,48 +346,92 @@ def _build_cn_index_items(trade_date: str) -> Tuple[list[dict[str, Any]], str, l
     cfg = _load_market_proxy_config()
     tools: list[str] = []
     lineage: list[str] = []
-    df, src = _akshare_cn_index_table()
-    tools.append(src)
-    by_code: dict[str, Any] = {}
-    if df is not None and hasattr(df, "iterrows"):
-        code_col = None
-        for c in df.columns:
-            cs = str(c).strip()
-            if cs in ("代码", "code", "symbol"):
-                code_col = c
-                break
-        for _, row in df.iterrows():
-            if code_col is None:
-                continue
-            k = _normalize_sina_index_code(row.get(code_col))
-            if k:
-                by_code[k] = row
+    by_code: dict[str, dict[str, Any]] = {}
+    proxy_etf_map = {
+        "899050": "159790",  # 北证50
+        "000688": "588080",  # 科创50ETF（同口径代理）
+        "399673": "159915",  # 创业板50 -> 创业板ETF 近似代理
+    }
+    realtime_supported = {
+        "000001",
+        "399001",
+        "000300",
+        "000905",
+        "000852",
+        "000016",
+        "399006",
+        "000688",
+        "399673",
+    }
+    rt_codes = [c for c, _ in specs if c in realtime_supported]
+    src = "tool_fetch_index_data:realtime"
+    try:
+        from plugins.merged.fetch_index_data import tool_fetch_index_data  # type: ignore
+
+        resp = tool_fetch_index_data(
+            data_type="realtime",
+            index_code=",".join(rt_codes),
+            mode="production",
+        )
+        tools.append(src)
+        if isinstance(resp, dict) and bool(resp.get("success")) and isinstance(resp.get("data"), list):
+            for row in resp.get("data") or []:
+                if not isinstance(row, dict):
+                    continue
+                k = _normalize_sina_index_code(row.get("index_code") or row.get("code") or row.get("symbol"))
+                if k:
+                    by_code[k] = row
+        else:
+            src = f"{src}:{(resp or {}).get('message') or 'failed'}"
+    except Exception as e:
+        src = f"tool_fetch_index_data_err:{e}"
+        tools.append(src)
 
     items: list[dict[str, Any]] = []
     worst = "ok"
     for code, title in specs:
         row = by_code.get(code)
-        last = _safe_float(_row_get(row, "最新价", "现价", "price", "close")) if row is not None else None
-        chg_a = _safe_float(_row_get(row, "涨跌额", "涨跌", "change")) if row is not None else None
+        last = _safe_float(_row_get(row, "最新价", "现价", "price", "close", "current_price")) if row is not None else None
+        chg_a = _safe_float(_row_get(row, "涨跌额", "涨跌", "change", "change_abs")) if row is not None else None
         chg_p = _safe_float(_row_get(row, "涨跌幅", "涨跌幅%", "pct", "change_pct")) if row is not None else None
+        # Some realtime paths may return "fallback" values with last_price=0/amount=0.
+        # Treat non-positive price as missing so we can do historical/proxy fallback.
+        if last is not None and float(last) <= 0:
+            last, chg_a, chg_p = None, None, None
         if chg_p is not None and abs(chg_p) > 50:
             chg_p = chg_p / 100.0
         q = "ok" if last is not None else "degraded"
-        sid = "akshare" if row is not None else "unknown"
+        sid = "openclaw" if row is not None else "unknown"
         raw = src
         if last is None:
-            for ysym in _CN_INDEX_YF_FALLBACK.get(code, []):
-                y_last, y_ca, y_cp, tag = _yf_hist_metrics(ysym, cfg)
-                if y_last is not None:
-                    last, chg_a, chg_p = y_last, y_ca, y_cp
-                    q = "ok"
-                    sid = "yfinance"
-                    raw = f"{src}|yf:{ysym}:{tag}"
-                    tools.append("yfinance")
-                    break
+            h_last, h_ca, h_cp, h_tag = _cn_hist_metrics(code, trade_date)
+            if h_last is not None:
+                last, chg_a, chg_p = h_last, h_ca, h_cp
+                q = "ok"
+                sid = "openclaw"
+                raw = f"{src}|{h_tag}"
+                tools.append("tool_fetch_index_data:historical")
+            else:
+                for ysym in _CN_INDEX_YF_FALLBACK.get(code, []):
+                    y_last, y_ca, y_cp, tag = _yf_hist_metrics(ysym, cfg)
+                    if y_last is not None:
+                        last, chg_a, chg_p = y_last, y_ca, y_cp
+                        q = "ok"
+                        sid = "yfinance"
+                        raw = f"{src}|yf:{ysym}:{tag}"
+                        tools.append("yfinance")
+                        break
+            if last is None and code in proxy_etf_map:
+                p_last, p_ca, p_cp, p_tag = _cn_proxy_etf_metrics(proxy_etf_map[code])
+                if p_last is not None:
+                    last, chg_a, chg_p = p_last, p_ca, p_cp
+                    q = "degraded"
+                    sid = "openclaw"
+                    raw = f"{src}|{p_tag}:{proxy_etf_map[code]}"
+                    tools.append("fetch_etf_realtime")
         if q != "ok":
             worst = "degraded"
-        semantics = "realtime_quote" if sid == "akshare" else "daily_close"
+        semantics = "realtime_quote" if sid == "openclaw" else "daily_close"
         item = {
             "instrument_id": f"cn.index.{code}",
             "instrument_code": code,
@@ -308,110 +467,123 @@ def _yf_hist_metrics(
     *,
     fast_path: bool = False,
 ) -> Tuple[Optional[float], Optional[float], Optional[float], str]:
+    # Prefer yfinance when available (fast path for chart console); fallback to plugin hist tool.
+    del cfg, fast_path
     try:
-        import yfinance as yf
+        import yfinance as yf  # type: ignore
+
         from plugins.utils.proxy_env import proxy_env_for_source  # type: ignore
-    except Exception as e:
-        return None, None, None, f"yfinance_import:{e}"
-    # 仅期货符号做退避重试；指数/ETF 一次失败即返回，避免 refresh 长时间阻塞
-    is_future_symbol = symbol.endswith("=F") or symbol.upper().endswith("00Y")
-    if fast_path:
-        delays = [0.0]
-        timeout_sec = 4
-    else:
-        delays = [0.4, 1.2, 2.5] if is_future_symbol else [0.0]
-        timeout_sec = 8
-    last_err = ""
-    for idx, delay in enumerate(delays, start=1):
+
+        with proxy_env_for_source("yfinance"):
+            t = yf.Ticker(str(symbol))
+            hist = t.history(period="7d", interval="1d")
+        if hist is None or getattr(hist, "empty", True):
+            raise RuntimeError("empty_history")
         try:
-            _pace_source("yfinance", _YF_MIN_INTERVAL_SEC)
-            # 每次重试都创建新的 context manager；生成器型 context 不能复用
-            with proxy_env_for_source(cfg, "yfinance"):
-                h = yf.Ticker(symbol).history(period="5d", interval="1d", timeout=timeout_sec)
-            if h is None or getattr(h, "empty", True):
-                return None, None, None, "yfinance_empty"
-            last = float(h["Close"].iloc[-1])
-            if math.isnan(last) or math.isinf(last):
-                return None, None, None, "yfinance_nan"
-            if len(h.index) >= 2:
-                prev = float(h["Close"].iloc[-2])
-                if math.isnan(prev) or math.isinf(prev) or prev == 0:
-                    return last, None, None, "yfinance_prev_bad"
-                chg_a = last - prev
-                chg_p = (last / prev - 1.0) * 100.0 if prev else None
-            else:
-                chg_a = None
-                chg_p = None
-            return last, chg_a, chg_p, "yfinance"
-        except Exception as e:
-            last_err = str(e)
-            # yfinance 429/限流时做短退避重试；其余异常直接退出
-            if "Too Many Requests" not in last_err and "Rate limited" not in last_err:
-                break
-            if idx < len(delays):
-                time.sleep(delay)
-    return None, None, None, f"yfinance_err:{last_err}"
+            last = float(hist["Close"].iloc[-1])  # type: ignore[index]
+            prev = float(hist["Close"].iloc[-2]) if len(hist.index) >= 2 else None  # type: ignore[index]
+        except Exception:
+            return None, None, None, "yfinance_parse_err"
+        if last is None or math.isnan(last) or math.isinf(last):
+            return None, None, None, "yfinance_nan"
+        if prev in (None, 0) or math.isnan(prev) or math.isinf(prev):
+            return last, None, None, "yfinance_prev_bad"
+        chg_a = last - prev
+        chg_p = (last / prev - 1.0) * 100.0
+        return last, chg_a, chg_p, "yfinance"
+    except Exception:
+        pass
+
+    try:
+        from plugins.data_collection.index.fetch_global_hist_sina import (  # type: ignore
+            tool_fetch_global_index_hist_sina,
+        )
+    except Exception as e:
+        return None, None, None, f"global_hist_import:{e}"
+    try:
+        _pace_source("tool_fetch_global_index_hist_sina", _YF_MIN_INTERVAL_SEC)
+        resp = tool_fetch_global_index_hist_sina(symbol=symbol, limit=5)
+    except Exception as e:
+        return None, None, None, f"global_hist_err:{e}"
+    if not isinstance(resp, dict) or not bool(resp.get("success")):
+        return None, None, None, f"global_hist_err:{(resp or {}).get('message') or 'failed'}"
+    rows = resp.get("data")
+    if not isinstance(rows, list) or not rows:
+        return None, None, None, "global_hist_empty"
+    closes: list[float] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        c = _safe_float(row.get("close"))
+        if c is None:
+            c = _safe_float(row.get("Close"))
+        if c is None:
+            c = _safe_float(row.get("收盘"))
+        if c is not None and not (math.isnan(c) or math.isinf(c)):
+            closes.append(c)
+    if not closes:
+        return None, None, None, "global_hist_empty"
+    last = closes[-1]
+    if len(closes) >= 2:
+        prev = closes[-2]
+        if prev == 0:
+            return last, None, None, "global_hist_prev_bad"
+        chg_a = last - prev
+        chg_p = (last / prev - 1.0) * 100.0
+    else:
+        chg_a = None
+        chg_p = None
+    return last, chg_a, chg_p, "global_hist_sina"
 
 
 def _yf_intraday_metrics(symbol: str, cfg: dict[str, Any]) -> Tuple[Optional[float], Optional[float], Optional[float], str]:
+    del cfg
     try:
-        import yfinance as yf
-        from plugins.utils.proxy_env import proxy_env_for_source  # type: ignore
+        from plugins.merged.fetch_index_data import tool_fetch_index_data  # type: ignore
     except Exception as e:
-        return None, None, None, f"yfinance_import:{e}"
+        return None, None, None, f"global_spot_import:{e}"
     try:
-        _pace_source("yfinance", _YF_MIN_INTERVAL_SEC)
-        with proxy_env_for_source(cfg, "yfinance"):
-            h = yf.Ticker(symbol).history(period="1d", interval="5m", timeout=6)
-        if h is None or getattr(h, "empty", True):
-            return None, None, None, "yfinance_intraday_empty"
-        close = h["Close"].dropna()
-        if close is None or len(close) < 1:
-            return None, None, None, "yfinance_intraday_empty"
-        last = float(close.iloc[-1])
-        if len(close) >= 2:
-            prev = float(close.iloc[-2])
-            if prev == 0:
-                return last, None, None, "yfinance_intraday_prev_bad"
-            chg_a = last - prev
+        _pace_source("tool_fetch_index_data.global_spot", _YF_MIN_INTERVAL_SEC)
+        resp = tool_fetch_index_data(data_type="global_spot", index_codes=symbol, mode="production")
+    except Exception as e:
+        return None, None, None, f"global_spot_err:{e}"
+    if not isinstance(resp, dict) or not bool(resp.get("success")):
+        return None, None, None, f"global_spot_err:{(resp or {}).get('message') or 'failed'}"
+    rows = resp.get("data")
+    if not isinstance(rows, list) or not rows:
+        return None, None, None, "global_spot_empty"
+    row = None
+    target = str(symbol or "").strip().upper()
+    for r in rows:
+        if not isinstance(r, dict):
+            continue
+        code = str(r.get("code") or r.get("symbol") or "").strip().upper()
+        if code == target:
+            row = r
+            break
+    if row is None:
+        row = rows[0] if isinstance(rows[0], dict) else None
+    if not isinstance(row, dict):
+        return None, None, None, "global_spot_empty"
+    last = _safe_float(row.get("price"))
+    if last is None:
+        last = _safe_float(row.get("latest_price"))
+    chg_a = _safe_float(row.get("change"))
+    chg_p = _safe_float(row.get("change_pct"))
+    if chg_p is None:
+        prev = _safe_float(row.get("prev_close"))
+        if prev not in (None, 0) and last is not None:
             chg_p = (last / prev - 1.0) * 100.0
-        else:
-            chg_a = None
-            chg_p = None
-        return last, chg_a, chg_p, "yfinance_intraday"
-    except Exception as e:
-        return None, None, None, f"yfinance_intraday_err:{e}"
+            chg_a = (last - prev) if chg_a is None else chg_a
+    if last is None:
+        return None, None, None, "global_spot_empty"
+    return last, chg_a, chg_p, "global_spot_intraday"
 
 
 def _em_futures_rows_cached(ttl_sec: int = 120) -> Optional[list[dict[str, Any]]]:
-    now = time.time()
-    if now - float(_EM_FUTURES_CACHE.get("ts") or 0.0) < ttl_sec and isinstance(_EM_FUTURES_CACHE.get("rows"), list):
-        return _EM_FUTURES_CACHE.get("rows")
-    try:
-        import akshare as ak  # type: ignore
-    except Exception:
-        return None
-    class _Timeout(Exception):
-        pass
-
-    def _alarm_handler(_sig, _frame):
-        raise _Timeout("akshare_timeout")
-
-    try:
-        old_handler = signal.getsignal(signal.SIGALRM)
-        signal.signal(signal.SIGALRM, _alarm_handler)
-        signal.alarm(20)
-        try:
-            df = ak.futures_global_spot_em()
-        finally:
-            signal.alarm(0)
-            signal.signal(signal.SIGALRM, old_handler)
-        rows = df.to_dict(orient="records") if df is not None and hasattr(df, "to_dict") else None
-    except Exception:
-        rows = None
-    _EM_FUTURES_CACHE["ts"] = now
-    _EM_FUTURES_CACHE["rows"] = rows
-    return rows
+    del ttl_sec
+    # Deprecated: keep plugin-first discipline; futures path uses unified tools in _yf_intraday_metrics/_yf_hist_metrics.
+    return None
 
 
 def _em_future_quote(instrument_id: str) -> Optional[dict[str, Any]]:
@@ -480,6 +652,66 @@ def _global_spot_map(symbols: str) -> Tuple[dict[str, dict[str, Any]], list[str]
     return out, tools, "ok"
 
 
+def _global_spot_map_with_retry(symbols: list[str], retry_rounds: int = 1) -> Tuple[dict[str, dict[str, Any]], list[str], str]:
+    """Pull global spot with batch + missing retry.
+
+    Goal: reduce provider burst/rate-limit and avoid partially missing symbol sets.
+    Still strictly relies on `tool_fetch_global_index_spot` for the indicator.
+    """
+    uniq_symbols: list[str] = []
+    seen: set[str] = set()
+    for s in symbols:
+        k = str(s or "").strip()
+        if not k or k in seen:
+            continue
+        seen.add(k)
+        uniq_symbols.append(k)
+    if not uniq_symbols:
+        return {}, [], "empty_symbols"
+    tools: list[str] = []
+    out: dict[str, dict[str, Any]] = {}
+
+    def _chunk(arr: list[str], n: int) -> list[list[str]]:
+        if n <= 0:
+            return [arr]
+        return [arr[i : i + n] for i in range(0, len(arr), n)]
+
+    # A smaller batch reduces the chance of tool-side partial responses.
+    batch_size = 3
+    pending = list(uniq_symbols)
+    for round_idx in range(max(0, int(retry_rounds)) + 1):
+        if not pending:
+            break
+        for batch in _chunk(pending, batch_size):
+            one, t, msg = _global_spot_map(",".join(batch))
+            tools.extend(t)
+            if msg != "ok":
+                # Keep going: a failed batch shouldn't poison the whole indicator.
+                continue
+            out.update(one)
+        pending = [s for s in uniq_symbols if s not in out]
+        if not pending:
+            break
+
+    # Final attempt: retry remaining missing symbols individually.
+    pending = [s for s in uniq_symbols if s not in out]
+    for sym in pending:
+        one, t, one_msg = _global_spot_map(sym)
+        tools.extend(t)
+        if one_msg == "ok":
+            out.update(one)
+
+    return out, tools, "ok"
+
+
+def _pick_spot_row(spot_map: dict[str, dict[str, Any]], codes_try: list[str]) -> Optional[dict[str, Any]]:
+    for c in codes_try:
+        key = str(c or "").strip()
+        if key and key in spot_map:
+            return spot_map.get(key)
+    return None
+
+
 def _item_from_spot_row(
     instrument_id: str,
     display_name: str,
@@ -530,50 +762,22 @@ def _item_from_spot_row(
     return _finalize_item_quality(raw, "realtime_quote")
 
 
-def _global_index_item_spot_then_yf(
+def _global_index_item_spot_only(
     instrument_id: str,
     display_name: str,
-    yahoo_code: str,
+    primary_code: str,
+    codes_try: list[str],
     row: Optional[dict[str, Any]],
     cfg: dict[str, Any],
-    tools_accum: list[str],
 ) -> dict[str, Any]:
-    """Prefer plugin/FMP 全球现货；缺数时用 yfinance 日线（与期指同源代理策略）。"""
-    item = _item_from_spot_row(instrument_id, display_name, yahoo_code, row, category="global_index")
+    """Strict spot-only index item: do not synthesize from other fallback series."""
+    item = _item_from_spot_row(instrument_id, display_name, primary_code, row, category="global_index")
     if item.get("last_price") is not None:
         return item
-    i_last, i_chg_a, i_chg_p, i_tag = _yf_intraday_metrics(yahoo_code, cfg)
-    if i_last is not None:
-        tools_accum.append("yfinance")
-        raw_intraday = {
-            **item,
-            "last_price": i_last,
-            "change_abs": i_chg_a,
-            "change_pct": i_chg_p,
-            "quality_status": "ok",
-            "degraded_reason": "",
-            "source_id": "yfinance",
-            "source_raw": i_tag,
-            "as_of": _utc_now_iso(),
-        }
-        return _finalize_item_quality(raw_intraday, "minute_bar")
-    last, chg_a, chg_p, tag = _yf_hist_metrics(yahoo_code, cfg)
-    if last is None:
-        return item
-    tools_accum.append("yfinance")
-    err = str(tag).startswith("yfinance_err")
-    raw = {
-        **item,
-        "last_price": last,
-        "change_abs": chg_a,
-        "change_pct": chg_p,
-        "quality_status": "degraded" if err else "ok",
-        "degraded_reason": str(tag) if err else "",
-        "source_id": "yfinance",
-        "source_raw": tag,
-        "as_of": _utc_now_iso(),
-    }
-    return _finalize_item_quality(raw, "daily_close")
+    if codes_try:
+        item["degraded_reason"] = f"global_spot_missing:{'|'.join(codes_try)}"
+        item["quality_status"] = "error"
+    return item
 
 
 def _future_item(
@@ -591,13 +795,6 @@ def _future_item(
     src = ""
     role = "future"
     code_out = symbols_try[0] if symbols_try else ""
-    for sym in symbols_try:
-        # Phase 1: intraday minute bars first
-        last, chg_a, chg_p, tag = _yf_intraday_metrics(sym, cfg)
-        src = tag
-        if last is not None:
-            code_out = sym
-            break
     if last is None and same_future_fallback_getter:
         try:
             same_future_fallback = same_future_fallback_getter()
@@ -611,6 +808,14 @@ def _future_item(
             src = str(same_future_fallback.get("source_raw") or "akshare.futures_global_spot_em")
             code_out = str(same_future_fallback.get("instrument_code") or code_out)
             role = "future"
+    if last is None:
+        for sym in symbols_try:
+            # Phase 1: intraday minute bars first
+            last, chg_a, chg_p, tag = _yf_intraday_metrics(sym, cfg)
+            src = tag
+            if last is not None:
+                code_out = sym
+                break
     if last is None:
         # Phase 2: daily bars fallback for remaining misses
         for sym in symbols_try:
@@ -629,7 +834,7 @@ def _future_item(
     semantics = "daily_close"
     if "akshare.futures_global_spot_em" in src:
         semantics = "realtime_quote"
-    elif "yfinance_intraday" in src:
+    elif "yfinance_intraday" in src or "global_spot_intraday" in src:
         semantics = "minute_bar"
     raw = {
         "instrument_id": instrument_id,
@@ -643,7 +848,11 @@ def _future_item(
         "display_price_role": role,
         "quality_status": q,
         "degraded_reason": reason,
-        "source_id": "yfinance" if "yfinance" in src else ("akshare" if "akshare.futures_global_spot_em" in src else "unknown"),
+        "source_id": (
+            "yfinance"
+            if "yfinance" in src
+            else ("akshare" if "akshare.futures_global_spot_em" in src else ("openclaw" if "global_spot_intraday" in src else "unknown"))
+        ),
         "source_raw": src,
         "as_of": _utc_now_iso(),
     }
@@ -783,45 +992,57 @@ def build_global_market_snapshot(trade_date: str) -> dict[str, Any]:
     _lineage_event(lineage, "cn_index", True, int((time.perf_counter() - t0) * 1000), f"items={len(cn_items)}")
     tools.extend(cn_tools)
 
-    # Global indices — two Yahoo batches for spot tool (uses FMP/YF chain inside plugin)
-    apac_codes = "^HSI,^HSCE,^N225,^KS11,^AXJO,^STI,^BSESN,^TWII"
-    us_eu_codes = "^DJI,^IXIC,^GSPC,^FTSE,^GDAXI,^FCHI,^STOXX50E"
+    # Global indices — strict same-index mapping and one-round retry for misses.
+    apac_specs: list[tuple[str, list[str], str]] = [
+        ("HSI", ["^HSI"], "恒生指数"),
+        ("HSCEI", ["^HSCEI", "^HSCE", "2828.HK"], "国企指数"),
+        ("N225", ["^N225"], "日经225"),
+        ("KOSPI", ["^KS11"], "韩国KOSPI"),
+        ("ASX200", ["^AXJO"], "澳大利亚标普200"),
+        ("STI", ["^STI"], "新加坡海峡时报"),
+        ("SENSEX", ["^BSESN"], "印度SENSEX"),
+        ("TAIEX", ["^TWII"], "台湾加权"),
+    ]
+    us_specs: list[tuple[str, list[str], str]] = [
+        ("DJI", ["^DJI"], "道琼斯工业"),
+        ("IXIC", ["^IXIC"], "纳斯达克综合"),
+        ("SPX", ["^GSPC"], "标普500"),
+        ("FTSE", ["^FTSE"], "英国富时100"),
+        ("GDAXI", ["^GDAXI"], "德国DAX"),
+        ("FCHI", ["^FCHI"], "法国CAC40"),
+        ("SX5E", ["^STOXX50E"], "欧洲斯托克50"),
+    ]
+    apac_codes = [code for _, codes, _ in apac_specs for code in codes]
+    us_eu_codes = [code for _, codes, _ in us_specs for code in codes]
     t1s = time.perf_counter()
-    apac_map, t1, apac_msg = _global_spot_map(apac_codes)
+    apac_map, t1, apac_msg = _global_spot_map_with_retry(apac_codes, retry_rounds=2)
     _lineage_event(lineage, "global_spot_apac", apac_msg == "ok", int((time.perf_counter() - t1s) * 1000), apac_msg)
     t2s = time.perf_counter()
-    us_map, t2, us_msg = _global_spot_map(us_eu_codes)
+    us_map, t2, us_msg = _global_spot_map_with_retry(us_eu_codes, retry_rounds=2)
     _lineage_event(lineage, "global_spot_us_eu", us_msg == "ok", int((time.perf_counter() - t2s) * 1000), us_msg)
     tools.extend(t1)
     tools.extend(t2)
-
-    apac_specs: list[tuple[str, str, str]] = [
-        ("HSI", "^HSI", "恒生指数"),
-        ("HSCEI", "^HSCE", "国企指数"),
-        ("N225", "^N225", "日经225"),
-        ("KOSPI", "^KS11", "韩国KOSPI"),
-        ("ASX200", "^AXJO", "澳大利亚标普200"),
-        ("STI", "^STI", "新加坡海峡时报"),
-        ("SENSEX", "^BSESN", "印度SENSEX"),
-        ("TAIEX", "^TWII", "台湾加权"),
-    ]
     apac_items = [
-        _global_index_item_spot_then_yf(f"global.apac.{c}", name, y, apac_map.get(y), cfg, tools)
-        for c, y, name in apac_specs
-    ]
-
-    us_specs: list[tuple[str, str, str]] = [
-        ("DJI", "^DJI", "道琼斯工业"),
-        ("IXIC", "^IXIC", "纳斯达克综合"),
-        ("SPX", "^GSPC", "标普500"),
-        ("FTSE", "^FTSE", "英国富时100"),
-        ("GDAXI", "^GDAXI", "德国DAX"),
-        ("FCHI", "^FCHI", "法国CAC40"),
-        ("SX5E", "^STOXX50E", "欧洲斯托克50"),
+        _global_index_item_spot_only(
+            f"global.apac.{symbol_id}",
+            name,
+            codes[0],
+            codes,
+            _pick_spot_row(apac_map, codes),
+            cfg,
+        )
+        for symbol_id, codes, name in apac_specs
     ]
     us_items = [
-        _global_index_item_spot_then_yf(f"global.us_eu.{c}", name, y, us_map.get(y), cfg, tools)
-        for c, y, name in us_specs
+        _global_index_item_spot_only(
+            f"global.us_eu.{symbol_id}",
+            name,
+            codes[0],
+            codes,
+            _pick_spot_row(us_map, codes),
+            cfg,
+        )
+        for symbol_id, codes, name in us_specs
     ]
 
     # Keep futures block focused on always-available legs.

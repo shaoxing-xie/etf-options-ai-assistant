@@ -65,6 +65,18 @@ def get_cache_dir(config: Optional[Dict] = None) -> Path:
     return cache_dir
 
 
+def _is_cache_enabled(config: Optional[Dict] = None) -> bool:
+    """
+    是否启用本地 parquet 缓存（与 data_collector 口径一致）。
+
+    ``plugins/data_collection/futures/fetch_a50`` 等模块在启动时从本模块导入此符号；
+    若缺失会导致 CACHE_AVAILABLE=False，期货日线无法落盘。
+    """
+    from src.data_collector import _is_cache_enabled as _dc_cache_enabled
+
+    return _dc_cache_enabled(config)
+
+
 def get_cache_file_path(
     data_type: str,
     symbol: str,
@@ -76,7 +88,8 @@ def get_cache_file_path(
     获取缓存文件路径
     
     Args:
-        data_type: 数据类型（'index_daily', 'index_minute', 'etf_daily', 'etf_minute', 'option_minute', 'option_greeks'）
+        data_type: 数据类型（'index_daily', 'index_minute', 'etf_daily', 'etf_minute',
+            'global_index_daily', 'stock_daily', 'stock_minute', 'option_minute', 'option_greeks'）
         symbol: 指数/ETF/期权代码（如 '000300', '510300', 或期权合约代码，可以是字符串或整数）
         date: 日期字符串（格式：YYYYMMDD）
         period: 周期（仅用于分钟数据，如 '5', '15', '30'）
@@ -105,6 +118,9 @@ def get_cache_file_path(
             file_path = cache_dir / 'etf_minute' / symbol / f"{date}.parquet"
     elif data_type == 'stock_daily':
         file_path = cache_dir / 'stock_daily' / symbol / f"{date}.parquet"
+    elif data_type == 'global_index_daily':
+        # 外盘指数日线切片（normalized 代码作目录名，如 IXIC、N225）
+        file_path = cache_dir / 'global_index_daily' / symbol / f"{date}.parquet"
     elif data_type == 'stock_minute':
         if period:
             file_path = cache_dir / 'stock_minute' / symbol / period / f"{date}.parquet"
@@ -261,6 +277,8 @@ def get_cached_index_daily(
             - 缺失的日期列表
     """
     try:
+        if config is None:
+            config = load_system_config(use_cache=True)
         dates = parse_date_range(start_date, end_date)
         cached_dfs = []
         missing_dates = []
@@ -306,8 +324,15 @@ def get_cached_index_daily(
             return None, missing_dates
         
         if missing_dates:
-            # 部分缓存，返回None和缺失日期列表
-            return None, missing_dates
+            # 部分命中：返回可用数据与缺失列表，供上层决定是否补拉或降级使用
+            partial_df = pd.concat(cached_dfs, ignore_index=True)
+            if date_col:
+                partial_df = partial_df.sort_values(by=date_col)
+            logger.info(
+                f"指数日线缓存部分命中: {symbol}, {start_date}~{end_date}, "
+                f"已缓存 {len(partial_df)} 条, 缺失 {len(missing_dates)} 个交易日"
+            )
+            return partial_df, missing_dates
         
         # 全部缓存命中，合并数据
         result_df = pd.concat(cached_dfs, ignore_index=True)
@@ -357,6 +382,8 @@ def get_cached_etf_daily(
             - 缺失的日期列表
     """
     try:
+        if config is None:
+            config = load_system_config(use_cache=True)
         dates = parse_date_range(start_date, end_date)
         cached_dfs = []
         missing_dates = []
@@ -402,8 +429,15 @@ def get_cached_etf_daily(
             return None, missing_dates
         
         if missing_dates:
-            # 部分缓存，返回None和缺失日期列表
-            return None, missing_dates
+            # 部分命中：返回可用数据与缺失列表，供上层决定是否补拉或降级使用
+            partial_df = pd.concat(cached_dfs, ignore_index=True)
+            if date_col:
+                partial_df = partial_df.sort_values(by=date_col)
+            logger.info(
+                f"ETF日线缓存部分命中: {symbol}, {start_date}~{end_date}, "
+                f"已缓存 {len(partial_df)} 条, 缺失 {len(missing_dates)} 个交易日"
+            )
+            return partial_df, missing_dates
         
         # 全部缓存命中，合并数据
         result_df = pd.concat(cached_dfs, ignore_index=True)
@@ -453,6 +487,8 @@ def get_cached_stock_daily(
             - 缺失的日期列表
     """
     try:
+        if config is None:
+            config = load_system_config(use_cache=True)
         dates = parse_date_range(start_date, end_date)
         cached_dfs: List[pd.DataFrame] = []
         missing_dates: List[str] = []
@@ -490,7 +526,14 @@ def get_cached_stock_daily(
             return None, missing_dates
 
         if missing_dates:
-            return None, missing_dates
+            partial_df = pd.concat(cached_dfs, ignore_index=True)
+            if date_col:
+                partial_df = partial_df.sort_values(by=date_col)
+            logger.info(
+                f"股票日线缓存部分命中: {symbol}, {start_date}~{end_date}, "
+                f"已缓存 {len(partial_df)} 条, 缺失 {len(missing_dates)} 个交易日"
+            )
+            return partial_df, missing_dates
 
         result_df = pd.concat(cached_dfs, ignore_index=True)
         if date_col:
@@ -678,6 +721,52 @@ def save_index_daily_cache(
             "保存缓存失败"
         )
         return False
+
+
+def save_global_index_daily_from_records(
+    symbol_key: str,
+    records: List[Dict[str, Any]],
+    *,
+    config: Optional[Dict] = None,
+) -> int:
+    """
+    将外盘指数日线记录写入 data/cache/global_index_daily/<symbol_key>/YYYYMMDD.parquet。
+
+    records 项约定与 ``tool_fetch_global_index_hist_sina`` 的 data 行一致：date, open, high, low, close, volume。
+    """
+    if not records:
+        return 0
+    dc = (config or {}).get("data_cache") if isinstance((config or {}).get("data_cache"), dict) else {}
+    if not dc.get("enabled", True):
+        return 0
+    saved = 0
+    sym = str(symbol_key).strip()
+    if not sym:
+        return 0
+    for rec in records:
+        if not isinstance(rec, dict):
+            continue
+        ds = str(rec.get("date") or "").strip()
+        if not ds:
+            continue
+        ds_compact = ds.replace("-", "")[:8]
+        if len(ds_compact) != 8 or not ds_compact.isdigit():
+            continue
+        row = {
+            "date": ds,
+            "open": rec.get("open"),
+            "high": rec.get("high"),
+            "low": rec.get("low"),
+            "close": rec.get("close"),
+            "volume": rec.get("volume"),
+        }
+        df = pd.DataFrame([row])
+        path = get_cache_file_path("global_index_daily", sym, ds_compact, config=config)
+        if save_cached_data(df, path):
+            saved += 1
+    if saved:
+        logger.info("外盘指数日线已写入缓存: %s, %s 行", sym, saved)
+    return saved
 
 
 def get_cached_index_minute(
@@ -1254,6 +1343,12 @@ def get_cache_stats(config: Optional[Dict] = None) -> Dict[str, Any]:
                 'total_size_mb': 0.0,
                 'date_range': {'earliest': None, 'latest': None}
             },
+            'global_index_daily': {
+                'symbols': [],
+                'total_files': 0,
+                'total_size_mb': 0.0,
+                'date_range': {'earliest': None, 'latest': None}
+            },
             'stock_minute': {
                 'symbols': [],
                 'periods': {},
@@ -1413,6 +1508,26 @@ def get_cache_stats(config: Optional[Dict] = None) -> Dict[str, Any]:
                             stats['stock_daily']['date_range']['earliest'] = date_str
                         if stats['stock_daily']['date_range']['latest'] is None or date_str > stats['stock_daily']['date_range']['latest']:
                             stats['stock_daily']['date_range']['latest'] = date_str
+
+        # 统计外盘指数日线缓存（global_index_daily）
+        global_idx_dir = cache_dir / 'global_index_daily'
+        if global_idx_dir.exists():
+            for symbol_dir in global_idx_dir.iterdir():
+                if symbol_dir.is_dir():
+                    symbol = symbol_dir.name
+                    stats['global_index_daily']['symbols'].append(symbol)
+                    files = list(symbol_dir.glob('*.parquet'))
+                    stats['global_index_daily']['total_files'] += len(files)
+                    for file_path in files:
+                        size_mb = file_path.stat().st_size / (1024 * 1024)
+                        stats['global_index_daily']['total_size_mb'] += size_mb
+                        stats['total_size_mb'] += size_mb
+                        date_str = file_path.stem
+                        er = stats['global_index_daily']['date_range']
+                        if er['earliest'] is None or date_str < er['earliest']:
+                            er['earliest'] = date_str
+                        if er['latest'] is None or date_str > er['latest']:
+                            er['latest'] = date_str
 
         # 统计股票分钟缓存
         stock_minute_dir = cache_dir / 'stock_minute'

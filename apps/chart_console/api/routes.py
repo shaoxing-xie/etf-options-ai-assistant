@@ -171,12 +171,19 @@ class ApiRoutes:
         if path == "/api/semantic/rotation_latest":
             trade_date = (query.get("trade_date") or [""])[0]
             return self.svc.get_semantic_rotation_latest(str(trade_date)), 200, {}
+        if path == "/api/semantic/rotation_trade_dates":
+            return self.svc.get_semantic_rotation_trade_dates(), 200, {}
         if path == "/api/semantic/rotation_heatmap":
             trade_date = (query.get("trade_date") or [""])[0]
             return self.svc.get_semantic_rotation_heatmap(str(trade_date)), 200, {}
         if path == "/api/semantic/etf_share_dashboard":
             trade_date = (query.get("trade_date") or [""])[0]
             return self.svc.get_semantic_etf_share_dashboard(str(trade_date)), 200, {}
+        if path == "/api/semantic/six_index_next_day_trade_dates":
+            return self.svc.get_semantic_six_index_next_day_trade_dates(), 200, {}
+        if path == "/api/semantic/six_index_next_day":
+            trade_date = (query.get("trade_date") or [""])[0]
+            return self.svc.get_semantic_six_index_next_day(str(trade_date)), 200, {}
         if path == "/api/semantic/global_market_snapshot":
             trade_date = (query.get("trade_date") or [""])[0]
             refresh = str((query.get("refresh") or ["0"])[0]).lower() in ("1", "true", "yes", "on")

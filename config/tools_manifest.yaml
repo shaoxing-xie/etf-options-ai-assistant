@@ -541,6 +541,18 @@ tools:
       config_path:
         type: string
         description: 自定义 strategy_fusion.yaml 路径（可选）
+- id: tool_nlu_query
+  label: 自然语言路由查询
+  description: 识别自然语言意图并路由到热点、指数预测、技术分析或情绪快照。
+  description_short: 自然语言意图识别与路由入口。
+  parameters:
+    type: object
+    properties:
+      query:
+        type: string
+        description: 用户自然语言问题
+    required:
+    - query
 - id: tool_calculate_position_size
   label: 计算建议仓位（含硬锁定）
   description: 根据趋势强度和信号置信度计算建议仓位，支持2%硬锁定限制。
@@ -1233,7 +1245,7 @@ tools:
         description: 可选；单条目标字符上限，省略读 config notification.dingtalk_max_chars_per_message。
 - id: tool_run_data_cache_job
   label: data_cache 定时采集（单次）
-  description: 按 config.yaml 的 data_cache 节执行采集并写本地缓存（与 scripts/run_data_cache_collection.py 一致）。job=morning_daily 为长窗日 K；job=intraday_minute 为指数/ETF/股票分钟（throttle_stock=true 时股票仅在每分钟为 1 或 31 拉取）；job=close_minute 为分钟线后补写日 K。notify 省略时自动：morning_daily/close_minute 发送飞书摘要，intraday_minute 不发。
+  description: 按 config.yaml 的 data_cache 节执行采集并写本地缓存（与 scripts/run_data_cache_collection.py 一致）。job=morning_daily 为长窗日 K，且在配置启用时并行执行 futures_daily_warm（如 A50）与 global_index_daily_warm（外盘指数日线落盘至 data/cache/global_index_daily）；job=intraday_minute 为指数/ETF/股票分钟（throttle_stock=true 时股票仅在每分钟为 1 或 31 拉取）；job=close_minute 为分钟线后补写日 K，并在配置启用时同样执行期货/外盘日暖。notify 省略时自动：morning_daily/close_minute 发送飞书摘要，intraday_minute 不发。
   description_short: data_cache 采集+可选飞书
   parameters:
     type: object
@@ -1248,6 +1260,9 @@ tools:
       notify:
         type: boolean
         description: 是否发送飞书摘要；省略则 morning_daily/close_minute 为 true，intraday_minute 为 false
+      feishu_title:
+        type: string
+        description: 可选；飞书消息标题覆盖（默认按 job 映射为早盘/收盘/盘中采集完成）
     required:
     - job
 - id: tool_portfolio_risk_snapshot

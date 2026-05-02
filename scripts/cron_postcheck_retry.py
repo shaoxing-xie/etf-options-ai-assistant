@@ -10,6 +10,7 @@ Goal:
 from __future__ import annotations
 
 import argparse
+import fcntl
 import json
 import os
 import re
@@ -227,6 +228,43 @@ def _save_state(path: Path, data: dict[str, Any]) -> None:
     path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+def _sync_jobs_state_delivery(job_id: str, *, delivered: bool, delivery_status: str) -> None:
+    """
+    Best-effort state sync:
+    cron runs may keep `delivered=false` when delivery.mode=none even if toolResult proves
+    downstream delivery succeeded. Persist a truthful lastDeliveryStatus in jobs-state.json
+    so operational status views don't keep reporting false negatives.
+    """
+    jobs_state_path = Path.home() / ".openclaw" / "cron" / "jobs-state.json"
+    if not jobs_state_path.exists():
+        return
+    try:
+        payload = json.loads(jobs_state_path.read_text(encoding="utf-8"))
+    except Exception:
+        return
+    if not isinstance(payload, dict):
+        return
+    jobs = payload.get("jobs")
+    if not isinstance(jobs, dict):
+        return
+    node = jobs.get(job_id)
+    if not isinstance(node, dict):
+        return
+    state = node.get("state")
+    if not isinstance(state, dict):
+        state = {}
+    state["lastDelivered"] = bool(delivered)
+    state["lastDeliveryStatus"] = str(delivery_status or ("ok" if delivered else "not-delivered"))
+    node["state"] = state
+    node["updatedAtMs"] = int(time.time() * 1000)
+    jobs[job_id] = node
+    payload["jobs"] = jobs
+    try:
+        jobs_state_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    except Exception:
+        return
+
+
 def _send_feishu_alert(repo_root: Path, *, title: str, message: str) -> tuple[bool, str]:
     runner = repo_root / "tool_runner.py"
     py = repo_root / ".venv" / "bin" / "python"
@@ -242,6 +280,64 @@ def _send_feishu_alert(repo_root: Path, *, title: str, message: str) -> tuple[bo
     ok = p.returncode == 0
     tail = (p.stdout or p.stderr or "").strip()[-500:]
     return ok, tail
+
+
+def _alert_delivery_state_mismatch(
+    *,
+    job_id: str,
+    job: dict[str, Any] | None,
+    latest: dict[str, Any],
+    state: dict[str, Any],
+    expected_tools: list[str],
+) -> None:
+    """
+    Alert once per run when tool proof says delivered but cron run fields still indicate not-delivered.
+    """
+    delivered_flag = latest.get("delivered")
+    delivery_status = str(latest.get("deliveryStatus") or "").strip().lower()
+    is_mismatch = (delivered_flag is False) or (delivery_status in {"not-delivered", "not_delivered"})
+    if not is_mismatch:
+        return
+
+    # When delivery.mode is explicitly "none", cron run fields are expected to remain
+    # not-delivered even if downstream tools delivered successfully. Postcheck will
+    # still sync jobs-state.json for truthful operational status, but should not
+    # page/alert on this expected mismatch.
+    try:
+        delivery_mode = ((job or {}).get("delivery") or {}).get("mode")
+    except Exception:
+        delivery_mode = None
+    if str(delivery_mode or "").strip().lower() == "none":
+        return
+
+    run_at_ms = int(latest.get("runAtMs", 0) or 0)
+    state_key = f"delivery-mismatch-alert:{job_id}:{run_at_ms}"
+    if state.get(state_key, {}).get("alerted") is True:
+        return
+
+    repo_root = Path("/home/xie/etf-options-ai-assistant")
+    title = f"[cron-delivery-mismatch] {job_id}"
+    msg = (
+        f"job_id={job_id}\n"
+        f"runAtMs={run_at_ms}\n"
+        f"sessionId={latest.get('sessionId')}\n"
+        f"cron.delivered={latest.get('delivered')}\n"
+        f"cron.deliveryStatus={latest.get('deliveryStatus')}\n"
+        f"tool_proof=success({','.join(expected_tools)})\n"
+        "action=state synced to lastDelivered=true,lastDeliveryStatus=ok by postcheck"
+    )
+    sent_ok, sent_tail = _send_feishu_alert(repo_root, title=title, message=msg)
+    state[state_key] = {
+        "alerted": True,
+        "alertedAtMs": int(time.time() * 1000),
+        "jobId": job_id,
+        "runAtMs": run_at_ms,
+        "sent_ok": sent_ok,
+        "sent_tail": sent_tail,
+        "deliveryStatus": latest.get("deliveryStatus"),
+        "delivered": latest.get("delivered"),
+        "expected_tools": expected_tools,
+    }
 
 
 def _extract_tools_from_message(message: str) -> list[str]:
@@ -653,6 +749,14 @@ def _process_job(
         return "fail", f"{job_id}: session file not found for sessionId={session_id}"
 
     if _has_target_tool_success(session_file, expected_tool=expected_tool):
+        _alert_delivery_state_mismatch(
+            job_id=job_id,
+            job=jobs_by_id.get(job_id),
+            latest=latest,
+            state=state,
+            expected_tools=[expected_tool],
+        )
+        _sync_jobs_state_delivery(job_id, delivered=True, delivery_status="ok")
         return "pass", f"{job_id}: toolResult success found for {expected_tool} ({session_file})"
 
     compensation_key = _build_compensation_key(
@@ -719,6 +823,14 @@ def _process_job_send_required(
         return "fail", f"{job_id}: session file not found for sessionId={session_id}"
 
     if _has_any_target_tool_success(session_file, expected_tools=expected_send_tools):
+        _alert_delivery_state_mismatch(
+            job_id=job_id,
+            job=jobs_by_id.get(job_id),
+            latest=latest,
+            state=state,
+            expected_tools=expected_send_tools,
+        )
+        _sync_jobs_state_delivery(job_id, delivered=True, delivery_status="ok")
         return "pass", f"{job_id}: send toolResult success found in {expected_send_tools} ({session_file})"
 
     compensation_key = _build_compensation_key(
@@ -1140,6 +1252,16 @@ def main() -> int:
         help="Persistent state for idempotent one-shot retry.",
     )
     args = parser.parse_args()
+
+    # Prevent concurrent postcheck runs from racing on state writes/alerts.
+    lock_path = Path("/home/xie/.openclaw/cron/postcheck_retry_state.lock")
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    lock_fp = lock_path.open("w", encoding="utf-8")
+    try:
+        fcntl.flock(lock_fp.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        print("SKIP: another postcheck instance is running")
+        return 0
 
     state_file = Path(args.state_file)
     state = _load_state(state_file)

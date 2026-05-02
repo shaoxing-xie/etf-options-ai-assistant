@@ -315,6 +315,10 @@ class ApiServices:
         dates = self._semantic.semantic_trade_dates()
         return {"success": True, "message": "ok", "data": dates}
 
+    def get_semantic_rotation_trade_dates(self) -> dict[str, Any]:
+        dates = self._semantic.rotation_trade_dates()
+        return {"success": True, "message": "ok", "data": dates}
+
     def get_semantic_rotation_latest(self, trade_date: str = "") -> dict[str, Any]:
         data = self._semantic.rotation_latest(trade_date)
         return {"success": True, "message": "ok", "data": data}
@@ -326,6 +330,14 @@ class ApiServices:
     def get_semantic_etf_share_dashboard(self, trade_date: str = "") -> dict[str, Any]:
         data = self._semantic.etf_share_dashboard(trade_date)
         return {"success": True, "message": "ok", "data": data}
+
+    def get_semantic_six_index_next_day(self, trade_date: str = "") -> dict[str, Any]:
+        data = self._semantic.six_index_next_day(trade_date)
+        return {"success": True, "message": "ok", "data": data}
+
+    def get_semantic_six_index_next_day_trade_dates(self) -> dict[str, Any]:
+        dates = self._semantic.six_index_next_day_trade_dates()
+        return {"success": True, "message": "ok", "data": dates}
 
     def get_semantic_research_metrics(self, trade_date: str = "", window: int = 5) -> dict[str, Any]:
         data = self._semantic.research_metrics(trade_date, window=window)

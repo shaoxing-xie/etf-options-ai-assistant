@@ -404,8 +404,38 @@ def test_orchestration_timeline_and_health(tmp_path: Path) -> None:
 
 def test_rotation_heatmap_and_share_dashboard(tmp_path: Path) -> None:
     root = tmp_path
+    (root / "data" / "semantic" / "rotation_latest").mkdir(parents=True)
     (root / "data" / "semantic" / "rotation_heatmap").mkdir(parents=True)
     (root / "data" / "semantic" / "etf_share_dashboard").mkdir(parents=True)
+    (root / "data" / "semantic" / "rotation_latest" / "2026-04-22.json").write_text(
+        json.dumps(
+            {
+                "_meta": {"schema_name": "etf_rotation_latest_semantic_v1", "trade_date": "2026-04-22"},
+                "data": {
+                    "trade_date": "2026-04-22",
+                    "top5": [],
+                    "top10": [],
+                    "heatmap": [],
+                    "environment": {},
+                    "recommendations": [
+                        {
+                            "rank": 1,
+                            "sector": "电子",
+                            "etf_code": "159997",
+                            "allocation_pct": 20,
+                            "cautions": [],
+                            "signals": {},
+                        }
+                    ],
+                    "unified_next_day": [],
+                    "legacy_views": {},
+                    "sector_environment_effective": {"effective_gate": "CAUTION"},
+                    "sector_environment": {"gate": "CAUTION", "reason_codes": ["demo"]},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
     (root / "data" / "semantic" / "rotation_heatmap" / "2026-04-22.json").write_text(
         json.dumps(
             {
@@ -425,7 +455,51 @@ def test_rotation_heatmap_and_share_dashboard(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     reader = SemanticReader(root)
+    latest = reader.rotation_latest("2026-04-22")
     heat = reader.rotation_heatmap("2026-04-22")
     share = reader.etf_share_dashboard("2026-04-22")
+    assert isinstance(latest.get("recommendations"), list)
+    assert latest["recommendations"][0]["etf_code"] == "159997"
     assert heat["_meta"]["schema_name"] == "semantic_rotation_heatmap_v1"
     assert share["_meta"]["schema_name"] == "semantic_etf_share_dashboard_v1"
+
+
+def test_semantic_six_index_next_day_snapshot(tmp_path: Path) -> None:
+    root = tmp_path
+    d = root / "data" / "semantic" / "six_index_next_day"
+    d.mkdir(parents=True)
+    snap = {
+        "_meta": {"schema_name": "six_index_next_day_view_v1", "trade_date": "2026-04-28", "quality_status": "info"},
+        "trade_date": "2026-04-28",
+        "predict_for_trade_date": "2026-04-29",
+        "predictions": [{"index_code": "000300.SH", "direction": "up", "probability": 61.2}],
+        "summary": {"up_count": 1, "down_count": 0, "neutral_count": 0},
+    }
+    (d / "2026-04-28.json").write_text(json.dumps(snap), encoding="utf-8")
+    reader = SemanticReader(root)
+    payload = reader.six_index_next_day("2026-04-28")
+    assert payload["predict_for_trade_date"] == "2026-04-29"
+    assert payload["predictions"][0]["index_code"] == "000300.SH"
+    assert payload["_meta"]["quality_status"] == "info"
+
+
+def test_semantic_six_index_next_day_trade_dates(tmp_path: Path) -> None:
+    root = tmp_path
+    d = root / "data" / "semantic" / "six_index_next_day"
+    d.mkdir(parents=True)
+    (d / "2026-04-28.json").write_text("{}", encoding="utf-8")
+    (d / "2026-04-25.json").write_text("{}", encoding="utf-8")
+    (d / "notes.txt").write_text("ignore", encoding="utf-8")
+
+    reader = SemanticReader(root)
+
+    assert reader.six_index_next_day_trade_dates() == ["2026-04-25", "2026-04-28"]
+
+
+def test_semantic_six_index_next_day_missing_snapshot_is_failed(tmp_path: Path) -> None:
+    reader = SemanticReader(tmp_path)
+
+    payload = reader.six_index_next_day("2026-04-28")
+
+    assert payload["_meta"]["quality_status"] == "failed"
+    assert payload["predictions"] == []

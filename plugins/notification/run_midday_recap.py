@@ -103,56 +103,95 @@ def _try_fetch_fund_flow(now: datetime) -> Dict[str, Any]:
     返回结构稳定：{ok, market? , note?}
     """
     out: Dict[str, Any] = {"ok": False}
-    # 1) 同花顺优先：直接调用 AkShare stock_board_industry_summary_ths（包含净流入）
+    # 1) 插件统一资金流工具：板块资金排名（行业）
     try:
-        import pandas as pd  # type: ignore
-        import akshare as ak  # type: ignore
+        from plugins.data_collection.a_share_fund_flow import tool_fetch_a_share_fund_flow  # type: ignore
 
-        raw = ak.stock_board_industry_summary_ths()
-        if raw is not None and not getattr(raw, "empty", True) and "板块" in raw.columns and "涨跌幅" in raw.columns:
-            # 兼容：净流入列名可能不存在/不同
-            net_col = None
-            for c in raw.columns:
-                if "净流入" in str(c):
-                    net_col = c
-                    break
-            df = pd.DataFrame(
-                {
-                    "sector_name": raw["板块"].astype(str).str.strip(),
-                    "change_percent": pd.to_numeric(raw["涨跌幅"], errors="coerce"),
-                    "net_inflow": pd.to_numeric(raw[net_col], errors="coerce").fillna(0.0) if net_col else None,
-                }
-            )
-            df = df[(df["sector_name"].str.len() > 0) & (df["change_percent"].notna())]
+        sector = tool_fetch_a_share_fund_flow(
+            query_kind="sector_rank",
+            sector_type="industry",
+            rank_window="immediate",
+            limit=80,
+        )
+        if isinstance(sector, dict) and bool(sector.get("success")):
+            data = sector.get("data")
+            rows = data if isinstance(data, list) else []
+            norm_rows: List[Dict[str, Any]] = []
+            for r in rows:
+                if not isinstance(r, dict):
+                    continue
+                sector_name = str(
+                    r.get("sector_name")
+                    or r.get("板块")
+                    or r.get("板块名称")
+                    or r.get("name")
+                    or ""
+                ).strip()
+                if not sector_name:
+                    continue
+                norm_rows.append(
+                    {
+                        "sector_name": sector_name,
+                        "change_percent": _safe_float(
+                            r.get("change_percent")
+                            or r.get("涨跌幅")
+                            or r.get("涨跌幅%")
+                        ),
+                        "net_inflow": _safe_float(
+                            r.get("net_inflow")
+                            or r.get("主力净流入")
+                            or r.get("主力净流入-净额")
+                            or r.get("净流入")
+                        ),
+                    }
+                )
             out["industry_ths"] = {
                 "status": "success",
                 "date": now.strftime("%Y-%m-%d"),
-                "source": "akshare.stock_board_industry_summary_ths",
-                "data": df.to_dict("records"),
+                "source": "tool_fetch_a_share_fund_flow:sector_rank",
+                "data": norm_rows,
             }
             out["ok"] = True
         else:
-            out["industry_ths_error"] = "THS行业一览返回空/缺字段"
+            out["industry_ths_error"] = str((sector or {}).get("message") or "sector_rank_empty")
     except Exception as e:
         out["industry_ths_error"] = str(e)
 
-    # 2) 兜底：东财直连大盘资金流（日K）
+    # 2) 插件统一资金流工具：大盘历史（取最新）
     try:
-        from plugins.data_collection.utils.eastmoney_fund_flow_direct import (  # type: ignore
-            stock_market_fund_flow_direct,
-            em_http_available,
+        from plugins.data_collection.a_share_fund_flow import (  # type: ignore
+            tool_fetch_a_share_fund_flow,
         )
 
-        if callable(em_http_available) and not em_http_available():
-            out["market_error"] = "eastmoney_fund_flow_direct 不可用（request_with_retry 缺失）"
-        else:
-            df = stock_market_fund_flow_direct()
-            if getattr(df, "empty", True):
-                out["market_error"] = "大盘资金流返回空"
-            else:
-                last = df.tail(1).iloc[0].to_dict()
-                out["market"] = last
+        market = tool_fetch_a_share_fund_flow(query_kind="market_history", max_days=5)
+        if isinstance(market, dict) and bool(market.get("success")):
+            data = market.get("data")
+            rows = data if isinstance(data, list) else []
+            latest = rows[-1] if rows else {}
+            if isinstance(latest, dict) and latest:
+                out["market"] = {
+                    "主力净流入-净额": _safe_float(
+                        latest.get("主力净流入-净额")
+                        or latest.get("主力净流入")
+                        or latest.get("proxy_total_net")
+                        or 0.0
+                    ),
+                    "超大单净流入-净额": _safe_float(
+                        latest.get("超大单净流入-净额")
+                        or latest.get("超大单净流入")
+                        or 0.0
+                    ),
+                    "大单净流入-净额": _safe_float(
+                        latest.get("大单净流入-净额")
+                        or latest.get("大单净流入")
+                        or 0.0
+                    ),
+                }
                 out["ok"] = True
+            else:
+                out["market_error"] = "market_history_empty"
+        else:
+            out["market_error"] = str((market or {}).get("message") or "market_history_failed")
     except Exception as e:
         out["market_error"] = str(e)
 
@@ -318,6 +357,46 @@ def _extract_sector_top(heat_resp: Any, limit: int = 8) -> List[str]:
     return out
 
 
+def _extract_sector_meta(heat_resp: Any) -> Dict[str, Any]:
+    if not isinstance(heat_resp, dict):
+        return {}
+    data = heat_resp.get("data") if isinstance(heat_resp.get("data"), dict) else {}
+    as_of = (
+        heat_resp.get("as_of")
+        or heat_resp.get("date")
+        or data.get("as_of")
+        or data.get("date")
+        or data.get("trade_date")
+    )
+    source = heat_resp.get("source") or data.get("source") or "tool_sector_heat_score"
+    basis = heat_resp.get("data_basis") or data.get("data_basis") or "unspecified"
+    return {"as_of": as_of, "source": source, "data_basis": basis}
+
+
+def _classify_fund_flow_status(fund_flow: Any) -> Tuple[str, str]:
+    if not isinstance(fund_flow, dict):
+        return "tool_error", "资金流向工具未返回有效结构。"
+    cache_used = bool(fund_flow.get("cache_used"))
+    has_ind = isinstance(fund_flow.get("industry_ths"), dict)
+    has_market = isinstance(fund_flow.get("market"), dict)
+    ind_rows = []
+    if has_ind:
+        data = fund_flow.get("industry_ths", {}).get("data")
+        ind_rows = data if isinstance(data, list) else []
+    if cache_used and (has_market or ind_rows):
+        return "cache_fallback", "资金流向使用最近成功缓存，非当前时点实时快照。"
+    if has_ind and not ind_rows and not has_market:
+        return "empty_data", "资金流向工具调用成功，但当前窗口暂无可解析数据。"
+    if has_market or ind_rows:
+        return "ok", ""
+
+    err = str(fund_flow.get("industry_ths_error") or fund_flow.get("market_error") or "").strip().lower()
+    holiday_tokens = ("holiday", "休市", "closed", "港股通")
+    if any(t in err for t in holiday_tokens):
+        return "holiday_closed", "跨市场资金通道休市，相关资金流口径缺失。"
+    return "tool_error", "资金流向工具不可用或返回空（需要 openclaw-data-china-stock 扩展及可用数据源）。"
+
+
 def _extract_risk_summary(risk_resp: Any) -> Dict[str, Any]:
     if not isinstance(risk_resp, dict):
         return {}
@@ -353,7 +432,7 @@ def _risk_level_label(raw: Any) -> str:
     return mapping.get(s, str(raw))
 
 
-def _derive_afternoon_bias(flat: Dict[str, Any]) -> Tuple[str, str]:
+def _derive_afternoon_bias(flat: Dict[str, Any], morning_amount_510300: Any = None) -> Tuple[str, str]:
     """
     用最小可得数据做一个可解释的“下午倾向”。
     """
@@ -361,14 +440,23 @@ def _derive_afternoon_bias(flat: Dict[str, Any]) -> Tuple[str, str]:
     gem = _safe_float(flat.get("gem_change"))
     zz500 = _safe_float(flat.get("zz500_change"))
     vals = [x for x in (hs300, gem, zz500) if x is not None]
+    risk_label = _risk_level_label(flat.get("risk_level"))
+    amt = _safe_float(morning_amount_510300)
+    amount_note = "成交额信息缺失"
+    if amt is not None:
+        amount_note = "成交中性"
+        if amt >= 5.5e9:
+            amount_note = "成交偏活跃"
+        elif amt <= 2.5e9:
+            amount_note = "成交偏弱"
     if not vals:
-        return "N/A", "指数半日涨跌数据缺失"
+        return "N/A", f"指数半日涨跌数据缺失；{amount_note}；风险等级{risk_label}"
     avg = sum(vals) / len(vals)
     if avg >= 0.6:
-        return "偏强", "主要指数整体偏强（均值较高），但需防冲高回落"
+        return "偏强", f"指数均值偏强（{avg:+.2f}%）；{amount_note}；风险等级{risk_label}"
     if avg <= -0.6:
-        return "偏弱", "主要指数整体偏弱（均值较低），优先风控"
-    return "震荡", "主要指数涨跌幅处于中性区间，更偏结构性机会"
+        return "偏弱", f"指数均值偏弱（{avg:+.2f}%）；{amount_note}；风险等级{risk_label}"
+    return "震荡", f"指数均值中性（{avg:+.2f}%）；{amount_note}；风险等级{risk_label}"
 
 
 def _mark_midday_analysis_health(rd: Dict[str, Any]) -> None:
@@ -446,6 +534,20 @@ _STAGE_BUDGET_PRESETS: Dict[str, Dict[str, int]] = {
 }
 
 
+def _load_midday_tools() -> Dict[str, Callable[..., Any]]:
+    from plugins.data_collection.limit_up.sector_heat import tool_sector_heat_score
+    from plugins.merged.fetch_etf_data import tool_fetch_etf_data
+    from plugins.merged.fetch_index_data import tool_fetch_index_data
+    from plugins.risk.portfolio_risk_snapshot import tool_portfolio_risk_snapshot
+
+    return {
+        "tool_sector_heat_score": tool_sector_heat_score,
+        "tool_fetch_etf_data": tool_fetch_etf_data,
+        "tool_fetch_index_data": tool_fetch_index_data,
+        "tool_portfolio_risk_snapshot": tool_portfolio_risk_snapshot,
+    }
+
+
 def _resolve_stage_budgets(profile: str) -> Optional[Dict[str, int]]:
     if profile == "off":
         return None
@@ -516,10 +618,11 @@ def build_midday_recap_report_data(
     concurrency = max(1, min(int(max_concurrency or 1), 6))
     now = _now_sh()
 
-    from plugins.data_collection.limit_up.sector_heat import tool_sector_heat_score
-    from plugins.merged.fetch_etf_data import tool_fetch_etf_data
-    from plugins.merged.fetch_index_data import tool_fetch_index_data
-    from plugins.risk.portfolio_risk_snapshot import tool_portfolio_risk_snapshot
+    tools = _load_midday_tools()
+    tool_sector_heat_score = tools["tool_sector_heat_score"]
+    tool_fetch_etf_data = tools["tool_fetch_etf_data"]
+    tool_fetch_index_data = tools["tool_fetch_index_data"]
+    tool_portfolio_risk_snapshot = tools["tool_portfolio_risk_snapshot"]
 
     rd: Dict[str, Any] = {
         "report_type": "midday_recap",
@@ -533,15 +636,16 @@ def build_midday_recap_report_data(
     # 非交易日：production 下 realtime 会被交易日门禁拦截；对齐到最近 A 股交易日的日线最后一根
     ref_yyyymmdd: Optional[str] = None
     use_hist_last_td = False
-    try:
-        from src.system_status import get_last_trading_day_on_or_before, is_trading_day
+    if mode != "test":
+        try:
+            from src.system_status import get_last_trading_day_on_or_before, is_trading_day
 
-        if not is_trading_day(now, None):
-            ref_yyyymmdd = get_last_trading_day_on_or_before(now, None)
-            use_hist_last_td = bool(ref_yyyymmdd)
-    except Exception:
-        ref_yyyymmdd = None
-        use_hist_last_td = False
+            if not is_trading_day(now, None):
+                ref_yyyymmdd = get_last_trading_day_on_or_before(now, None)
+                use_hist_last_td = bool(ref_yyyymmdd)
+        except Exception:
+            ref_yyyymmdd = None
+            use_hist_last_td = False
 
     idx: Any = None
     idx_399006: Any = None
@@ -761,8 +865,10 @@ def build_midday_recap_report_data(
             else ""
         ),
         "fund_flow_data_note": "",
+        "fund_flow_status": "unknown",
         "fund_flow_summary_lines": [],
         "sector_rank_lines": [],
+        "sector_data_note": "",
         "sector_heat_tool": heat,
         "opening_expectation": {"available": False},
         "afternoon_bias": "N/A",
@@ -815,6 +921,26 @@ def build_midday_recap_report_data(
         flat["current_dd_snapshot"] = rdata.get("current_drawdown") or rdata.get("current_dd")
         flat["position_risk_snapshot"] = rdata.get("position_note") or rdata.get("position")
     mr["inspection_flat"] = flat
+    mr["data_lineage"] = {
+        "indices": {
+            "source_tool": "tool_fetch_index_data",
+            "timestamp": now.strftime("%Y-%m-%d %H:%M:%S"),
+            "data_basis": ("historical_last_trading_day" if use_hist_last_td else "realtime"),
+        },
+        "etf_510300": {
+            "source_tool": "tool_fetch_etf_data",
+            "timestamp": str(etf_row.get("timestamp") if isinstance((etf_row := _extract_etf_row(rd.get("tool_fetch_etf_realtime_510300"))), dict) else "") or now.strftime("%Y-%m-%d %H:%M:%S"),
+            "data_basis": str(
+                (etf_row.get("data_basis") if isinstance(etf_row, dict) else "")
+                or ("historical_last_trading_day" if use_hist_last_td else "realtime")
+            ),
+        },
+        "risk": {
+            "source_tool": "tool_portfolio_risk_snapshot",
+            "timestamp": now.strftime("%Y-%m-%d %H:%M:%S"),
+            "data_basis": "snapshot",
+        },
+    }
 
     # 资金流向摘要 lines（若可用）
     ff_lines: List[str] = []
@@ -844,8 +970,21 @@ def build_midday_recap_report_data(
         if fund_flow.get("cache_used"):
             ff_lines.append(f"- 说明：当前使用最近成功缓存（时间：{fund_flow.get('cache_time') or 'N/A'}）")
     mr["fund_flow_summary_lines"] = ff_lines
+    ff_status, ff_note = _classify_fund_flow_status(fund_flow)
+    mr["fund_flow_status"] = ff_status
     if not ff_lines:
-        mr["fund_flow_data_note"] = "资金流向工具不可用或返回空（需要 openclaw-data-china-stock 扩展及可用数据源）。"
+        mr["fund_flow_data_note"] = ff_note
+    elif ff_note:
+        mr["fund_flow_data_note"] = ff_note
+
+    sector_meta = _extract_sector_meta(heat)
+    mr["sector_meta"] = sector_meta
+    sector_as_of = str(sector_meta.get("as_of") or "").strip()
+    if sector_as_of:
+        if sector_as_of != str(mr.get("date") or ""):
+            mr["sector_data_note"] = f"板块热度数据时间为 {sector_as_of}，非当日盘中实时快照。"
+    else:
+        mr["sector_data_note"] = "板块热度时间戳缺失，请将其视为参考信息。"
 
     analytics_budget = (budgets or {}).get("compose_send")
     analytics_degraded = None
@@ -926,7 +1065,7 @@ def tool_run_midday_recap_and_send(
     pos_pct = risk_summary.get("pos_pct")
     cash_pct = risk_summary.get("cash_pct")
 
-    bias, bias_reason = _derive_afternoon_bias(flat)
+    bias, bias_reason = _derive_afternoon_bias(flat, mr.get("morning_amount_510300"))
     paths = _build_paths(bias, risk_level_raw)
     sector_lines = _extract_sector_top(report_data.get("tool_sector_heat_score"))
 
@@ -947,6 +1086,13 @@ def tool_run_midday_recap_and_send(
     sn = (mr.get("session_note") or "").strip()
     if sn:
         lines.append(f"- **数据口径**：{sn}")
+    idx_basis = (
+        "最近交易日日线"
+        if str(((mr.get("data_lineage") or {}).get("indices") or {}).get("data_basis") or "") == "historical_last_trading_day"
+        else "盘中实时"
+    )
+    etf_basis = str(((mr.get("data_lineage") or {}).get("etf_510300") or {}).get("data_basis") or "realtime")
+    lines.append(f"- **行情口径**：指数={idx_basis}｜510300={etf_basis}")
     lines.extend(
         [
             "",
@@ -963,6 +1109,9 @@ def tool_run_midday_recap_and_send(
         lines.extend(sector_lines)
     else:
         lines.append("- N/A（上游未返回可解析的板块列表）")
+    sec_note = str(mr.get("sector_data_note") or "").strip()
+    if sec_note:
+        lines.append(f"- ⚠️ {sec_note}")
     lines.extend(
         [
             "",
@@ -972,6 +1121,11 @@ def tool_run_midday_recap_and_send(
             if isinstance(mr.get("fund_flow_summary_lines"), list) and (mr.get("fund_flow_summary_lines") or [])
             else [f"- {mr.get('fund_flow_data_note') or 'N/A'}"]
         ),
+            *(
+                [f"- 资金流状态：{mr.get('fund_flow_status') or 'unknown'}"]
+                if str(mr.get("fund_flow_status") or "") not in ("", "ok")
+                else []
+            ),
             "",
             "### 五、下午操作指引（不合成单一结论）",
             f"- **下午倾向：** {bias}（{bias_reason}）",

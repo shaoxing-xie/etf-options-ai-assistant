@@ -1,134 +1,87 @@
 #!/usr/bin/env python3
 """
 实时行情获取模块（供 alert_engine 使用）
-封装 AkShare 获取 A 股实时数据
 
-用法示例（在项目根目录执行）：
-  # 作为库被 alert_engine 调用（最常见）
-  python3 scripts/alert_poll.py
-
-  # 作为 CLI 直接拉取（若脚本支持命令行参数；见文件末尾 Usage）
-  python3 scripts/fetch_stock_realtime.py 510300 600519
+约束：
+- 优先/默认通过采集插件现成工具 `tool_fetch_stock_realtime` 获取数据
+- 不在助手侧脚本里直连 akshare / mootdx，避免口径漂移
 """
 
-import sys
 import json
+import subprocess
+import sys
+from pathlib import Path
+from typing import Any
+
+
+def _repo_root() -> Path:
+    return Path(__file__).resolve().parents[1]
+
+
+def _normalize_rows(data: Any) -> list[dict[str, Any]]:
+    if isinstance(data, list):
+        return [x for x in data if isinstance(x, dict)]
+    if isinstance(data, dict):
+        # Some tool variants return dict rows keyed by code.
+        if all(isinstance(v, dict) for v in data.values()):
+            rows: list[dict[str, Any]] = []
+            for k, v in data.items():
+                row = dict(v)
+                row.setdefault("stock_code", str(k))
+                rows.append(row)
+            return rows
+        return [data]
+    return []
 
 
 def fetch_batch(codes: list[str]) -> dict:
-    """
-    批量获取 A 股实时行情。
-    返回格式: {code: {current: float, change_pct: float, high, low, volume, prev_close}}
-    """
-    result = {}
-    
-    try:
-        import akshare as ak
-        
-        # 构造股票代码列表
-        code_list = ",".join(codes)
-        
-        # 使用 akshare 获取实时行情
-        try:
-            df = ak.stock_zh_a_spot_em()
-            
-            for code in codes:
-                # 处理代码格式：600900 → 600900.SH
-                row = df[df['代码'] == code]
-                if not row.empty:
-                    row = row.iloc[0]
-                    result[code] = {
-                        "current": float(row.get('最新价', 0) or 0),
-                        "change_pct": float(row.get('涨跌幅', 0) or 0),
-                        "high": float(row.get('最高', 0) or 0),
-                        "low": float(row.get('最低', 0) or 0),
-                        "volume": float(row.get('成交量', 0) or 0),
-                        "prev_close": float(row.get('昨收', 0) or 0),
-                        "open": float(row.get('开盘', 0) or 0),
-                        "name": str(row.get('名称', '')),
-                    }
-                else:
-                    print(f"[WARN] Code {code} not found in spot data")
-                    
-        except Exception as e:
-            print(f"[ERROR] akshare stock_zh_a_spot_em failed: {e}")
-            # 回退：逐个获取
-            for code in codes:
-                try:
-                    df_single = ak.stock_zh_a_hist(
-                        symbol=code,
-                        period="daily",
-                        start_date="20260312",
-                        end_date="20260313",
-                        adjust="qfq"
-                    )
-                    if not df_single.empty:
-                        last = df_single.iloc[-1]
-                        prev = df_single.iloc[-2] if len(df_single) > 1 else last
-                        current = float(last.get('收盘', 0))
-                        prev_close = float(prev.get('收盘', current))
-                        change_pct = ((current - prev_close) / prev_close * 100) if prev_close else 0
-                        result[code] = {
-                            "current": current,
-                            "change_pct": round(change_pct, 2),
-                            "high": float(last.get('最高', 0)),
-                            "low": float(last.get('最低', 0)),
-                            "volume": float(last.get('成交量', 0)),
-                            "prev_close": prev_close,
-                            "open": float(last.get('开盘', 0)),
-                        }
-                except Exception as e2:
-                    print(f"[ERROR] Failed to fetch {code}: {e2}")
-                    
-    except ImportError:
-        print("[WARN] akshare not available, trying mootdx")
-        # 回退到 mootdx
-        result = fetch_batch_mootdx(codes)
-    
-    return result
+    """批量获取 A 股实时行情（统一走 tool_fetch_stock_realtime）。"""
+    uniq_codes = [str(c).strip() for c in codes if str(c).strip()]
+    uniq_codes = [c for i, c in enumerate(uniq_codes) if c not in uniq_codes[:i]]
+    if not uniq_codes:
+        return {}
 
+    runner = _repo_root() / "tool_runner.py"
+    if not runner.is_file():
+        return {}
 
-def fetch_batch_mootdx(codes: list[str]) -> dict:
-    """
-    使用 mootdx 获取实时行情（备用方案）
-    """
-    result = {}
     try:
-        from mootdx.quotes import Quotes
-        client = Quotes.factory(market='std')
-        
-        for code in codes:
-            try:
-                # A股代码处理
-                if code.startswith('6'):
-                    full_code = f"sh{code}"
-                elif code.startswith(('0', '3')):
-                    full_code = f"sz{code}"
-                else:
-                    full_code = code
-                    
-                df = client.bars(symbol=code, frequency='1d', offset=1)
-                if df is not None and not df.empty:
-                    row = df.iloc[-1]
-                    prev_df = client.bars(symbol=code, frequency='1d', offset=2)
-                    prev_close = float(prev_df.iloc[-2]['close']) if prev_df is not None and len(prev_df) > 1 else float(row['close'])
-                    current = float(row['close'])
-                    change_pct = ((current - prev_close) / prev_close * 100) if prev_close else 0
-                    
-                    result[code] = {
-                        "current": current,
-                        "change_pct": round(change_pct, 2),
-                        "high": float(row.get('high', 0)),
-                        "low": float(row.get('low', 0)),
-                        "volume": float(row.get('volume', 0)),
-                        "prev_close": prev_close,
-                        "open": float(row.get('open', 0)),
-                    }
-            except Exception as e:
-                print(f"[ERROR] mootdx fetch {code} failed: {e}")
-    except ImportError:
-        print("[ERROR] Neither akshare nor mootdx available")
-    
+        proc = subprocess.run(
+            [
+                sys.executable,
+                str(runner),
+                "tool_fetch_stock_realtime",
+                json.dumps({"stock_code": ",".join(uniq_codes), "mode": "production"}, ensure_ascii=False),
+            ],
+            cwd=str(_repo_root()),
+            capture_output=True,
+            text=True,
+            timeout=35,
+            check=False,
+        )
+        out = json.loads((proc.stdout or "").strip() or "{}")
+    except Exception:
+        return {}
+
+    if not isinstance(out, dict) or not bool(out.get("success")):
+        return {}
+
+    rows = _normalize_rows(out.get("data"))
+    result: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        code = str(row.get("stock_code") or row.get("代码") or row.get("symbol") or "").strip()
+        if not code:
+            continue
+        result[code] = {
+            "current": row.get("current_price", row.get("最新价")),
+            "change_pct": row.get("change_pct", row.get("涨跌幅")),
+            "high": row.get("high_price", row.get("最高")),
+            "low": row.get("low_price", row.get("最低")),
+            "volume": row.get("volume", row.get("成交量")),
+            "prev_close": row.get("prev_close", row.get("昨收")),
+            "open": row.get("open_price", row.get("开盘")),
+            "name": row.get("name", row.get("股票简称", "")),
+        }
     return result
 
 

@@ -499,20 +499,9 @@ def _ak_name_map() -> dict[str, str]:
     if _AK_NAME_MAP_READY:
         return dict(_AK_NAME_MAP_CACHE or {})
     _AK_NAME_MAP_READY = True
-    try:
-        import akshare as ak  # type: ignore
-
-        df = ak.stock_info_a_code_name()
-        cmap: dict[str, str] = {}
-        if hasattr(df, "iterrows"):
-            for _, row in df.iterrows():
-                code = str(row.get("code") or row.get("证券代码") or row.get("股票代码") or "").strip()
-                name = str(row.get("name") or row.get("证券简称") or row.get("股票简称") or "").strip()
-                if len(code) == 6 and code.isdigit() and name and not _looks_like_code(name):
-                    cmap[code] = name
-        _AK_NAME_MAP_CACHE = cmap
-    except Exception:
-        _AK_NAME_MAP_CACHE = {}
+    # Keep plugin-first discipline:
+    # do not perform assistant-side direct source queries for name dictionary fallback.
+    _AK_NAME_MAP_CACHE = {}
     return dict(_AK_NAME_MAP_CACHE or {})
 
 

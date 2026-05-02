@@ -1,0 +1,23 @@
+name: six_index_next_day_prediction
+description: 六指数 14:00 次交易日方向预测，写入 L2/L3/L4 与 prediction_records
+
+schedule: "0 14 * * 1-5"
+timezone: "Asia/Shanghai"
+
+steps:
+  - name: build_six_index_prediction
+    tool: exec
+    description: 运行六指数次日方向预测脚本
+    params:
+      command: >
+        /home/xie/etf-options-ai-assistant/.venv/bin/python
+        /home/xie/etf-options-ai-assistant/scripts/six_index_next_day_prediction.py
+
+structured_message: |
+  交易日 14:00 执行六指数次日方向预测。
+  产物包括：
+  - L2: data/features/six_index_next_day/YYYY-MM-DD.json
+  - L3: data/decisions/six_index_next_day/YYYY-MM-DD.jsonl
+  - L4: data/semantic/six_index_next_day/YYYY-MM-DD.json
+  - Hotspot: data/semantic/hotspot/YYYY-MM-DD.json
+  - prediction_records: data/prediction_records/predictions_YYYYMMDD.json

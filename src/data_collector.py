@@ -3764,7 +3764,7 @@ def fetch_global_index_hist_em(
             # 直接调用fetch_a50_daily_sina_hist，该函数使用固定的CHA50CFD代码，无需查找代码
             return fetch_a50_daily_sina_hist(start_date=start_date, end_date=end_date)
         
-        # 纳斯达克中国金龙指数：使用 yfinance 的 HXC 指数数据（可配置开关）
+        # 纳斯达克中国金龙指数：统一走插件工具（可配置开关）
         if symbol == "纳斯达克中国金龙指数":
             try:
                 cfg = load_system_config()
@@ -3777,64 +3777,66 @@ def fetch_global_index_hist_em(
 
             if not enabled:
                 logger.warning(
-                    "fetch_global_index_hist_em: 已跳过纳斯达克中国金龙指数（HXC）yfinance 请求，"
+                    "fetch_global_index_hist_em: 已跳过纳斯达克中国金龙指数（HXC）请求，"
                     "可在合并后配置的 data_sources.global_index.hxc.enabled 开启后再使用该数据源（来源：config/domains/market_data.yaml）"
                 )
                 return None
 
             try:
-                import yfinance as yf  # type: ignore
-            except ImportError as e:
-                logger.warning(f"fetch_global_index_hist_em: 需要 yfinance 支持纳斯达克中国金龙指数历史数据，但未安装 yfinance: {e}")
+                from plugins.data_collection.index.fetch_global_hist_sina import (  # type: ignore
+                    tool_fetch_global_index_hist_sina,
+                )
+            except Exception as e:
+                logger.warning(f"fetch_global_index_hist_em: 导入插件工具失败: {e}")
                 return None
 
             try:
+                # 插件工具当前按 symbol+limit 返回；按日期窗口近似映射到 limit（至少 2）
                 try:
-                    from plugins.utils.proxy_env import proxy_env_for_source
+                    start_dt = datetime.strptime(start_date, "%Y%m%d")
+                    end_dt = datetime.strptime(end_date, "%Y%m%d")
+                    days = max(2, (end_dt - start_dt).days + 1)
                 except Exception:
-                    from contextlib import nullcontext
-
-                    def proxy_env_for_source(*_args, **_kwargs):  # type: ignore
-                        return nullcontext()
-
-                # yfinance 符号：^HXC
-                yf_symbol = "^HXC"
-                # 将 YYYYMMDD 转为 YYYY-MM-DD，并注意 end 为开区间，需要 +1 天以包含 end_date
-                start_dt = datetime.strptime(start_date, "%Y%m%d")
-                end_dt = datetime.strptime(end_date, "%Y%m%d") + timedelta(days=1)
-                with proxy_env_for_source(cfg if isinstance(cfg, dict) else {}, "yfinance"):
-                    hist = yf.download(
-                        yf_symbol,
-                        start=start_dt.strftime("%Y-%m-%d"),
-                        end=end_dt.strftime("%Y-%m-%d"),
-                        progress=False,
+                    days = 60
+                resp = tool_fetch_global_index_hist_sina(symbol="^HXC", limit=int(days))
+                if not isinstance(resp, dict) or not bool(resp.get("success")):
+                    logger.warning(
+                        "fetch_global_index_hist_em: 插件工具未返回纳指金龙指数历史数据: %s",
+                        (resp or {}).get("message"),
                     )
-                if hist is None or hist.empty:
-                    logger.warning("fetch_global_index_hist_em: yfinance 未返回纳指金龙指数历史数据")
                     return None
-
-                # 统一列名为与 A 股日线类似的中文列名，便于后续使用 '收盘'
-                df = hist.rename(
-                    columns={
-                        "Open": "开盘",
-                        "Close": "收盘",
-                        "High": "最高",
-                        "Low": "最低",
-                        "Volume": "成交量",
-                    }
-                ).reset_index()
-
-                # 将日期列命名为 '日期'
-                if "Date" in df.columns:
-                    df = df.rename(columns={"Date": "日期"})
-
-                # 只保留必要列
-                keep_cols = [c for c in ["日期", "开盘", "收盘", "最高", "最低", "成交量"] if c in df.columns]
-                df = df[keep_cols]
+                rows = resp.get("data")
+                if not isinstance(rows, list) or not rows:
+                    logger.warning("fetch_global_index_hist_em: 插件工具返回空数据")
+                    return None
+                norm_rows = []
+                for r in rows:
+                    if not isinstance(r, dict):
+                        continue
+                    norm_rows.append(
+                        {
+                            "日期": str(r.get("date") or r.get("日期") or ""),
+                            "开盘": _safe_float(r.get("open") if r.get("open") is not None else r.get("开盘")),
+                            "收盘": _safe_float(r.get("close") if r.get("close") is not None else r.get("收盘")),
+                            "最高": _safe_float(r.get("high") if r.get("high") is not None else r.get("最高")),
+                            "最低": _safe_float(r.get("low") if r.get("low") is not None else r.get("最低")),
+                            "成交量": _safe_float(r.get("volume") if r.get("volume") is not None else r.get("成交量")),
+                        }
+                    )
+                if not norm_rows:
+                    return None
+                df = pd.DataFrame(norm_rows)
+                if "日期" in df.columns:
+                    try:
+                        df["日期"] = pd.to_datetime(df["日期"], errors="coerce")
+                        df = df.dropna(subset=["日期"]).sort_values("日期")
+                        df["日期"] = df["日期"].dt.strftime("%Y-%m-%d")
+                    except Exception:
+                        pass
 
                 logger.info(
-                    "fetch_global_index_hist_em: 使用 yfinance 获取纳斯达克中国金龙指数历史数据成功 "
-                    f"(rows={len(df)}, symbol={yf_symbol})"
+                    "fetch_global_index_hist_em: 使用插件工具获取纳斯达克中国金龙指数历史数据成功 "
+                    f"(rows={len(df)}, symbol=^HXC)"
                 )
                 return df
             except Exception as e:
@@ -3846,9 +3848,9 @@ def fetch_global_index_hist_em(
                         "symbol": symbol,
                         "start_date": start_date,
                         "end_date": end_date,
-                        "source": "yfinance_^HXC",
+                        "source": "tool_fetch_global_index_hist_sina:^HXC",
                     },
-                    "获取纳斯达克中国金龙指数历史数据失败（yfinance）",
+                    "获取纳斯达克中国金龙指数历史数据失败（plugin_tool）",
                 )
                 return None
 

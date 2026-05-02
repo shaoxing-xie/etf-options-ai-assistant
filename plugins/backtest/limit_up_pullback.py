@@ -97,32 +97,50 @@ def _load_payloads(data_dir: Path, start_date: Optional[str], end_date: Optional
 def _fetch_stock_daily(symbol: str, start_yyyymmdd: str, end_yyyymmdd: str) -> Optional[List[Dict]]:
     """获取股票日线 [日期(YYYYMMDD), 开盘, 收盘, 最高, 最低, 成交量]，失败返回 None"""
     try:
-        import akshare as ak
-        # akshare 需要 19700101 格式
-        df = ak.stock_zh_a_hist(
-            symbol=symbol,
-            period="daily",
-            start_date=start_yyyymmdd,
-            end_date=end_yyyymmdd,
-            adjust="qfq",
+        from plugins.data_collection.stock.fetch_historical import (  # type: ignore
+            tool_fetch_stock_historical,
         )
-        if df is None or df.empty:
+        start_norm = (
+            f"{start_yyyymmdd[:4]}-{start_yyyymmdd[4:6]}-{start_yyyymmdd[6:8]}"
+            if len(str(start_yyyymmdd or "")) == 8
+            else str(start_yyyymmdd or "")
+        )
+        end_norm = (
+            f"{end_yyyymmdd[:4]}-{end_yyyymmdd[4:6]}-{end_yyyymmdd[6:8]}"
+            if len(str(end_yyyymmdd or "")) == 8
+            else str(end_yyyymmdd or "")
+        )
+        resp = tool_fetch_stock_historical(
+            stock_code=str(symbol),
+            period="daily",
+            start_date=start_norm,
+            end_date=end_norm,
+            use_cache=True,
+        )
+        if not isinstance(resp, dict) or not bool(resp.get("success")):
+            return None
+        data = resp.get("data")
+        block = data if isinstance(data, dict) else {}
+        klines = block.get("klines")
+        if not isinstance(klines, list) or not klines:
             return None
         rows = []
-        for _, r in df.iterrows():
-            d = r.get("日期")
-            if hasattr(d, "strftime"):
-                d = d.strftime("%Y%m%d")
-            else:
-                d = str(d).replace("-", "")[:8]
+        for r in klines:
+            if not isinstance(r, dict):
+                continue
+            d = str(r.get("date") or "").replace("-", "")[:8]
+            if len(d) != 8 or not d.isdigit():
+                continue
             rows.append({
                 "date": d,
-                "open": float(r.get("开盘", 0)),
-                "close": float(r.get("收盘", 0)),
-                "high": float(r.get("最高", 0)),
-                "low": float(r.get("最低", 0)),
-                "volume": float(r.get("成交量", 0)),
+                "open": float(r.get("open") or 0),
+                "close": float(r.get("close") or 0),
+                "high": float(r.get("high") or 0),
+                "low": float(r.get("low") or 0),
+                "volume": float(r.get("volume") or 0),
             })
+        if not rows:
+            return None
         return rows
     except Exception as e:
         logger.debug("fetch %s failed: %s", symbol, e)

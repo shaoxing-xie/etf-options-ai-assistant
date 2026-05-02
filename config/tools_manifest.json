@@ -735,6 +735,24 @@
       }
     },
     {
+      "id": "tool_nlu_query",
+      "label": "自然语言路由查询",
+      "description": "识别自然语言意图并路由到热点、指数预测、技术分析或情绪快照。",
+      "description_short": "自然语言意图识别与路由入口。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "用户自然语言问题"
+          }
+        },
+        "required": [
+          "query"
+        ]
+      }
+    },
+    {
       "id": "tool_calculate_position_size",
       "label": "计算建议仓位（含硬锁定）",
       "description": "根据趋势强度和信号置信度计算建议仓位，支持2%硬锁定限制。",
@@ -1658,6 +1676,10 @@
           "notify": {
             "type": "boolean",
             "description": "是否发送飞书摘要；省略则 morning_daily/close_minute 为 true，intraday_minute 为 false"
+          },
+          "feishu_title": {
+            "type": "string",
+            "description": "可选；飞书消息标题覆盖（默认按 job 映射为早盘/收盘/盘中采集完成）"
           }
         },
         "required": [

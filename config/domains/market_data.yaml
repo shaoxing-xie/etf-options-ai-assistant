@@ -143,13 +143,13 @@ data_sources:
         itick_region: SH
     providers:
       itick:
-        enabled: true
+        enabled: false
         base_url_rest: https://api-free.itick.org
         base_url_ws: wss://api-free.itick.org
         timeout_ms: 2000
         api_key: ${ITICK_API_KEY}
       alltick:
-        enabled: true
+        enabled: false
         base_url_rest: https://quote.alltick.co/quote-stock-b-api
         base_url_ws: wss://quote.alltick.co/quote-stock-b-ws-api
         timeout_ms: 2000
@@ -161,13 +161,13 @@ tushare:
 iopv_fallback:
   manual_iopv_overrides:
     '513300':
-      iopv: 2.3254
+      iopv: 2.3141
       source: manual_after_14_00
-      updated_date: '2026-04-27'
+      updated_date: '2026-04-30'
     '513880':
-      iopv: 1.8927
+      iopv: 1.8467
       source: manual_after_14_00
-      updated_date: '2026-04-27'
+      updated_date: '2026-04-30'
 wide_inspection_overnight_refs:
   sources:
     a50_futures:

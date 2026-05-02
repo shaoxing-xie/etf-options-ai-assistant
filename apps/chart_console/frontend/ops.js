@@ -155,6 +155,7 @@ function renderRows(tbodyId, rows, healthIndex) {
   }
   for (const r of list) {
     const tr = document.createElement("tr");
+    const hx = healthIndex.get(String(r.task_id || "")) || {};
     const q = String(r.quality_status || "");
     const qLabel = String(hx.data_quality_status || q || "ok");
     const qStyle = qLabel === "degraded" ? " style='color:#f7c88a;font-weight:600;'" : "";
@@ -165,7 +166,6 @@ function renderRows(tbodyId, rows, healthIndex) {
       : (r.audit_domain === "nasdaq100_etf_monitor"
           ? ` <span class="chip">nasdaq审计:${esc(r.monitor_group || "")}</span>`
           : "");
-    const hx = healthIndex.get(String(r.task_id || "")) || {};
     const runQuality = String(hx.run_quality || "");
     const runStyle = runQuality === "error"
       ? " style='color:#ff9a9a;font-weight:600;'"

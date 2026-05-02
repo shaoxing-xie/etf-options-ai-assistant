@@ -13,8 +13,12 @@ meta:
 
 structured_message: |
   执行质量兜底巡检（定时）：
-  - 先执行 `/home/xie/etf-options-ai-assistant/.venv/bin/python scripts/semantic_quality_backstop_audit.py`，
+  - OpenClaw 定时任务 `quality-backstop-audit`：`scripts/run_quality_backstop_audit_cli.py`（单 exec；内部
+    `semantic_quality_backstop_audit.py --no-notify` + 飞书摘要）。
+  - 手工/编排演练：执行 `/home/xie/etf-options-ai-assistant/.venv/bin/python scripts/semantic_quality_backstop_audit.py`，
     读取输出与 `data/meta/monitoring/semantic_quality_YYYY-MM-DD.json` 作为语义层质量证据。
+  - L4 新鲜度：`sla_timeout` 以「最新快照文件名 trade_date」与 `get_expected_latest_a_share_daily_bar_date`（上海口径）对齐；
+    无法解析期望日时回退 `generated_at` 超过 24h。
   - 巡检 Cron/任务异常（最近一次执行状态、失败步骤、失败码一致性）。
   - 巡检工具运行时 BUG（按环境/参数/代码缺陷三级分流）。
   - 巡检预测准确性漂移（按既定窗口评估，超阈值触发 issue/告警建议）；核对 prediction_records 与

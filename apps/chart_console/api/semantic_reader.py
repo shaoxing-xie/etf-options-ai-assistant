@@ -4,7 +4,7 @@ import json
 import re
 import ast
 import urllib.request
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from zoneinfo import ZoneInfo
 from pathlib import Path
 from typing import Any
@@ -14,6 +14,7 @@ from apps.chart_console.api.tail_screening_reader import TailScreeningReader
 
 _A_SHARE_NAME_MAP_CACHE: dict[str, str] | None = None
 _QT_NAME_CACHE: dict[str, str] = {}
+_SIX_INDEX_CODES = {"000001.SH", "000300.SH", "000688.SH", "399006.SZ", "000905.SH", "000852.SH"}
 
 
 def _read_json(path: Path) -> dict[str, Any] | None:
@@ -362,6 +363,188 @@ class SemanticReader:
             return []
         return sorted([p.stem for p in base.glob("*.json") if p.is_file() and validate_screening_date_key(p.stem)])
 
+    def six_index_next_day_trade_dates(self) -> list[str]:
+        base = self.root / "data" / "semantic" / "six_index_next_day"
+        if not base.is_dir():
+            return []
+        return sorted([p.stem for p in base.glob("*.json") if p.is_file() and validate_screening_date_key(p.stem)])
+
+    def _iter_prediction_records(self) -> list[dict[str, Any]]:
+        out: list[dict[str, Any]] = []
+        pred_dir = self.root / "data" / "prediction_records"
+        if not pred_dir.is_dir():
+            return out
+        for path in sorted(pred_dir.glob("predictions_*.json")):
+            obj = _read_json(path)
+            if not isinstance(obj, list):
+                continue
+            for row in obj:
+                if isinstance(row, dict):
+                    out.append(row)
+        return out
+
+    @staticmethod
+    def _record_timestamp_value(row: dict[str, Any]) -> str:
+        ts = str(row.get("timestamp") or "")
+        return ts
+
+    def _latest_six_index_direction_verification(self) -> dict[str, Any]:
+        latest_by_key: dict[tuple[str, str], dict[str, Any]] = {}
+        for row in self._iter_prediction_records():
+            if str(row.get("prediction_type") or "") != "index_direction":
+                continue
+            symbol = str(row.get("symbol") or "")
+            if symbol not in _SIX_INDEX_CODES:
+                continue
+            dv = row.get("direction_verification")
+            if not isinstance(dv, dict):
+                continue
+            target_date = str(row.get("target_date") or "")
+            if not target_date:
+                continue
+            key = (target_date, symbol)
+            old = latest_by_key.get(key)
+            if old is None or self._record_timestamp_value(row) >= self._record_timestamp_value(old):
+                latest_by_key[key] = row
+        if not latest_by_key:
+            return {"available": False}
+
+        latest_target = sorted({k[0] for k in latest_by_key.keys()})[-1]
+        rows = [v for (td, _), v in latest_by_key.items() if td == latest_target]
+        verified = len(rows)
+        hit = sum(1 for r in rows if bool((r.get("direction_verification") or {}).get("hit")))
+        miss = max(0, verified - hit)
+        accuracy = (hit / verified) if verified else None
+        by_symbol: dict[str, Any] = {}
+        for r in rows:
+            sym = str(r.get("symbol") or "")
+            dv = r.get("direction_verification") if isinstance(r.get("direction_verification"), dict) else {}
+            by_symbol[sym] = {
+                "actual_direction": dv.get("actual_direction"),
+                "hit": bool(dv.get("hit")),
+                "verified_at": dv.get("verified_at"),
+            }
+        return {
+            "available": True,
+            "target_date": latest_target,
+            "verified_count": verified,
+            "hit_count": hit,
+            "miss_count": miss,
+            "accuracy": accuracy,
+            "by_symbol": by_symbol,
+        }
+
+    def _weekly_six_index_metrics(self, window_days: int = 20) -> dict[str, Any]:
+        latest_by_key: dict[tuple[str, str], dict[str, Any]] = {}
+        for row in self._iter_prediction_records():
+            if str(row.get("prediction_type") or "") != "index_direction":
+                continue
+            symbol = str(row.get("symbol") or "")
+            if symbol not in _SIX_INDEX_CODES:
+                continue
+            dv = row.get("direction_verification")
+            if not isinstance(dv, dict):
+                continue
+            target_date = str(row.get("target_date") or "")
+            if not target_date:
+                continue
+            key = (target_date, symbol)
+            old = latest_by_key.get(key)
+            if old is None or self._record_timestamp_value(row) >= self._record_timestamp_value(old):
+                latest_by_key[key] = row
+        if not latest_by_key:
+            return {"available": False}
+
+        latest_target = sorted({k[0] for k in latest_by_key.keys()})[-1]
+        try:
+            end_dt = datetime.strptime(latest_target, "%Y-%m-%d")
+        except Exception:
+            return {"available": False}
+        begin_dt = end_dt - timedelta(days=max(1, int(window_days)) - 1)
+        rows: list[dict[str, Any]] = []
+        for (td, _), row in latest_by_key.items():
+            try:
+                dt = datetime.strptime(td, "%Y-%m-%d")
+            except Exception:
+                continue
+            if begin_dt <= dt <= end_dt:
+                rows.append(row)
+        if not rows:
+            return {"available": False}
+
+        n = len(rows)
+        hit = 0
+        brier_sum = 0.0
+        degraded = 0
+        for row in rows:
+            pred = row.get("prediction") if isinstance(row.get("prediction"), dict) else {}
+            dv = row.get("direction_verification") if isinstance(row.get("direction_verification"), dict) else {}
+            direction = str(pred.get("direction") or "")
+            prob_raw = pred.get("probability")
+            try:
+                prob = float(prob_raw)
+            except Exception:
+                prob = 0.5
+            if prob > 1.0:
+                prob /= 100.0
+            prob = min(1.0, max(0.0, prob))
+            if direction == "down":
+                prob_up = 1.0 - prob
+            elif direction == "neutral":
+                prob_up = 0.5
+            else:
+                prob_up = prob
+            actual_direction = str(dv.get("actual_direction") or "")
+            actual_up = 1.0 if actual_direction == "up" else 0.0
+            if bool(dv.get("hit")):
+                hit += 1
+            brier_sum += (prob_up - actual_up) ** 2
+            q = str(pred.get("quality_status") or "").lower()
+            if q in {"degraded", "failed"}:
+                degraded += 1
+
+        hit_rate = hit / n if n else None
+        brier = brier_sum / n if n else None
+        degraded_ratio = degraded / n if n else None
+        coverage = n / float(max(1, int(window_days)) * len(_SIX_INDEX_CODES))
+        return {
+            "available": True,
+            "as_of_target_date": latest_target,
+            "window_days": int(window_days),
+            "samples": n,
+            "hit_rate": hit_rate,
+            "brier_score": brier,
+            "degraded_ratio": degraded_ratio,
+            "coverage": coverage,
+        }
+
+    def six_index_next_day(self, trade_date: str = "") -> dict[str, Any]:
+        td = (trade_date or "").strip()
+        if not validate_screening_date_key(td):
+            dates = self.six_index_next_day_trade_dates()
+            td = dates[-1] if dates else ""
+        if not td:
+            return {
+                "trade_date": "",
+                "predict_for_trade_date": "",
+                "predictions": [],
+                "_meta": {"schema_name": "six_index_next_day_view_v1", "quality_status": "failed"},
+            }
+        obj = _read_json(self.root / "data" / "semantic" / "six_index_next_day" / f"{td}.json") or {}
+        meta = obj.get("_meta") if isinstance(obj.get("_meta"), dict) else {}
+        if not obj:
+            meta = {"schema_name": "six_index_next_day_view_v1", "quality_status": "failed"}
+        out = {
+            "trade_date": obj.get("trade_date") or td,
+            "predict_for_trade_date": obj.get("predict_for_trade_date") or "",
+            "predictions": obj.get("predictions") if isinstance(obj.get("predictions"), list) else [],
+            "summary": obj.get("summary") if isinstance(obj.get("summary"), dict) else {},
+            "verification_summary": self._latest_six_index_direction_verification(),
+            "weekly_metrics_summary": self._weekly_six_index_metrics(window_days=20),
+            "_meta": meta,
+        }
+        return out
+
     def rotation_latest(self, trade_date: str = "") -> dict[str, Any]:
         td = (trade_date or "").strip()
         if not validate_screening_date_key(td):
@@ -412,6 +595,40 @@ class SemanticReader:
                 },
             }
         out = dict(data)
+        # Backward-compat gate fix:
+        # Old snapshots may persist sector_environment.gate=UNKNOWN while recommendations
+        # already contain enough RPS signals to infer regime. Derive a stable gate so UI
+        # does not regress to UNKNOWN on historical/cached snapshots.
+        sec_env = out.get("sector_environment") if isinstance(out.get("sector_environment"), dict) else {}
+        recs = out.get("recommendations") if isinstance(out.get("recommendations"), list) else []
+        gate = str(sec_env.get("gate") or "").strip()
+        if gate in ("", "UNKNOWN") and recs:
+            vals: list[float] = []
+            for r in recs:
+                if not isinstance(r, dict):
+                    continue
+                sig = r.get("signals") if isinstance(r.get("signals"), dict) else {}
+                raw = sig.get("rps_20d")
+                try:
+                    vals.append(float(raw))
+                except Exception:
+                    continue
+            if vals:
+                strong_ratio = float(sum(1 for x in vals if x >= 85.0)) / float(len(vals))
+                if strong_ratio > 0.30:
+                    dg = "GO"
+                    dm = 1.0
+                elif strong_ratio > 0.10:
+                    dg = "CAUTION"
+                    dm = 0.5
+                else:
+                    dg = "STOP"
+                    dm = 0.0
+                sec_env["gate"] = dg
+                sec_env["allocation_multiplier"] = dm
+                sec_env["reason_codes"] = ["api_derived_from_recommendations"]
+                sec_env["human_notes"] = "由 API 层根据推荐 RPS 分布回填门闸（兼容旧快照）。"
+                out["sector_environment"] = sec_env
         out["_meta"] = meta
         return out
 

@@ -463,6 +463,185 @@ details.screening-details summary {
   display: block;
 }
 
+.research-six-index-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.research-six-index-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+
+.research-six-index-card {
+  border: 1px solid #28335f;
+  border-radius: 10px;
+  background: #0d1428;
+  padding: 10px;
+}
+
+.research-six-index-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  align-items: flex-start;
+  margin-bottom: 8px;
+}
+
+.research-six-index-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: #e8ecf7;
+}
+
+.research-six-index-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
+.research-dir-badge,
+.research-quality-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 8px;
+  border-radius: 999px;
+  border: 1px solid #334483;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  background: #101831;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.02);
+}
+
+.research-dir-badge.tone-up {
+  border-color: #2d6a45;
+  color: #8de2aa;
+  background: rgba(45, 106, 69, 0.18);
+}
+
+.research-dir-badge.tone-down {
+  border-color: #a0435a;
+  color: #ffb4b4;
+  background: rgba(160, 67, 90, 0.18);
+}
+
+.research-dir-badge.tone-neutral {
+  border-color: #7a5a1d;
+  color: #ffd98a;
+  background: rgba(122, 90, 29, 0.18);
+}
+
+.research-quality-badge.tone-ok {
+  border-color: #2d6a45;
+  color: #8de2aa;
+  background: rgba(45, 106, 69, 0.18);
+}
+
+.research-quality-badge.tone-info {
+  border-color: #2d6a45;
+  color: #8de2aa;
+  background: rgba(45, 106, 69, 0.18);
+}
+
+.research-quality-badge.tone-degraded,
+.research-quality-badge.tone-unknown {
+  border-color: #7a5a1d;
+  color: #ffd98a;
+  background: rgba(122, 90, 29, 0.18);
+}
+
+.research-quality-badge.tone-failed {
+  border-color: #a0435a;
+  color: #ffb4b4;
+  background: rgba(160, 67, 90, 0.18);
+}
+
+.research-six-index-stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 8px;
+  align-items: stretch;
+}
+
+.research-six-index-detail {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.research-json-pre {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.research-v-mono {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
+  white-space: nowrap;
+}
+
+.research-v-probability {
+  font-size: 18px;
+  line-height: 1.1;
+  letter-spacing: 0.01em;
+}
+
+.research-six-index-pill-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.research-six-index-score {
+  text-align: right;
+  padding-right: 4px;
+}
+
+.research-six-index-score .research-v {
+  font-variant-numeric: tabular-nums;
+}
+
+.research-kv {
+  min-width: 0;
+}
+
+.research-v {
+  word-break: break-word;
+}
+
+.research-six-index-status-title {
+  margin-bottom: 6px;
+  font-weight: 600;
+  color: #ffd98a;
+}
+
+.research-six-index-status-list {
+  margin: 0;
+  padding-left: 18px;
+  line-height: 1.45;
+}
+
+.research-six-index-status-list li {
+  margin-bottom: 4px;
+}
+
+@media (max-width: 1100px) {
+  .research-six-index-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
 /* 全球市场行情卡片（红涨绿跌） */
 .gm-block {
   margin-bottom: 14px;

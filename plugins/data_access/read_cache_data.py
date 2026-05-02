@@ -232,12 +232,13 @@ def read_cache_data(
             df, missing = data_cache.get_cached_etf_daily(sym, start_date, end_date)
         if df is None or missing:
             # 尝试补拉一次（失败则继续按 miss/partial 返回）
+            # skip_online_refill=True 时，不再重复读取一次同区间缓存，避免双倍 I/O。
             if not skip_online_refill:
                 _try_refill_daily_cache(data_type=dt, symbol=sym, start_date=start_date, end_date=end_date)
-            if dt == "index_daily":
-                df, missing = data_cache.get_cached_index_daily(sym, start_date, end_date)
-            else:
-                df, missing = data_cache.get_cached_etf_daily(sym, start_date, end_date)
+                if dt == "index_daily":
+                    df, missing = data_cache.get_cached_index_daily(sym, start_date, end_date)
+                else:
+                    df, missing = data_cache.get_cached_etf_daily(sym, start_date, end_date)
         if df is None:
             return fail(f"Cache miss (missing {len(missing)} dates)", missing_dates=missing)
         if missing:

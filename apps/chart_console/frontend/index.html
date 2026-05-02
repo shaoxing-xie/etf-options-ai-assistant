@@ -358,6 +358,7 @@
           <button class="subtab" id="subtab-research-nightly" role="tab" aria-selected="false" data-subview="nightly">夜盘选股</button>
           <button class="subtab" id="subtab-research-tail" role="tab" aria-selected="false" data-subview="tail">尾盘选股</button>
           <button class="subtab" id="subtab-research-rotation" role="tab" aria-selected="false" data-subview="rotation">轮动研究</button>
+          <button class="subtab" id="subtab-research-six-index" role="tab" aria-selected="false" data-subview="six-index">六指数次日预测</button>
         </div>
         <div class="bar screening-toolbar research-view active" id="research-overview-toolbar" data-subview="overview">
           <button type="button" id="btnResearchRefresh">刷新</button>
@@ -389,6 +390,17 @@
             <div class="research-view" id="research-tail-left" data-subview="tail">
               <h4 class="screening-h4">尾盘选股说明</h4>
               <div class="small screening-muted">展示 `intraday-tail-screening` 的推荐池与四范式池（只读）。</div>
+            </div>
+            <div class="research-view" id="research-six-index-left" data-subview="six-index">
+              <div class="research-six-index-toolbar">
+                <h4 class="screening-h4" style="margin:0;">六指数任务概览</h4>
+                <button type="button" id="btnResearchSixIndexCopy">复制当日摘要</button>
+              </div>
+              <div id="researchSixIndexMeta" class="small"></div>
+              <h4 class="screening-h4" style="margin-top:12px;">方向统计</h4>
+              <div id="researchSixIndexSummaryCards" class="kpi-grid"></div>
+              <h4 class="screening-h4" style="margin-top:12px;">说明</h4>
+              <div class="small screening-muted">展示 `six-index-next-day-prediction` 的 L4 语义快照，用于盘后复核与次日方向预判查看。</div>
             </div>
           </aside>
           <main class="screening-col screening-main">
@@ -471,14 +483,59 @@
               </div>
             </div>
             <div class="research-view" id="research-rotation-main" data-subview="rotation">
-              <h4 class="screening-h4">轮动研究（三维共振）</h4>
+              <h4 class="screening-h4">轮动研究（三维共振 + RPS）</h4>
               <div id="researchRotationSummary" class="rotation-box small"></div>
+              <h5 class="screening-h5 small" style="margin: 10px 0 6px">轮动研究（三维共振）</h5>
               <div class="screening-table-wrap">
                 <table>
                   <thead><tr><th>代码</th><th>名称</th><th>综合分</th><th>景气度</th><th>共振</th><th>门闸</th></tr></thead>
-                  <tbody id="researchRotationTbody"></tbody>
+                  <tbody id="researchRotationLegacyTbody"></tbody>
                 </table>
               </div>
+              <h5 class="screening-h5 small" style="margin: 10px 0 6px">次日行业ETF建议（RPS）</h5>
+              <div id="researchSectorRotationSummary" class="rotation-box small"></div>
+              <div class="screening-table-wrap">
+                <table>
+                  <thead>
+                    <tr><th>Rank</th><th>行业</th><th>ETF</th><th>综合分</th><th>建议仓位</th><th>风控提示</th></tr>
+                  </thead>
+                  <tbody id="researchSectorRotationLegacyTbody"></tbody>
+                </table>
+              </div>
+              <details id="researchRotationUnifiedBeta" class="small" style="margin-top: 12px">
+                <summary style="cursor: pointer">Beta诊断区：统一建议（RPS × 三维共振，默认折叠）</summary>
+                <div id="researchRotationUnifiedWrap" class="screening-table-wrap" style="margin-top: 6px">
+                  <div class="small screening-muted" style="margin: 4px 0 8px">
+                    说明：该区域用于联合口径调试与排障观察，当前不作为主决策视图。
+                  </div>
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Rank</th>
+                        <th>代码</th>
+                        <th>名称</th>
+                        <th>行业</th>
+                        <th>统一分</th>
+                        <th>RPS20</th>
+                        <th>RPS5</th>
+                        <th>ΔRPS</th>
+                        <th>三维分</th>
+                        <th>门闸</th>
+                        <th>仓位%</th>
+                        <th>缺三维</th>
+                        <th>提示</th>
+                      </tr>
+                    </thead>
+                    <tbody id="researchRotationUnifiedTbody"></tbody>
+                  </table>
+                  <ul id="researchRotationUnifiedBullets" class="small screening-muted" style="margin: 8px 0 0 18px; padding: 0"></ul>
+                </div>
+              </details>
+            </div>
+            <div class="research-view" id="research-six-index-main" data-subview="six-index">
+              <h4 class="screening-h4">六指数预测结果</h4>
+              <div id="researchSixIndexEmpty" class="small screening-muted" style="display:none;">暂无六指数预测快照。</div>
+              <div id="researchSixIndexCards" class="research-six-index-grid"></div>
             </div>
           </main>
           <aside class="screening-col">
@@ -517,6 +574,13 @@
               <label class="small">交易日</label>
               <select id="researchRotationDatePick"></select>
               <div id="researchRotationTimeline" class="small research-timeline"></div>
+            </div>
+            <div class="research-view" id="research-six-index-right" data-subview="six-index">
+              <h4 class="screening-h4">六指数快照</h4>
+              <label class="small">交易日</label>
+              <select id="researchSixIndexDatePick"></select>
+              <div id="researchSixIndexStatus" class="small" style="margin-top:8px;"></div>
+              <div id="researchSixIndexDetailHint" class="small screening-muted" style="margin-top:8px;">展开卡片可查看 `reasoning`、`signals`、`score_breakdown` 与降级原因。</div>
             </div>
           </aside>
         </div>
@@ -585,8 +649,8 @@
         </div>
       </div>
     </div>
-    <script type="module" src="/app.js"></script>
-    <script type="module" src="/screening.js"></script>
-    <script type="module" src="/ops.js"></script>
+    <script type="module" src="/app.js?v=20260501-2026"></script>
+    <script type="module" src="/screening.js?v=20260501-2026"></script>
+    <script type="module" src="/ops.js?v=20260501-2026"></script>
   </body>
 </html>

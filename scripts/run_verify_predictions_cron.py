@@ -7,6 +7,7 @@ Cron 入口：按 Asia/Shanghai 日历日调用 verify_predictions，无 shell/c
 """
 from __future__ import annotations
 
+import argparse
 import importlib.util
 import sys
 from datetime import datetime
@@ -35,6 +36,10 @@ def _load_verify_module(project_root: Path):
 
 
 def main() -> int:
+    parser = argparse.ArgumentParser(description="Cron wrapper for prediction verification")
+    parser.add_argument("--mode", choices=["all", "direction"], default="all")
+    args = parser.parse_args()
+
     project_root = Path(__file__).resolve().parent.parent
     sys.path.insert(0, str(project_root))
 
@@ -42,23 +47,39 @@ def main() -> int:
     mod = _load_verify_module(project_root)
     json_file = mod.PREDICTION_RECORDS_DIR / f"predictions_{date}.json"
 
-    if not json_file.exists():
-        print("VERIFY_STATUS=PARTIAL", flush=True)
-        print(f"VERIFY_DATE={date}", flush=True)
-        print("RECORDS_VERIFIED=0", flush=True)
-        print("ACCURACY=UNAVAILABLE", flush=True)
-        print("REPORT_PATH=NONE", flush=True)
-        print(f"PREDICTIONS_JSON_MISSING={json_file}", flush=True)
-        return 0
+    if args.mode == "direction":
+        stats = mod.verify_direction_predictions_for_target_date(date)
+    else:
+        if not json_file.exists():
+            print("VERIFY_STATUS=PARTIAL", flush=True)
+            print(f"VERIFY_DATE={date}", flush=True)
+            print("RECORDS_VERIFIED=0", flush=True)
+            print("ACCURACY=UNAVAILABLE", flush=True)
+            print("REPORT_PATH=NONE", flush=True)
+            print(f"PREDICTIONS_JSON_MISSING={json_file}", flush=True)
+            return 0
+        stats = mod.verify_predictions_for_date(date, None)
 
-    stats = mod.verify_predictions_for_date(date, None)
     verified = int(stats.get("verified") or 0)
     acc = stats.get("accuracy")
     acc_s = f"{float(acc):.6f}" if verified > 0 and acc is not None else "UNAVAILABLE"
 
-    report_path = project_root / "data" / "verification_reports" / f"verification_{date}.md"
+    report_name = f"direction_verification_{date}.md" if args.mode == "direction" else f"verification_{date}.md"
+    report_path = project_root / "data" / "verification_reports" / report_name
     if verified > 0:
-        report = mod.generate_verification_report(date, stats)
+        if args.mode == "direction":
+            report = "\n".join(
+                [
+                    f"## 方向验证报告 - {date}",
+                    "",
+                    f"- 已验证: {verified}",
+                    f"- 命中: {int(stats.get('hit') or 0)}",
+                    f"- 未命中: {int(stats.get('miss') or 0)}",
+                    f"- 准确率: {float(acc):.2%}",
+                ]
+            )
+        else:
+            report = mod.generate_verification_report(date, stats)
         print(report, flush=True)
         report_path.parent.mkdir(parents=True, exist_ok=True)
         report_path.write_text(report, encoding="utf-8")
@@ -72,6 +93,7 @@ def main() -> int:
     print(f"VERIFY_DATE={date}", flush=True)
     print(f"RECORDS_VERIFIED={verified}", flush=True)
     print(f"ACCURACY={acc_s}", flush=True)
+    print(f"VERIFY_MODE={args.mode}", flush=True)
     print(f"REPORT_PATH={rp}", flush=True)
     return 0
 

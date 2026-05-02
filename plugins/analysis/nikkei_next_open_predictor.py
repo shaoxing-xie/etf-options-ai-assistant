@@ -4,6 +4,8 @@ import math
 from datetime import datetime, timedelta
 from typing import Any, Dict, Optional
 
+from plugins.analysis.nikkei_event_gate import calculate_event_gate
+
 # --- 方法论常量（Phase A）---
 WEIGHT_FUTURES = 0.50
 WEIGHT_FX = 0.15
@@ -13,6 +15,8 @@ WEIGHT_EVENTS = 0.35
 SPX_TO_NIKKEI_BETA = 0.54
 USDJPY_BETA = 0.15
 LEVERAGE_THRESHOLD_PCT = -1.5
+FUTURES_SCORE_SCALE = 1.5
+USE_BETA_IN_FUTURES_SCORE = False
 
 ALPHA = 1.5
 EVENT_SHRINK_K = 0.8
@@ -59,6 +63,37 @@ def _estimate_ready_date(trade_date: str, current_samples: int) -> Optional[str]
     return (dt + timedelta(days=remaining)).strftime("%Y-%m-%d")
 
 
+def _is_signal_consistent(layer1_score: float, layer3_score: float) -> bool:
+    return float(layer1_score) * float(layer3_score) > 0.0
+
+
+def _calc_confidence(
+    *,
+    data_quality_normal: bool,
+    event_risk: float,
+    samples_count: int,
+    signal_consistent: bool,
+    monitor_point: str,
+) -> Dict[str, str]:
+    if not data_quality_normal:
+        return {"level": "low", "reason": "数据质量降级"}
+    if samples_count < MIN_BACKTEST_SAMPLES:
+        return {"level": "low", "reason": f"样本不足({samples_count}/{MIN_BACKTEST_SAMPLES})"}
+    if event_risk > 0.6:
+        return {"level": "low", "reason": f"事件风险过高({event_risk:.2f})"}
+    if event_risk > 0.3:
+        return {"level": "medium", "reason": f"事件风险中等({event_risk:.2f})"}
+    if signal_consistent:
+        level = "high"
+        reason = "数据质量正常+无重大事件+信号一致"
+    else:
+        level = "medium"
+        reason = "信号一致性不足"
+    if str(monitor_point or "").upper() in {"M1", "M2", "M3", "M4", "M5", "M6"} and level == "high":
+        return {"level": "medium", "reason": "时点信息不完整，置信度上限为medium"}
+    return {"level": level, "reason": reason}
+
+
 def predict_next_open_direction(report_data: Dict[str, Any]) -> Dict[str, Any]:
     analysis = report_data.get("analysis") if isinstance(report_data.get("analysis"), dict) else {}
     monitor_ctx = report_data.get("monitor_context") if isinstance(report_data.get("monitor_context"), dict) else {}
@@ -67,6 +102,7 @@ def predict_next_open_direction(report_data: Dict[str, Any]) -> Dict[str, Any]:
     deviation_proxy = analysis.get("deviation_proxy") if isinstance(analysis.get("deviation_proxy"), dict) else {}
 
     trade_date = str(report_data.get("trade_date") or report_data.get("date") or "").strip()
+    monitor_point = str(monitor_ctx.get("monitor_point") or "M7").strip().upper()
 
     idx_ret_pct = _safe_float(analysis.get("index_day_ret_pct"))
     fut_change_pct = _safe_float(futures_ref.get("change_pct"))
@@ -75,11 +111,10 @@ def predict_next_open_direction(report_data: Dict[str, Any]) -> Dict[str, Any]:
 
     degraded_reasons = []
 
-    # Layer1: futures (明确公式，避免实现歧义)
-    # score_futures = tanh(SPX_TO_NIKKEI_BETA * futures_change_pct / 0.5)
-    # TODO(PHASE_B): 用滚动回测替换归一化尺度 0.5
+    # Layer1: futures（校准后默认不再使用 SPX beta 的二次衰减）
     if fut_change_pct is not None:
-        score_futures = math.tanh(SPX_TO_NIKKEI_BETA * float(fut_change_pct) / 0.5)
+        beta = SPX_TO_NIKKEI_BETA if USE_BETA_IN_FUTURES_SCORE else 1.0
+        score_futures = math.tanh(beta * float(fut_change_pct) / FUTURES_SCORE_SCALE)
     else:
         score_futures = 0.0
         degraded_reasons.append("PREDICTOR_NO_FUTURES_DATA")
@@ -88,10 +123,18 @@ def predict_next_open_direction(report_data: Dict[str, Any]) -> Dict[str, Any]:
     score_fx = 0.0
     degraded_reasons.append("PREDICTOR_NO_FX_INTRADAY")
 
-    # Layer3: events/risk gate proxy from existing fields
+    # Layer3: event gate
+    event_gate = calculate_event_gate(trade_date)
     score_events = 0.0
-    event_risk = 0.0
+    event_risk = _safe_float(event_gate.get("event_risk")) or 0.0
     layer3_notes = []
+    event_triggers = event_gate.get("event_triggers") if isinstance(event_gate.get("event_triggers"), list) else []
+    impact_templates = event_gate.get("impact_templates") if isinstance(event_gate.get("impact_templates"), list) else []
+    if str(event_gate.get("source_status") or "").strip().lower() != "ok":
+        degraded_reasons.append("PREDICTOR_EVENT_GATE_DEGRADED")
+    if event_triggers:
+        score_events -= min(0.3, 0.06 * len(event_triggers))
+        layer3_notes.append("event_gate_triggered")
 
     if idx_ret_pct is not None:
         if idx_ret_pct <= LEVERAGE_THRESHOLD_PCT:
@@ -137,13 +180,16 @@ def predict_next_open_direction(report_data: Dict[str, Any]) -> Dict[str, Any]:
         current_samples = max(0, int(report_data.get("next_open_nikkei_samples") or 0))
     estimated_ready_date = _estimate_ready_date(trade_date, current_samples) if trade_date else None
 
-    confidence_level = "medium"
-    if (
-        "PREDICTOR_NO_FUTURES_DATA" in degraded_reasons
-        or event_risk > 0.5
-        or current_samples < MIN_BACKTEST_SAMPLES
-    ):
-        confidence_level = "low"
+    data_quality_normal = premium_quality not in {"degraded", "error"} and "PREDICTOR_NO_FUTURES_DATA" not in degraded_reasons
+    conf = _calc_confidence(
+        data_quality_normal=data_quality_normal,
+        event_risk=float(event_risk),
+        samples_count=current_samples,
+        signal_consistent=_is_signal_consistent(float(score_futures), float(score_events)),
+        monitor_point=monitor_point,
+    )
+    confidence_level = conf["level"]
+    confidence_reason = conf["reason"]
 
     decision = {
         "direction": direction,
@@ -157,6 +203,9 @@ def predict_next_open_direction(report_data: Dict[str, Any]) -> Dict[str, Any]:
                 "weight": WEIGHT_FUTURES,
                 "contribution": round(WEIGHT_FUTURES * score_futures, 4),
                 "status": "ok" if fut_change_pct is not None else "degraded_no_data",
+                "formula": "tanh(beta*futures_change_pct/FUTURES_SCORE_SCALE)",
+                "futures_scale": FUTURES_SCORE_SCALE,
+                "beta_used": (SPX_TO_NIKKEI_BETA if USE_BETA_IN_FUTURES_SCORE else 1.0),
             },
             {
                 "layer": "layer2_fx",
@@ -173,8 +222,17 @@ def predict_next_open_direction(report_data: Dict[str, Any]) -> Dict[str, Any]:
                 "contribution": round(WEIGHT_EVENTS * score_events, 4),
                 "event_risk": round(event_risk, 4),
                 "notes": layer3_notes[:6],
+                "event_triggers": event_triggers[:5],
             },
         ],
+        "event_gate": {
+            "event_risk": round(event_risk, 4),
+            "event_triggers": event_triggers[:8],
+            "trigger_count": len(event_triggers),
+            "impact_templates": impact_templates[:5],
+            "source_status": event_gate.get("source_status"),
+            "event_note": event_gate.get("event_note"),
+        },
         "probability_debug": {
             "p_up_raw_pre_gate": round(p_up_raw, 6),
             "event_risk": round(event_risk, 6),
@@ -190,8 +248,9 @@ def predict_next_open_direction(report_data: Dict[str, Any]) -> Dict[str, Any]:
             "current_samples": current_samples,
             "estimated_ready_date": estimated_ready_date,
         },
-        "method_note": "Phase A lightweight: no realtime USDJPY/V-Lab/calendar integration yet.",
+        "method_note": "Phase A+: event gate integrated; realtime USDJPY/V-Lab pending.",
         "limitation_note": "14:30 information is incomplete for next-open forecasting; confidence is capped conservatively.",
+        "confidence_reason": confidence_reason,
         "degraded_reason": ",".join(degraded_reasons) if degraded_reasons else None,
     }
     return {"success": True, "decision": decision}

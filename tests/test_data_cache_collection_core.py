@@ -128,6 +128,49 @@ def test_close_minute_has_daily_refresh_step(
     assert "stock_historical" in norm
 
 
+def warm_data_cache_config() -> dict:
+    return {
+        "data_cache": {
+            "enabled": True,
+            "futures_daily_warm": {"enabled": True, "symbols": ["A50"], "calendar_days": 60},
+            "global_index_daily_warm": {
+                "enabled": True,
+                "symbols": ["^GSPC"],
+                "hist_limit": 10,
+            },
+        }
+    }
+
+
+@patch("src.data_cache.save_global_index_daily_from_records", return_value=3)
+@patch(
+    "plugins.data_collection.index.fetch_global_hist_sina.tool_fetch_global_index_hist_sina",
+    return_value={"success": True, "data": [{"date": "2026-01-02", "close": 1.0}]},
+)
+@patch(
+    "plugins.data_collection.futures.fetch_a50.tool_fetch_a50_data",
+    return_value={"success": True, "hist_data": {"count": 5, "klines": [{"date": "20260101"}]}},
+)
+@patch("plugins.data_collection.stock.fetch_historical.tool_fetch_stock_historical", side_effect=_mock_fetch_ok)
+@patch("plugins.data_collection.etf.fetch_historical.tool_fetch_etf_historical", side_effect=_mock_fetch_ok)
+@patch("plugins.data_collection.index.fetch_historical.tool_fetch_index_historical", side_effect=_mock_fetch_ok)
+@patch("src.data_cache_universe.get_data_cache_universe")
+@patch("src.config_loader.load_system_config")
+def test_morning_daily_futures_global_warm_when_config_enabled(
+    mock_cfg, mock_u, _ih, _eh, _sh, _a50, _gh, _save_g, sample_universe
+) -> None:
+    mock_cfg.return_value = warm_data_cache_config()
+    mock_u.return_value = sample_universe
+
+    from src.data_cache_collection_core import run_data_cache_collection, summary_success
+
+    summary = run_data_cache_collection("morning_daily")
+    assert summary_success(summary)
+    tools = [s.get("tool") for s in summary["steps"]]
+    assert "futures_a50_daily_warm" in tools
+    assert "global_index_daily_warm" in tools
+
+
 @patch("plugins.data_collection.stock.fetch_historical.tool_fetch_stock_historical", side_effect=_mock_fetch_ok)
 @patch("plugins.data_collection.etf.fetch_historical.tool_fetch_etf_historical", side_effect=_mock_fetch_ok)
 @patch("plugins.data_collection.index.fetch_historical.tool_fetch_index_historical", return_value={"success": False, "message": "fail"})

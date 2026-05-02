@@ -1,0 +1,9 @@
+__pycache__/
+.pytest_cache/
+.venv/
+node_modules/
+logs/
+artifacts/
+memory/
+output/
+test_cron_results/

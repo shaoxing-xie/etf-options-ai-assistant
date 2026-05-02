@@ -803,7 +803,8 @@ def _normalize_daily_report_fields(
         ):
             out["tool_compute_index_key_levels"] = kl_ov
 
-    if (out.get("report_type") or "").strip() == "daily_market":
+    rt = (out.get("report_type") or "").strip()
+    if rt == "daily_market":
         has_kl = isinstance(out.get("key_levels"), dict) and bool(out.get("key_levels"))
         has_tool = isinstance(out.get("tool_compute_index_key_levels"), dict) and out[
             "tool_compute_index_key_levels"
@@ -819,7 +820,29 @@ def _normalize_daily_report_fields(
             except Exception:
                 pass
 
-    if (out.get("report_type") or "").strip() == "daily_market":
+    # 盘前（opening/before_open）报告也需要关键位展示；critical 阶段超时后可能跳过 key_levels 计算，
+    # 在发送层补算以避免正文出现「关键位数据暂缺」。
+    if rt in ("opening", "opening_market", "before_open"):
+        has_kl = isinstance(out.get("key_levels"), dict) and bool(out.get("key_levels"))
+        has_tool = isinstance(out.get("tool_compute_index_key_levels"), dict) and out[
+            "tool_compute_index_key_levels"
+        ].get("success")
+        if (
+            not has_kl
+            and not has_tool
+            and os.environ.get("DAILY_REPORT_DISABLE_KEY_LEVELS_AUTOFILL") != "1"
+        ):
+            try:
+                from plugins.analysis.key_levels import tool_compute_index_key_levels
+
+                kl = tool_compute_index_key_levels(index_code="000300")
+                if isinstance(kl, dict) and kl.get("success"):
+                    out["tool_compute_index_key_levels"] = kl
+                    out["key_levels_fill_source"] = "send_layer_autofill"
+            except Exception:
+                pass
+
+    if rt == "daily_market":
         _normalize_global_index_display_names(out)
 
     return out, echo
