@@ -33,7 +33,7 @@ jobs:
 
       - name: Lint (minimum)
         run: |
-          ruff check scripts/release_safety_gate.py scripts/check_json_syntax.py scripts/ensure_openclaw_plugin_load_paths.py scripts/validate_config_surface.py scripts/check_universe_ssot.py scripts/validate_config_cross.py
+          ruff check scripts/release_safety_gate.py scripts/check_json_syntax.py scripts/ensure_openclaw_plugin_load_paths.py scripts/validate_config_surface.py scripts/check_universe_ssot.py scripts/validate_config_cross.py scripts/check_error_codes_sync.py scripts/scan_direct_connections.py
 
       - name: JSON syntax check
         run: |
@@ -75,6 +75,10 @@ jobs:
       - name: Error codes YAML vs plugin Python sync
         run: |
           python scripts/check_error_codes_sync.py
+
+      - name: Direct-connection import scan (informational)
+        run: |
+          python scripts/scan_direct_connections.py --summary-only
 
       - name: Plugin probe source health tests
         working-directory: ${{ github.workspace }}/../openclaw-data-china-stock

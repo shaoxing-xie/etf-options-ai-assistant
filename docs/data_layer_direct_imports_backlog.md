@@ -1,6 +1,13 @@
 # 直连行情库引用 backlog（Phase 3 扫描快照）
 
-季度重跑：
+**推荐（可复现、与 CI 一致）**：
+
+```bash
+python scripts/scan_direct_connections.py
+python scripts/scan_direct_connections.py --summary-only
+```
+
+**可选**：本机已安装 [ripgrep](https://github.com/BurntSushi/ripgrep) 时，亦可用手工一行（与上表口径略宽/略窄时以脚本为准）：
 
 ```bash
 rg "import akshare|from akshare|import tushare|from tushare" --type py . \

@@ -43,7 +43,7 @@
 - 本仓库优先通过 **`scripts/link_china_stock_data_collection.sh`** 将 `plugins/data_collection` 链到插件克隆或 `~/.openclaw/extensions/openclaw-data-china-stock`。
 - **直连兜底依赖**（AkShare / Tushare / Baostock 等）集中在 [`requirements-cn-market-direct.txt`](requirements-cn-market-direct.txt)，由根目录 [`requirements.txt`](requirements.txt) 引用，便于分层审计。
 - Chart Console 只读语义：`GET /api/semantic/data_source_health`（快照）；`GET /api/semantic/data_source_health_history?days=7`（7 日成功率 rollup）。插件侧需周期性执行 `tool_probe_source_health(write_snapshot=true)` 以落盘并累积趋势。
-- 契约说明见 [`docs/data-source-contract.md`](docs/data-source-contract.md)。
+- 契约说明见 [`docs/data-source-contract.md`](docs/data-source-contract.md)；分层与 backlog 索引见 [`docs/architecture/data_layer.md`](docs/architecture/data_layer.md)。直连引用季度扫描：`python scripts/scan_direct_connections.py --summary-only`。
 
 ## ETF Stock 龙虾（OpenClaw）生态长项：从“会分析”到“会复现、会迭代、会进化”
 

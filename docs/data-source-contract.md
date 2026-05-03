@@ -32,7 +32,7 @@
 
 - **已完成**：`fetch_index_daily_em` / `fetch_etf_daily_em` 优先调用合并工具 `tool_fetch_index_data` / `tool_fetch_etf_data`（historical），失败再回退 Tushare/AkShare 链。
 - **本轮**：`fetch_stock_minute_em` 优先 `tool_fetch_stock_minute`（需已 `scripts/link_china_stock_data_collection.sh`），失败再回退东财分钟接口。
-- **仍含直连、待 Phase 3 分级迁移**：ETF/指数分钟新浪路径、期权/A50/全球指数分支、`import akshare` 全局等 — 详见 [`docs/data_layer_direct_imports_backlog.md`](data_layer_direct_imports_backlog.md)。
+- **仍含直连、待 Phase 3 分级迁移**：ETF/指数分钟新浪路径、期权/A50/全球指数分支、`import akshare` 全局等 — 详见 [`docs/data_layer_direct_imports_backlog.md`](data_layer_direct_imports_backlog.md)（文件名别名：[`docs/remaining_direct_connections.md`](remaining_direct_connections.md)）。可复现扫描：`python scripts/scan_direct_connections.py`。
 
 ## 配置门闸
 

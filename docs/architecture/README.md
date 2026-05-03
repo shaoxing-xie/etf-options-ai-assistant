@@ -15,6 +15,9 @@
   - 策略引擎与信号融合 v1.0：`SignalCandidate` 契约、`tool_strategy_engine`、与 `strategy_config` / Journal 的边界；**OpenClaw / `~/.openclaw` Cron 与每 30 分钟 `strategy_fusion` 约定**见该文档「OpenClaw 与本机 Cron」节。  
   - 配套：`config/openclaw_strategy_engine.yaml`、`config/strategy_fusion.yaml`、`plugins/strategy_engine/README.md`。
 
+- `data_layer.md`  
+  - 数据分层、采集插件边界、错误码与直连 backlog 的**索引页**；可复现直连扫描见 `scripts/scan_direct_connections.py`。
+
 建议阅读顺序：
 
 1. `PROJECT_LAYOUT.md`：先理解整体版图与模块划分；
