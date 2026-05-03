@@ -47,6 +47,7 @@
 - **全球指数 catalog 可观测（运维）**：设置 `OPTION_TRADING_ASSISTANT_DEBUG_PLUGIN_CATALOG=1` 时，Chart `global_market_snapshot`、开盘/日报链路可附带 `source_route` 中的 `catalog_merge` / `active_priority` 等调试片段（默认关闭，不影响终端用户文案）。
 - **选股别名**：夜盘与部分工作流使用 `tool_screen_by_factors`，与插件侧 `tool_screen_equity_factors` **参数与返回信封一致**；`tool_finalize_screening_nightly` 可接任一输出。集成边界与禁止项见 **[`docs/integration/plugin_assistant_integration_plan.md`](docs/integration/plugin_assistant_integration_plan.md)**（含 `china_stock_upstream` 动态加载、**禁止**在助手 `plugins/utils/` 下新增上游薄封装等硬约束）。
 - 契约说明见 [`docs/data-source-contract.md`](docs/data-source-contract.md)；分层与 backlog 索引见 [`docs/architecture/data_layer.md`](docs/architecture/data_layer.md)。直连引用季度扫描：`python scripts/scan_direct_connections.py --summary-only`。
+- **可视化看板**：Chart Console Pro（默认 `http://127.0.0.1:8611/`）顶部 **「运维事件」** → 子页 **「数据源健康」**（前端调用 `GET /api/semantic/data_source_health` 与 `GET /api/semantic/data_source_health_history?days=7`）。无快照时请在插件环境执行 `tool_probe_source_health(write_snapshot=true)` 落盘后再刷新。
 
 ## ETF Stock 龙虾（OpenClaw）生态长项：从“会分析”到“会复现、会迭代、会进化”
 
@@ -104,6 +105,7 @@
 
 ### 核心能力
 
+- **数据底座（openclaw-data-china-stock）**：行情与 L2/L4 等工具以插件为真源；安装与链接见下文 **快速开始 → 2.6** 与 `docs/integration/plugin_assistant_integration_plan.md`。
 - **多资产数据采集**：支持股票、指数、宽基 ETF、A50 期指等多源数据的实时 / 历史 / 分钟级获取，并带有本地缓存与批量采集优化。
 - **趋势与波动分析**：内置盘前 / 盘后 / 开盘分析、技术指标计算、历史波动率与波动率预测、日内区间估计等能力。
 - **信号与策略研究**：支持多策略信号生成、信号效果回放、策略评分与权重调整，形成完整的策略研究闭环（Strategy Research Loop）。
@@ -162,6 +164,14 @@ cp .env.example .env
 本项目除了自定义插件与工具外，部分“自动盯盘 / 事件哨兵 / 外部信息补全”能力还会依赖 OpenClaw 生态中的第三方 SKILL（技能包）。建议首次安装时先看清单并按需安装：
 
 - `docs/getting-started/third-party-skills.md`
+
+### 2.6 安装数据底座插件 `openclaw-data-china-stock`（强烈建议）
+
+完整行情、全球指数、L2 实体解析、L4 估值类工具等与 **`openclaw-data-china-stock`** 对齐；未安装或未链接时，`plugins/data_collection` 可能为空链，采集能力显著受限。
+
+- **作为 OpenClaw 扩展安装（推荐）**：`openclaw plugins install clawhub:@shaoxing-xie/openclaw-data-china-stock`（若 CLI 不支持 `clawhub:` 前缀，见插件仓 `README.md` 的安装小节）。
+- **源码协同 / 开发机**：克隆插件仓后，在本仓库根执行 **`bash scripts/link_china_stock_data_collection.sh`**，将 `plugins/data_collection` 指到插件目录。
+- **非默认路径**：设置 `OPENCLAW_CHINA_STOCK_PLUGIN_ROOT` 或 `OPENCLAW_DATA_CHINA_STOCK_REPO`（与 `docs/integration/plugin_assistant_integration_plan.md` 一致）。
 
 ### 3. 安装为 OpenClaw 插件（项目能力接入）
 
