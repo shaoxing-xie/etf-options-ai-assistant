@@ -7,7 +7,7 @@ import pandas as pd
 from .services import ApiServices
 
 # Bump when adding semantic HTTP routes so operators can `curl /api/health` and detect stale processes.
-CHART_CONSOLE_ROUTES_TAG = "2026-05-02_semantic_data_source_health"
+CHART_CONSOLE_ROUTES_TAG = "2026-05-03_semantic_data_source_health_history"
 
 
 class ApiRoutes:
@@ -131,6 +131,12 @@ class ApiRoutes:
             return payload, code
         if path == "/api/semantic/data_source_health":
             return self.svc.get_semantic_data_source_health(), 200, {}
+        if path == "/api/semantic/data_source_health_history":
+            try:
+                days = int((query.get("days") or ["7"])[0])
+            except Exception:
+                days = 7
+            return self.svc.get_semantic_data_source_health_history(days=days), 200, {}
         if path == "/api/semantic/ops_events":
             trade_date = (query.get("trade_date") or [""])[0]
             return self.svc.get_semantic_ops_events(str(trade_date)), 200, {}

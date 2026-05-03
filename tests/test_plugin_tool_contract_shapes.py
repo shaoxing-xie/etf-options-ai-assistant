@@ -16,6 +16,14 @@ def _read_error_codes() -> dict:
     return yaml.safe_load(p.read_text(encoding="utf-8"))
 
 
+def test_plugins_utils_error_codes_matches_yaml() -> None:
+    from plugins.utils.error_codes import ERROR_CODE_KEYS
+
+    doc = _read_error_codes()
+    yaml_keys = set((doc or {}).get("error_codes") or {})
+    assert yaml_keys == ERROR_CODE_KEYS
+
+
 def test_error_codes_yaml_has_core_codes() -> None:
     doc = _read_error_codes()
     codes = (doc or {}).get("error_codes") or {}
@@ -67,6 +75,20 @@ def test_tool_read_market_data_success_gets_meta_ok() -> None:
     meta = r.get("_meta") or {}
     assert meta.get("quality_status") == "ok"
     assert meta.get("schema_name") == "tool_read_market_data"
+
+
+def test_probe_source_health_contract_fixture() -> None:
+    """与插件 ``tool_probe_source_health`` dry_run 最小形状一致。"""
+    out = {
+        "success": True,
+        "message": "dry_run",
+        "run_id": "00000000-0000-0000-0000-000000000000",
+        "data": [{"source_id": "akshare", "ok": True, "detail": "akshare_version=x"}],
+    }
+    assert "success" in out
+    for row in out.get("data") or []:
+        assert "source_id" in row
+        assert "ok" in row
 
 
 def test_index_historical_tool_shape_fixture() -> None:

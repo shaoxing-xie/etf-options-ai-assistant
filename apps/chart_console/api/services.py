@@ -354,6 +354,34 @@ class ApiServices:
             return {"success": False, "message": f"invalid_json: {e}", "data": None}
         return {"success": True, "message": "ok", "data": doc}
 
+    def get_semantic_data_source_health_history(self, days: int = 7) -> dict[str, Any]:
+        """Read-only: plugin-written ``source_health_history_rollup.json`` (7-day success_rate series)."""
+        try:
+            d = max(1, min(int(days), 30))
+        except Exception:
+            d = 7
+        p = _openclaw_data_china_stock_root() / "data" / "meta" / "source_health_history_rollup.json"
+        if not p.is_file():
+            return {
+                "success": True,
+                "message": "no_rollup",
+                "data": {
+                    "series": {},
+                    "rollup_path": str(p),
+                    "hint": "Run plugin tool_probe_source_health(write_snapshot=true) to append samples.",
+                    "_meta": {"days": d, "quality_status": "ok"},
+                },
+            }
+        try:
+            doc = json.loads(p.read_text(encoding="utf-8"))
+        except Exception as e:
+            return {"success": False, "message": f"invalid_json: {e}", "data": None}
+        meta = dict(doc.get("_meta") or {})
+        meta["days_requested"] = d
+        out = dict(doc)
+        out["_meta"] = meta
+        return {"success": True, "message": "ok", "data": out}
+
     def get_semantic_trade_dates(self) -> dict[str, Any]:
         dates = self._semantic.semantic_trade_dates()
         return {"success": True, "message": "ok", "data": dates}

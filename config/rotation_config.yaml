@@ -103,6 +103,8 @@ degradation:
   industry_min_available: 5
   concept_min_available: 5
   fallback_strategy: reduce_history_days
+  # 主评分 ranked_active 为空时，是否回退按 legacy_score 排序；默认关闭（与数据底座收尾默认一致）
+  fallback_legacy_ranking: false
 
 paths:
   history_jsonl: "data/etf_rotation_runs.jsonl"

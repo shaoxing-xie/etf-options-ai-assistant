@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from apps.chart_console.api.market_snapshot_build import (
     _build_cn_index_items,
     build_global_market_snapshot,
@@ -35,15 +37,33 @@ def test_meta_block_has_required_keys():
         assert k in m
 
 
-def test_qdii_snapshot_structure(monkeypatch):
-    def fake_yf(*_a, **_k):
-        return (100.0, 1.0, 1.0, "global_hist_sina")
-
+def _patch_qdii_offline(monkeypatch, *, hist_return):
+    """Mock 日线 + 日内，PR 门禁零外网。"""
     monkeypatch.setattr(
         "apps.chart_console.api.market_snapshot_build._yf_hist_metrics",
-        lambda *a, **k: fake_yf(),
+        lambda *a, **k: hist_return,
+    )
+    monkeypatch.setattr(
+        "apps.chart_console.api.market_snapshot_build._yf_intraday_metrics",
+        lambda *_a, **_k: (hist_return[0], hist_return[1], hist_return[2], "global_spot_intraday"),
     )
 
+
+def test_qdii_snapshot_structure(monkeypatch):
+    _patch_qdii_offline(monkeypatch, hist_return=(100.0, 1.0, 1.0, "global_hist_sina"))
+    doc = build_qdii_futures_snapshot("2026-04-25")
+    assert doc.get("trade_date") == "2026-04-25"
+    assert isinstance(doc.get("groups"), list)
+    assert doc["_meta"]["schema_name"] == "qdii_futures_snapshot_v1"
+
+
+@pytest.mark.network
+def test_qdii_snapshot_structure_network(monkeypatch):
+    """走真实 global_spot（yfinance→FMP→sina）；仅 mock 日线以控口径。仅 ``-m network`` / 联网 job 跑。"""
+    monkeypatch.setattr(
+        "apps.chart_console.api.market_snapshot_build._yf_hist_metrics",
+        lambda *a, **k: (100.0, 1.0, 1.0, "global_hist_sina"),
+    )
     doc = build_qdii_futures_snapshot("2026-04-25")
     assert doc.get("trade_date") == "2026-04-25"
     assert isinstance(doc.get("groups"), list)
@@ -51,6 +71,15 @@ def test_qdii_snapshot_structure(monkeypatch):
 
 
 def test_persist_writes_file(tmp_path, monkeypatch):
+    _patch_qdii_offline(monkeypatch, hist_return=(1.0, 0.1, 1.0, "global_hist_sina"))
+    doc = build_qdii_futures_snapshot("2026-04-25")
+    p = persist_snapshot(tmp_path, "qdii_futures_snapshot", "2026-04-25", doc)
+    assert p.is_file()
+    assert "groups" in p.read_text(encoding="utf-8")
+
+
+@pytest.mark.network
+def test_persist_writes_file_network(tmp_path, monkeypatch):
     monkeypatch.setattr(
         "apps.chart_console.api.market_snapshot_build._yf_hist_metrics",
         lambda *a, **k: (1.0, 0.1, 1.0, "global_hist_sina"),
@@ -186,6 +215,26 @@ def test_yf_hist_metrics_plugin_hist_ok(monkeypatch):
 
 
 def test_persist_l3_jsonl_append(tmp_path, monkeypatch):
+    import json
+
+    _patch_qdii_offline(monkeypatch, hist_return=(1.0, 0.1, 1.0, "global_hist_sina"))
+    doc = build_qdii_futures_snapshot("2026-04-25")
+    p1 = persist_qdii_futures_l3_events(tmp_path, "2026-04-25", doc)
+    assert p1.is_file()
+    lines1 = [ln for ln in p1.read_text(encoding="utf-8").splitlines() if ln.strip()]
+    assert len(lines1) == 7
+    row = json.loads(lines1[0])
+    assert row["_meta"]["schema_name"] == "qdii_futures_quote_event_v1"
+    assert row["_meta"]["data_layer"] == "L3"
+    assert row["event_id"].endswith(":" + row["instrument_id"])
+    assert isinstance(row["payload"], dict)
+    persist_qdii_futures_l3_events(tmp_path, "2026-04-25", doc)
+    lines2 = [ln for ln in p1.read_text(encoding="utf-8").splitlines() if ln.strip()]
+    assert len(lines2) == 14
+
+
+@pytest.mark.network
+def test_persist_l3_jsonl_append_network(tmp_path, monkeypatch):
     import json
 
     monkeypatch.setattr(

@@ -1,0 +1,7 @@
+# Direct CN market HTTP/SDK stacks used by assistant fallback paths (data_collector, tushare_fallback, trend_analyzer, etc.).
+# Kept as a separate fragment so installs can be audited; included from requirements.txt via ``-r``.
+akracer==0.0.14
+akshare==1.18.35
+akshare-proxy-patch==0.2.13
+baostock>=0.8.8
+tushare>=1.4.25

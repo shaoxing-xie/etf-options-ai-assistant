@@ -1,7 +1,4 @@
-akracer==0.0.14
-akshare==1.18.35
-akshare-proxy-patch==0.2.13
-baostock>=0.8.8
+-r requirements-cn-market-direct.txt
 efinance>=0.5.5
 anyio==4.12.1
 beautifulsoup4==4.14.3
@@ -69,4 +66,3 @@ pyyaml>=6.0
 python-dotenv>=1.0.0
 # llm_enhancer（OpenAI 兼容接口，如 DeepSeek）
 openai>=1.40.0
-tushare>=1.4.25

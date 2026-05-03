@@ -8,3 +8,4 @@ pytest-timeout>=2.3
 pydantic>=2.0
 
 # 运行时依赖以 requirements.txt 为准（勿删减主清单）；本文件仅叠加开发/测试包。B 档若需可选 extras 另增专门 requirements 片段，而不削弱文档列出的主依赖。
+# 直连行情栈单独片段：requirements-cn-market-direct.txt（已由 requirements.txt -r 引入）。

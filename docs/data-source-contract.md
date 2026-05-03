@@ -26,6 +26,13 @@
 ## 相关只读 API
 
 - Chart Console：`GET /api/semantic/data_source_health`（读插件落盘的 `source_health_snapshot.json`；无快照时按页面提示运行 `tool_probe_source_health(write_snapshot=true)`）。
+- 成功率趋势：`GET /api/semantic/data_source_health_history?days=7`（读插件 `data/meta/source_health_history_rollup.json`；由每次 `write_snapshot=true` 的 probe 采样刷新）。
+
+## `src/data_collector.py` 收口清单（Phase 1）
+
+- **已完成**：`fetch_index_daily_em` / `fetch_etf_daily_em` 优先调用合并工具 `tool_fetch_index_data` / `tool_fetch_etf_data`（historical），失败再回退 Tushare/AkShare 链。
+- **本轮**：`fetch_stock_minute_em` 优先 `tool_fetch_stock_minute`（需已 `scripts/link_china_stock_data_collection.sh`），失败再回退东财分钟接口。
+- **仍含直连、待 Phase 3 分级迁移**：ETF/指数分钟新浪路径、期权/A50/全球指数分支、`import akshare` 全局等 — 详见 [`docs/data_layer_direct_imports_backlog.md`](data_layer_direct_imports_backlog.md)。
 
 ## 配置门闸
 

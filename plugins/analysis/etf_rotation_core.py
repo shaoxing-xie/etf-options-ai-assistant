@@ -1360,7 +1360,8 @@ def run_rotation_pipeline(
     working = _apply_pool_norm(working)
     ranked = sorted(working, key=lambda x: x.score, reverse=True)
     fallback_legacy = False
-    if not ranked and rows:
+    allow_legacy_fallback = bool(de_cfg.get("fallback_legacy_ranking", False))
+    if allow_legacy_fallback and (not ranked) and rows:
         fallback_legacy = True
         ranked = sorted(rows, key=lambda x: x.legacy_score, reverse=True)
 

@@ -6,6 +6,8 @@ data_type 枚举: index_daily | index_minute | etf_daily | etf_minute | option_m
 
 from typing import Dict, Any, Optional, List
 
+from plugins.utils.error_codes import ErrorCode, QualityStatus
+
 _TOOL_SCHEMA_NAME = "tool_read_market_data"
 _TOOL_SCHEMA_VERSION = "1"
 
@@ -34,12 +36,12 @@ def _normalize_single_read_cache_payload(out: Dict[str, Any]) -> Dict[str, Any]:
             "success": False,
             "message": "未知错误",
             "data": None,
-            "error_code": "NO_DATA",
+            "error_code": ErrorCode.NO_DATA,
             "_meta": {
                 "schema_name": _TOOL_SCHEMA_NAME,
                 "schema_version": _TOOL_SCHEMA_VERSION,
-                "quality_status": "error",
-                "error_code": "NO_DATA",
+                "quality_status": QualityStatus.ERROR,
+                "error_code": ErrorCode.NO_DATA,
             },
         }
 
@@ -48,28 +50,28 @@ def _normalize_single_read_cache_payload(out: Dict[str, Any]) -> Dict[str, Any]:
     meta.setdefault("schema_version", _TOOL_SCHEMA_VERSION)
 
     if out.get("success"):
-        meta["quality_status"] = meta.get("quality_status") or "ok"
+        meta["quality_status"] = meta.get("quality_status") or QualityStatus.OK
         out["_meta"] = meta
         return out
 
     msg = str(out.get("message") or "")
     if "缺少" in msg or "不支持的数据类型" in msg:
-        code = "INVALID_PARAMS"
+        code = ErrorCode.INVALID_PARAMS
     elif out.get("source") == "cache_partial":
-        code = "CACHE_MISS"
-        meta["quality_status"] = "degraded"
+        code = ErrorCode.CACHE_MISS
+        meta["quality_status"] = QualityStatus.DEGRADED
         out["error_code"] = code
         meta["error_code"] = code
         out["_meta"] = meta
         return out
     elif "Cache miss" in msg:
-        code = "CACHE_MISS"
+        code = ErrorCode.CACHE_MISS
     elif msg.strip():
-        code = "UPSTREAM_FETCH_FAILED"
+        code = ErrorCode.UPSTREAM_FETCH_FAILED
     else:
-        code = "NO_DATA"
+        code = ErrorCode.NO_DATA
 
-    meta["quality_status"] = "error"
+    meta["quality_status"] = QualityStatus.ERROR
     meta["error_code"] = code
     out["error_code"] = code
     out["_meta"] = meta
@@ -107,12 +109,12 @@ def tool_read_market_data(
             "success": False,
             "message": "请提供 data_type 或 data_types",
             "data": None,
-            "error_code": "INVALID_PARAMS",
+            "error_code": ErrorCode.INVALID_PARAMS,
             "_meta": {
                 "schema_name": _TOOL_SCHEMA_NAME,
                 "schema_version": _TOOL_SCHEMA_VERSION,
-                "quality_status": "error",
-                "error_code": "INVALID_PARAMS",
+                "quality_status": QualityStatus.ERROR,
+                "error_code": ErrorCode.INVALID_PARAMS,
             },
         }
 
@@ -125,12 +127,12 @@ def tool_read_market_data(
                     "success": False,
                     "message": "option 类型需要 contract_code 或 symbol",
                     "data": None,
-                    "error_code": "INVALID_PARAMS",
+                    "error_code": ErrorCode.INVALID_PARAMS,
                     "_meta": {
                         "schema_name": _TOOL_SCHEMA_NAME,
                         "schema_version": _TOOL_SCHEMA_VERSION,
-                        "quality_status": "error",
-                        "error_code": "INVALID_PARAMS",
+                        "quality_status": QualityStatus.ERROR,
+                        "error_code": ErrorCode.INVALID_PARAMS,
                     },
                 }
 
@@ -220,14 +222,14 @@ def tool_read_market_data(
     succ = n_err < n_tot
 
     if overall_ok:
-        qs = "ok"
+        qs = QualityStatus.OK
         ec: Optional[str] = None
     elif partial:
-        qs = "degraded"
-        ec = "UPSTREAM_FETCH_FAILED"
+        qs = QualityStatus.DEGRADED
+        ec = ErrorCode.UPSTREAM_FETCH_FAILED
     else:
-        qs = "error"
-        ec = "NO_DATA"
+        qs = QualityStatus.ERROR
+        ec = ErrorCode.NO_DATA
 
     payload: Dict[str, Any] = {
         "success": succ,

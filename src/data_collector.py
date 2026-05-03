@@ -1089,6 +1089,67 @@ def _normalize_stock_minute_dataframe(df: Optional[pd.DataFrame]) -> Optional[pd
     return out
 
 
+def _try_stock_minute_via_plugin(
+    symbol: str,
+    period: str,
+    lookback_days: int,
+) -> Optional[pd.DataFrame]:
+    """优先调用插件 ``tool_fetch_stock_minute``（需已 link ``plugins/data_collection``）。"""
+    try:
+        from plugins.data_collection.stock.fetch_minute import tool_fetch_stock_minute
+    except ImportError:
+        logger.debug(
+            "fetch_stock_minute_em: tool_fetch_stock_minute 不可用（未 link openclaw-data-china-stock/data_collection）"
+        )
+        return None
+    tz_shanghai = pytz.timezone("Asia/Shanghai")
+    now = datetime.now(tz_shanghai)
+    end_date_str = now.strftime("%Y-%m-%d %H:%M:%S")
+    start = now - timedelta(days=max(lookback_days * 2, 14))
+    start_date_str = start.strftime("%Y-%m-%d %H:%M:%S")
+    try:
+        raw = tool_fetch_stock_minute(
+            stock_code=symbol,
+            period=str(period),
+            start_date=start_date_str,
+            end_date=end_date_str,
+            lookback_days=max(lookback_days * 2, 14),
+            use_cache=True,
+        )
+    except Exception as e:
+        logger.info("fetch_stock_minute_em: tool_fetch_stock_minute 异常: %s", e)
+        return None
+    if not isinstance(raw, dict) or not raw.get("success"):
+        return None
+    data = raw.get("data")
+    if not data:
+        return None
+    block = data[0] if isinstance(data, list) else data
+    if not isinstance(block, dict):
+        return None
+    klines = block.get("klines") or []
+    if not klines:
+        return None
+    rows = []
+    for k in klines:
+        rows.append(
+            {
+                "时间": k.get("time"),
+                "开盘": k.get("open"),
+                "收盘": k.get("close"),
+                "最高": k.get("high"),
+                "最低": k.get("low"),
+                "成交量": k.get("volume"),
+                "成交额": k.get("amount"),
+                "涨跌幅": k.get("change_percent"),
+            }
+        )
+    minute_df = pd.DataFrame(rows)
+    if minute_df.empty:
+        return None
+    return _normalize_stock_minute_dataframe(minute_df)
+
+
 def fetch_stock_minute_em(
     symbol: str,
     period: str = "30",
@@ -1097,11 +1158,19 @@ def fetch_stock_minute_em(
     retry_delay: float = 1.5,
 ) -> Optional[pd.DataFrame]:
     """
-    A 股分钟 K（东方财富 stock_zh_a_hist_min_em），列名对齐指数/ETF 分钟数据。
+    A 股分钟 K：优先插件 ``tool_fetch_stock_minute``，失败则东财 ``stock_zh_a_hist_min_em``。
     """
     symbol = str(symbol).strip()
     if not symbol:
         return None
+    plugin_df = _try_stock_minute_via_plugin(symbol, period, lookback_days)
+    if plugin_df is not None and not plugin_df.empty:
+        logger.info(
+            "fetch_stock_minute_em: tool_fetch_stock_minute 优先路径成功 symbol=%s period=%s",
+            symbol,
+            period,
+        )
+        return plugin_df
     tz_shanghai = pytz.timezone("Asia/Shanghai")
     now = datetime.now(tz_shanghai)
     end_date_str = now.strftime("%Y-%m-%d %H:%M:%S")

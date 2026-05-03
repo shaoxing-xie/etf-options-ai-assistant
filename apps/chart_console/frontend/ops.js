@@ -354,9 +354,53 @@ function renderDataSourceHealthRows(tbodyId, payload) {
       const ok = r?.ok === true;
       const badge = ok ? "ok" : "bad";
       const label = ok ? "ok" : "fail";
-      return `<tr><td>${esc(r?.source_id)}</td><td><span class="badge ${badge}">${esc(label)}</span></td><td class="small">${esc(r?.detail)}</td></tr>`;
+      const ec = r?.error_code ? ` <span class="small">(${esc(r.error_code)})</span>` : "";
+      return `<tr><td>${esc(r?.source_id)}</td><td><span class="badge ${badge}">${esc(label)}</span>${ec}</td><td class="small">${esc(r?.detail)}</td></tr>`;
     })
     .join("");
+}
+
+function renderDataSourceHealthTrend(payload) {
+  const el = qs("opsDataSourcesTrend");
+  if (!el) return;
+  const seriesObj = payload?.series && typeof payload.series === "object" ? payload.series : {};
+  const keys = Object.keys(seriesObj);
+  if (!keys.length) {
+    el.innerHTML = `<p class="small" style="margin:0;">暂无趋势（需多次 write_snapshot 采样生成 rollup）。</p>`;
+    return;
+  }
+  if (typeof window.echarts === "undefined") {
+    el.innerHTML = `<p class="small warn" style="margin:0;">ECharts 未加载，无法绘制趋势。</p>`;
+    return;
+  }
+  el.innerHTML = "";
+  const chart = window.echarts.init(el);
+  const datesSet = new Set();
+  keys.forEach((k) => {
+    (seriesObj[k] || []).forEach((pt) => {
+      if (pt?.date) datesSet.add(pt.date);
+    });
+  });
+  const dates = Array.from(datesSet).sort();
+  const ser = keys.map((name) => ({
+    name,
+    type: "line",
+    smooth: true,
+    showSymbol: dates.length <= 12,
+    data: dates.map((d) => {
+      const arr = seriesObj[name] || [];
+      const hit = arr.find((x) => x.date === d);
+      return hit != null ? Number(hit.success_rate) : null;
+    }),
+  }));
+  chart.setOption({
+    tooltip: { trigger: "axis" },
+    legend: { data: keys, type: "scroll", bottom: 0 },
+    grid: { left: 48, right: 16, top: 28, bottom: keys.length > 4 ? 72 : 48 },
+    xAxis: { type: "category", data: dates },
+    yAxis: { type: "value", min: 0, max: 1, axisLabel: { formatter: (v) => `${Math.round(v * 100)}%` } },
+    series: ser,
+  });
 }
 
 async function loadDataSourceHealth() {
@@ -364,8 +408,13 @@ async function loadDataSourceHealth() {
   const hint = qs("opsDataSourcesHint");
   if (tb) tb.innerHTML = `<tr><td colspan="3" class="small">加载中…</td></tr>`;
   try {
-    // P2 TODO: 当插件仓提供 source_health 历史 jsonl 与只读 API 后，在此增加时间范围与 ECharts 趋势。
-    const r = await jget("/api/semantic/data_source_health");
+    const [r, hr] = await Promise.all([
+      jget("/api/semantic/data_source_health"),
+      jget("/api/semantic/data_source_health_history?days=7"),
+    ]);
+    if (hr && hr.success !== false && hr.data) {
+      renderDataSourceHealthTrend(hr.data);
+    }
     if (r && r.success === false) {
       renderDataSourceHealthRows("opsDataSourcesTbody", {
         sources: [],
@@ -379,7 +428,7 @@ async function loadDataSourceHealth() {
       const gen = inner?._meta?.generated_at;
       const q = inner?._meta?.quality_status;
       if (hint && gen)
-        hint.textContent = `快照 generated_at=${gen} quality=${q || "n/a"}；无数据时请运行插件 tool_probe_source_health(write_snapshot=true)。`;
+        hint.textContent = `快照 generated_at=${gen} quality=${q || "n/a"}；趋势来自 rollup（多次 probe）。`;
     } else {
       renderDataSourceHealthRows("opsDataSourcesTbody", { sources: [], hint: "empty response" });
     }
