@@ -7,9 +7,18 @@ The format is inspired by Keep a Changelog and follows semantic versioning.
 ## [Unreleased]
 
 ### Added
+- **`data/meta/error_codes.yaml`**：稳定 `error_code` 与 `quality_status` 枚举说明，供工具返回与契约测试对齐。
+- **`config/feature_flags.json.example`**：说明 `legacy_write_enabled` 显式开关；未提供配置文件时默认不写 legacy 目录。
+- **`tests/test_plugin_tool_contract_shapes.py`**：契约形状单测（`error_codes.yaml` + 指数历史 fixture）。
+- **`docs/data-source-contract.md`**：数据源插件优先与失败体字段说明。
+- **`data/meta/schema_registry.yaml`** / **`task_data_map.yaml`**：登记 `data_source_health_semantic_v1` 与 `chart-console-data-source-health`（`/api/semantic/data_source_health`）。
+- **`data/ops/README.md`**：P2 健康历史 jsonl 由插件仓写入、助手只读的占位说明。
 - **`tool_backtest_limit_up_pullback`**: optional `sector_keywords` (e.g. 军工 / 国防) to filter backtest trades by `board_name` substring; trades now include `sector`; ops doc §3.5.1 describes DingTalk-safe flow (tool-first, no spurious web search).
 
 ### Changed
+- **`plugins/merged/read_market_data.py`（`tool_read_market_data`）**：统一补齐 **`_meta.quality_status`**；失败时 **`error_code`**；多类型部分失败为 **`degraded`**。详见 `docs/data-source-contract.md`。
+- **`src/data_collector.py`**：`fetch_index_daily_em` / `fetch_etf_daily_em` 在日线场景 **优先** 调用 `tool_fetch_index_data` / `tool_fetch_etf_data`（`historical`），失败再回退原 Tushare/ak 链；共享缓存合并/保存辅助函数抽取。
+- **`src/feature_flags.py`**：`legacy_write_enabled` 在未配置时的默认值由 `true` 改为 **`false`**（破坏性：依赖「无配置文件即全开」的部署需补 `config/feature_flags.json`；本仓库已提交的配置仍含 `legacy_write_enabled: true` 则行为不变）。
 - **OpenClaw 回测路由（A/B + cron 入口）**：`skills/ota-backtesting-integration-brief/SKILL.md` — **分支 A 默认单条 `exec`**，禁止先串 MCP 拉数+指标；文首 **速判表**、分支 A **成功后禁止再拉数核实**；仅 **分支 B** 深度对账走数据链。`workflows/backtesting_research_on_demand.yaml` 同步（**不确定默认 A**、成功后禁补链）。`config/snippets/openclaw_agents_ota_skills.json` 将 **`ota_backtesting_integration_brief` + `backtesting-trading-strategies` 排在 `ota_technical_indicators_brief` 之前**。`config/agents/cron_agents.yaml` 为 **`etf_cron_research_agent`** 补齐上述两 Skill（`requiredSkills` 全量替换模板，此前工作流入口可能读不到规程）。`docs/ops/回测使用指导-自动任务与日常交互.md` 文首补充 cron Agent 与 `render_agents_config.py`。
 - **`docs/ops/回测使用指导-自动任务与日常交互.md`**：全文改为仅指导 `backtesting-trading-strategies` 脚本与 exec/运维；删除涨停回马枪工具（`tool_backtest_limit_up_*`）相关章节与提示词；原脚本实测并入 **§7**，`SKILL.md` 交叉引用更新为 §7；新增 **§5** 钉钉/OpenClaw 交互（通道约束、自然语言示例、`exec` 模板、回群结构与强约束话术）。
 - **Backtesting skill (`skills/backtesting-trading-strategies`)**: CN six-digit symbols default to the repo `plugins/data_collection` ETF pipeline (aligned with `openclaw-data-china-stock`) instead of Yahoo; added `scripts/china_stock_loader.py`, `scripts/skill_settings.py` (YAML + `BACKTEST_SKILL_SETTINGS`, precedence CLI → env → `data.provider`), wired `data.cache_dir` / `reporting.output_dir` / `backtest.*` defaults from `config/settings.yaml`; `--data-source` / `--source` / optional `coingecko`; `scripts/run_backtest_trading_strategies.py` for single-command `exec`. Strategy-aware minimum bar check via `min_bars_for_strategy()`; `attrs['price_loader']` for audit logs.

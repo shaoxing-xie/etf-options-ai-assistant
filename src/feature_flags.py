@@ -24,7 +24,8 @@ def is_enabled(key: str, default: bool = False) -> bool:
 
 def legacy_write_allowed(task_id: str) -> bool:
     flags = _load()
-    if not bool(flags.get("legacy_write_enabled", True)):
+    # 默认关闭 legacy 写：需显式在 config/feature_flags.json 设置 legacy_write_enabled: true
+    if not bool(flags.get("legacy_write_enabled", False)):
         return False
     disabled = flags.get("legacy_write_disabled_tasks") or []
     return task_id not in disabled

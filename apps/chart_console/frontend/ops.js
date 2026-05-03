@@ -364,6 +364,7 @@ async function loadDataSourceHealth() {
   const hint = qs("opsDataSourcesHint");
   if (tb) tb.innerHTML = `<tr><td colspan="3" class="small">加载中…</td></tr>`;
   try {
+    // P2 TODO: 当插件仓提供 source_health 历史 jsonl 与只读 API 后，在此增加时间范围与 ECharts 趋势。
     const r = await jget("/api/semantic/data_source_health");
     if (r && r.success === false) {
       renderDataSourceHealthRows("opsDataSourcesTbody", {

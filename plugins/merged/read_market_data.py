@@ -6,6 +6,9 @@ data_type 枚举: index_daily | index_minute | etf_daily | etf_minute | option_m
 
 from typing import Dict, Any, Optional, List
 
+_TOOL_SCHEMA_NAME = "tool_read_market_data"
+_TOOL_SCHEMA_VERSION = "1"
+
 
 def _since_yyyymmdd(since: Optional[str]) -> Optional[str]:
     if since is None or str(since).strip() == "":
@@ -22,6 +25,55 @@ def _apply_since_floor(since_norm: Optional[str], start: Optional[str]) -> Optio
     if not start:
         return since_norm
     return start if start >= since_norm else since_norm
+
+
+def _normalize_single_read_cache_payload(out: Dict[str, Any]) -> Dict[str, Any]:
+    """为 read_cache_data 返回体补齐契约字段：_meta.quality_status、失败时 error_code。"""
+    if not isinstance(out, dict):
+        return {
+            "success": False,
+            "message": "未知错误",
+            "data": None,
+            "error_code": "NO_DATA",
+            "_meta": {
+                "schema_name": _TOOL_SCHEMA_NAME,
+                "schema_version": _TOOL_SCHEMA_VERSION,
+                "quality_status": "error",
+                "error_code": "NO_DATA",
+            },
+        }
+
+    meta: Dict[str, Any] = dict(out.get("_meta") or {})
+    meta.setdefault("schema_name", _TOOL_SCHEMA_NAME)
+    meta.setdefault("schema_version", _TOOL_SCHEMA_VERSION)
+
+    if out.get("success"):
+        meta["quality_status"] = meta.get("quality_status") or "ok"
+        out["_meta"] = meta
+        return out
+
+    msg = str(out.get("message") or "")
+    if "缺少" in msg or "不支持的数据类型" in msg:
+        code = "INVALID_PARAMS"
+    elif out.get("source") == "cache_partial":
+        code = "CACHE_MISS"
+        meta["quality_status"] = "degraded"
+        out["error_code"] = code
+        meta["error_code"] = code
+        out["_meta"] = meta
+        return out
+    elif "Cache miss" in msg:
+        code = "CACHE_MISS"
+    elif msg.strip():
+        code = "UPSTREAM_FETCH_FAILED"
+    else:
+        code = "NO_DATA"
+
+    meta["quality_status"] = "error"
+    meta["error_code"] = code
+    out["error_code"] = code
+    out["_meta"] = meta
+    return out
 
 
 def tool_read_market_data(
@@ -54,7 +106,14 @@ def tool_read_market_data(
         return {
             "success": False,
             "message": "请提供 data_type 或 data_types",
-            "data": None
+            "data": None,
+            "error_code": "INVALID_PARAMS",
+            "_meta": {
+                "schema_name": _TOOL_SCHEMA_NAME,
+                "schema_version": _TOOL_SCHEMA_VERSION,
+                "quality_status": "error",
+                "error_code": "INVALID_PARAMS",
+            },
         }
 
     # 期权类型用 contract_code，其余用 symbol
@@ -62,7 +121,18 @@ def tool_read_market_data(
     if not use_symbol and not (data_type in ("index_daily", "index_minute", "etf_daily", "etf_minute") and symbol):
         for t in types_to_fetch:
             if t in ("option_minute", "option_greeks") and not contract_code and not symbol:
-                return {"success": False, "message": "option 类型需要 contract_code 或 symbol", "data": None}
+                return {
+                    "success": False,
+                    "message": "option 类型需要 contract_code 或 symbol",
+                    "data": None,
+                    "error_code": "INVALID_PARAMS",
+                    "_meta": {
+                        "schema_name": _TOOL_SCHEMA_NAME,
+                        "schema_version": _TOOL_SCHEMA_VERSION,
+                        "quality_status": "error",
+                        "error_code": "INVALID_PARAMS",
+                    },
+                }
 
     results = {}
     errors = []
@@ -135,14 +205,41 @@ def tool_read_market_data(
             errors.append(f"{dt}: {out.get('message', '')}")
 
     if len(types_to_fetch) == 1:
-        # 单类型：返回与原有工具一致的结构
+        # 单类型：返回与原有工具一致的结构 + 契约字段
         key = types_to_fetch[0]
         out = results.get(key, {})
-        return out if out else {"success": False, "message": errors[0] if errors else "未知错误", "data": None}
+        if not out:
+            out = {"success": False, "message": errors[0] if errors else "未知错误", "data": None}
+        return _normalize_single_read_cache_payload(out)
 
     # 多类型：data 按类型分 key
-    return {
-        "success": len(errors) < len(types_to_fetch),
+    n_err = len(errors)
+    n_tot = len(types_to_fetch)
+    overall_ok = n_err == 0
+    partial = 0 < n_err < n_tot
+    succ = n_err < n_tot
+
+    if overall_ok:
+        qs = "ok"
+        ec: Optional[str] = None
+    elif partial:
+        qs = "degraded"
+        ec = "UPSTREAM_FETCH_FAILED"
+    else:
+        qs = "error"
+        ec = "NO_DATA"
+
+    payload: Dict[str, Any] = {
+        "success": succ,
         "message": "多类型读取完成" if not errors else "; ".join(errors),
-        "data": results
+        "data": results,
+        "_meta": {
+            "schema_name": _TOOL_SCHEMA_NAME,
+            "schema_version": _TOOL_SCHEMA_VERSION,
+            "quality_status": qs,
+        },
     }
+    if ec:
+        payload["error_code"] = ec
+        payload["_meta"]["error_code"] = ec
+    return payload

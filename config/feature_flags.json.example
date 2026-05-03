@@ -1,0 +1,5 @@
+{
+  "_comment": "复制为 config/feature_flags.json 并按环境调整。未创建该文件时 legacy_write_enabled 默认为 false（不写旧目录）。",
+  "legacy_write_enabled": false,
+  "legacy_write_disabled_tasks": []
+}

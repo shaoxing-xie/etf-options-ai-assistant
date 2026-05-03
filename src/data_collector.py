@@ -9,6 +9,8 @@
   `scripts/link_china_stock_data_collection.sh` 将插件侧 `plugins/data_collection` 链到本仓库。
 - **本文件与插件中的 `src/data_collector.py` 并非逐行相同**：本仓库含期权/多标的分钟线、`fetch_stock_minute_em`、
   参数化指数分钟等；插件版可能含独立的重试抖动、缓存读取策略等。合并插件上游时请按函数审阅，勿整体覆盖。
+- **P4 演进**：新增/改造采集路径时优先 **`plugins.data_collection.*` / `plugins.merged.*` 工具函数**（与 OpenClaw 登记工具同源），
+  逐步收敛直连 `ak.*` / `requests`；本节已部分落地（A50 现货、股票分钟现价兜底等）。
 """
 
 import akshare as ak
@@ -25,6 +27,232 @@ from src.logger_config import get_module_logger, log_function_call, log_function
 from src.config_loader import load_system_config
 
 logger = get_module_logger(__name__)
+
+
+def _a50_spot_dataframe_from_plugin(symbol: str) -> Optional[pd.DataFrame]:
+    """A50 现货：优先 ``tool_fetch_a50_data``（插件内已含东财链），避免助手重复直连 ``futures_global_spot_em``。"""
+    if str(symbol or "").strip() != "A50期指":
+        return None
+    try:
+        from plugins.data_collection.futures.fetch_a50 import tool_fetch_a50_data  # type: ignore
+    except Exception:
+        return None
+    try:
+        r = tool_fetch_a50_data(symbol="A50期指", data_type="spot", use_cache=True)
+    except Exception:
+        return None
+    if not isinstance(r, dict) or not r.get("success"):
+        return None
+    spot = r.get("spot_data")
+    if not isinstance(spot, dict):
+        return None
+    try:
+        return pd.DataFrame([dict(spot)])
+    except Exception:
+        return None
+
+
+def _stock_last_close_from_minute_tool(stock_code: str) -> Optional[float]:
+    """股票 1 分钟最近收盘：经 ``tool_fetch_stock_minute``，替代助手内 ``ak.stock_zh_a_minute`` 兜底。"""
+    try:
+        from plugins.data_collection.stock.fetch_minute import tool_fetch_stock_minute  # type: ignore
+    except Exception:
+        return None
+    code = str(stock_code or "").strip()
+    if not code:
+        return None
+    try:
+        mr = tool_fetch_stock_minute(
+            stock_code=code,
+            period="1",
+            lookback_days=5,
+            mode="test",
+            use_cache=True,
+        )
+    except Exception:
+        return None
+    if not isinstance(mr, dict) or not mr.get("success"):
+        return None
+    data = mr.get("data")
+    klines: List[Dict[str, Any]] = []
+    if isinstance(data, dict) and isinstance(data.get("klines"), list):
+        klines = cast(List[Dict[str, Any]], data["klines"])
+    elif isinstance(data, list) and data and isinstance(data[0], dict):
+        kl = data[0].get("klines")
+        if isinstance(kl, list):
+            klines = cast(List[Dict[str, Any]], kl)
+    if not klines:
+        return None
+    last = klines[-1]
+    if not isinstance(last, dict):
+        return None
+    for key in ("close", "收盘"):
+        v = last.get(key)
+        if v is None:
+            continue
+        try:
+            cp = float(v)
+            if cp > 0:
+                return cp
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
+def _yyyymmdd_to_yyyy_mm_dd(d: Optional[str]) -> Optional[str]:
+    if not d or not str(d).strip():
+        return None
+    s = str(d).strip()
+    if len(s) == 8 and s.isdigit():
+        return f"{s[:4]}-{s[4:6]}-{s[6:8]}"
+    if len(s) == 10 and s.count("-") == 2:
+        return s
+    return s
+
+
+def _dataframe_from_index_historical_tool(tool_payload: Dict[str, Any]) -> Optional[pd.DataFrame]:
+    """将 ``tool_fetch_index_data(..., data_type='historical')`` 单指数结果转为与历史 ``fetch_index_daily_em`` 接近的 DataFrame。"""
+    if not isinstance(tool_payload, dict) or not tool_payload.get("success"):
+        return None
+    data = tool_payload.get("data")
+    if isinstance(data, list):
+        if not data:
+            return None
+        data = data[0]
+    if not isinstance(data, dict):
+        return None
+    klines = data.get("klines")
+    if not isinstance(klines, list) or not klines:
+        return None
+    rows: List[Dict[str, Any]] = []
+    for k in klines:
+        if not isinstance(k, dict):
+            continue
+        rows.append(
+            {
+                "日期": str(k.get("date") or ""),
+                "开盘": k.get("open"),
+                "最高": k.get("high"),
+                "最低": k.get("low"),
+                "收盘": k.get("close"),
+                "成交量": k.get("volume"),
+                "成交额": k.get("amount"),
+                "涨跌幅": k.get("change_percent"),
+            }
+        )
+    if not rows:
+        return None
+    return pd.DataFrame(rows)
+
+
+def _dataframe_from_etf_historical_tool(tool_payload: Dict[str, Any]) -> Optional[pd.DataFrame]:
+    """将 ``tool_fetch_etf_data(..., data_type='historical')`` 单 ETF 结果转为 DataFrame。"""
+    if not isinstance(tool_payload, dict) or not tool_payload.get("success"):
+        return None
+    data = tool_payload.get("data")
+    if isinstance(data, list):
+        if not data:
+            return None
+        data = data[0]
+    if not isinstance(data, dict):
+        return None
+    klines = data.get("klines")
+    if not isinstance(klines, list) or not klines:
+        return None
+    rows: List[Dict[str, Any]] = []
+    for k in klines:
+        if not isinstance(k, dict):
+            continue
+        rows.append(
+            {
+                "日期": str(k.get("date") or ""),
+                "开盘": k.get("open"),
+                "最高": k.get("high"),
+                "最低": k.get("low"),
+                "收盘": k.get("close"),
+                "成交量": k.get("volume"),
+                "成交额": k.get("amount"),
+                "涨跌幅": k.get("change_percent"),
+            }
+        )
+    if not rows:
+        return None
+    return pd.DataFrame(rows)
+
+
+def _merge_and_save_index_daily_cache(
+    df: pd.DataFrame,
+    symbol: str,
+    *,
+    config_for_cache: Dict[str, Any],
+    cached_partial_df: Optional[pd.DataFrame],
+) -> pd.DataFrame:
+    out = df
+    if _is_cache_enabled(config_for_cache) and cached_partial_df is not None:
+        try:
+            from src.data_cache import merge_cached_and_fetched_data
+
+            date_col = None
+            for col in ("日期", "date", "日期时间", "datetime"):
+                if col in out.columns:
+                    date_col = col
+                    break
+            if date_col:
+                cached_count = len(cached_partial_df)
+                out = cast(pd.DataFrame, merge_cached_and_fetched_data(cached_partial_df, out, date_col))
+                logger.info(
+                    "合并缓存数据: 缓存 %s 条 + 工具链新增后共 %s 条",
+                    cached_count,
+                    len(out),
+                )
+        except Exception as e:
+            logger.debug("合并缓存数据失败（不影响主流程）: %s", e)
+    if _is_cache_enabled(config_for_cache):
+        try:
+            from src.data_cache import save_index_daily_cache
+
+            save_index_daily_cache(symbol, out, config=config_for_cache)
+        except Exception as e:
+            logger.debug("保存缓存失败（不影响主流程）: %s", e)
+    return out
+
+
+def _merge_and_save_etf_daily_cache(
+    df: pd.DataFrame,
+    symbol: str,
+    *,
+    config_for_cache: Dict[str, Any],
+    cached_partial_df: Optional[pd.DataFrame],
+) -> pd.DataFrame:
+    out = df
+    if _is_cache_enabled(config_for_cache) and cached_partial_df is not None:
+        try:
+            from src.data_cache import merge_cached_and_fetched_data
+
+            date_col = None
+            for col in ("日期", "date", "日期时间", "datetime"):
+                if col in out.columns:
+                    date_col = col
+                    break
+            if date_col:
+                cached_count = len(cached_partial_df)
+                out = cast(pd.DataFrame, merge_cached_and_fetched_data(cached_partial_df, out, date_col))
+                logger.info(
+                    "ETF 合并缓存数据: 缓存 %s 条 + 工具链新增后共 %s 条",
+                    cached_count,
+                    len(out),
+                )
+        except Exception as e:
+            logger.debug("ETF 合并缓存数据失败（不影响主流程）: %s", e)
+    if _is_cache_enabled(config_for_cache):
+        try:
+            from src.data_cache import save_etf_daily_cache
+
+            save_etf_daily_cache(symbol, out, config=config_for_cache)
+        except Exception as e:
+            logger.debug("ETF 保存缓存失败（不影响主流程）: %s", e)
+    return out
+
 
 # =========================
 # 数据源熔断与健康状态管理
@@ -1013,18 +1241,9 @@ def get_stock_current_price(symbol: str) -> Optional[float]:
         except Exception:
             pass
 
-        if clean.startswith(("60", "688")):
-            pref = "sh"
-        else:
-            pref = "sz"
-        try:
-            minute_df = ak.stock_zh_a_minute(symbol=f"{pref}{clean}", period="1", adjust="qfq")
-            if minute_df is not None and not minute_df.empty and "close" in minute_df.columns:
-                cp = float(minute_df["close"].iloc[-1])
-                if cp > 0:
-                    return cp
-        except Exception:
-            pass
+        cp_min = _stock_last_close_from_minute_tool(clean)
+        if cp_min is not None and cp_min > 0:
+            return cp_min
 
         end_d = datetime.now().strftime("%Y%m%d")
         start_d = (datetime.now().replace(day=1)).strftime("%Y%m%d")
@@ -3199,7 +3418,40 @@ def fetch_index_daily_em(
         except Exception as e:
             logger.debug(f"缓存检查失败，继续从接口获取: {e}")
     # ========== 缓存逻辑结束 ==========
-    
+
+    # 方法0：OpenClaw 合并工具 ``tool_fetch_index_data``（historical）与插件采集链同源，优先于直连 Tushare/ak
+    if period == "daily":
+        try:
+            from plugins.merged.fetch_index_data import tool_fetch_index_data
+
+            sd_iso = _yyyymmdd_to_yyyy_mm_dd(start_date)
+            ed_iso = _yyyymmdd_to_yyyy_mm_dd(end_date)
+            if sd_iso and ed_iso:
+                tr = tool_fetch_index_data(
+                    data_type="historical",
+                    index_code=str(symbol).strip(),
+                    period="daily",
+                    start_date=sd_iso,
+                    end_date=ed_iso,
+                )
+                tool_df = _dataframe_from_index_historical_tool(tr)
+                if tool_df is not None and not tool_df.empty:
+                    tool_df = _merge_and_save_index_daily_cache(
+                        tool_df,
+                        symbol,
+                        config_for_cache=config_for_cache,
+                        cached_partial_df=cached_partial_df,
+                    )
+                    log_function_result(
+                        logger,
+                        "fetch_index_daily_em",
+                        f"工具链 historical 成功，获取到{len(tool_df)}条数据",
+                        0,
+                    )
+                    return tool_df
+        except Exception as e:
+            logger.info("fetch_index_daily_em: tool_fetch_index_data 优先路径未返回数据，回退 Tushare/ak: %s", e)
+
     # 方法1：优先使用 Tushare（主数据源）
     last_error = None
     try:
@@ -3577,8 +3829,19 @@ def fetch_global_index_spot_em(
         pd.DataFrame: 全球指数实时数据，如果失败返回None
     """
     log_function_call(logger, "fetch_global_index_spot_em", symbol=symbol)
-    
-    # 重试机制
+
+    if str(symbol or "").strip() == "A50期指":
+        df_pl = _a50_spot_dataframe_from_plugin(symbol)
+        if df_pl is not None and not df_pl.empty:
+            log_function_result(
+                logger,
+                "fetch_global_index_spot_em",
+                "A50 现货（tool_fetch_a50_data）",
+                0.0,
+            )
+            return df_pl
+
+    # 重试机制（非 A50 或插件未命中时仍走原 AkShare 东财表）
     last_error = None
     for attempt in range(max_retries):
         try:
@@ -3665,6 +3928,19 @@ def _find_a50_futures_code() -> Optional[str]:
     """
     try:
         logger.debug("查找A50期指代码...")
+        try:
+            from plugins.data_collection.futures.fetch_a50 import tool_fetch_a50_data  # type: ignore
+
+            r = tool_fetch_a50_data(symbol="A50期指", data_type="spot", use_cache=True)
+            if isinstance(r, dict) and r.get("success"):
+                spot = r.get("spot_data")
+                if isinstance(spot, dict):
+                    c = spot.get("code")
+                    if c:
+                        return str(c).strip()
+        except Exception:
+            pass
+
         spot_df = ak.futures_global_spot_em()
         
         if spot_df is None or spot_df.empty:
@@ -4646,6 +4922,39 @@ def fetch_etf_daily_em(
         except Exception as e:
             logger.debug(f"缓存检查失败，继续从接口获取: {e}")
     # ========== 缓存逻辑结束 ==========
+
+    # 方法0：``tool_fetch_etf_data`` historical 与插件 ETF 采集链同源，优先于直连 Tushare/ak
+    if period == "daily":
+        try:
+            from plugins.merged.fetch_etf_data import tool_fetch_etf_data
+
+            sd_iso = _yyyymmdd_to_yyyy_mm_dd(start_date)
+            ed_iso = _yyyymmdd_to_yyyy_mm_dd(end_date)
+            if sd_iso and ed_iso:
+                tr = tool_fetch_etf_data(
+                    data_type="historical",
+                    etf_code=str(symbol).strip(),
+                    period="daily",
+                    start_date=sd_iso,
+                    end_date=ed_iso,
+                )
+                tool_df = _dataframe_from_etf_historical_tool(tr)
+                if tool_df is not None and not tool_df.empty:
+                    tool_df = _merge_and_save_etf_daily_cache(
+                        tool_df,
+                        symbol,
+                        config_for_cache=config_for_cache,
+                        cached_partial_df=cached_partial_df,
+                    )
+                    log_function_result(
+                        logger,
+                        "fetch_etf_daily_em",
+                        f"工具链 historical 成功，获取到{len(tool_df)}条数据",
+                        0,
+                    )
+                    return tool_df
+        except Exception as e:
+            logger.info("fetch_etf_daily_em: tool_fetch_etf_data 优先路径未返回数据，回退 Tushare/ak: %s", e)
 
     # 方法1：优先使用Tushare（主数据源）
     last_error = None

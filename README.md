@@ -134,6 +134,8 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
+**数据源插件**：行情采集以 OpenClaw 插件 **`openclaw-data-china-stock`**（及本仓库 `plugins/data_collection`、`plugins/merged` 对齐工具）为准；契约与错误码见 [`docs/data-source-contract.md`](docs/data-source-contract.md)、[`data/meta/error_codes.yaml`](data/meta/error_codes.yaml)。
+
 ### 2. 配置环境变量
 
 - 复制并编辑环境变量（只填你实际需要的项）：

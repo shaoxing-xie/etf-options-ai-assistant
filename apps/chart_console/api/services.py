@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 import time
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -59,6 +60,10 @@ MARKET_DATA_PATH = ROOT / "config" / "domains" / "market_data.yaml"
 ANALYTICS_PATH = ROOT / "config" / "domains" / "analytics.yaml"
 ROTATION_CONFIG_PATH = ROOT / "config" / "rotation_config.yaml"
 FEATURE_FLAGS_PATH = ROOT / "config" / "feature_flags.json"
+
+# 避免多标签/刷新轮询在语义文件尚未落盘时并发触发多次全量 yfinance 链（限流 + stderr 噪音）。
+_GLOBAL_MARKET_SNAPSHOT_BUILD_LOCK = threading.Lock()
+_QDII_FUTURES_SNAPSHOT_BUILD_LOCK = threading.Lock()
 
 
 class ApiServices:
@@ -408,8 +413,10 @@ class ApiServices:
         path = ROOT / "data" / "semantic" / "global_market_snapshot" / f"{td}.json"
         try:
             if refresh or not path.is_file():
-                doc = build_global_market_snapshot(td)
-                persist_snapshot(ROOT, "global_market_snapshot", td, doc)
+                with _GLOBAL_MARKET_SNAPSHOT_BUILD_LOCK:
+                    if refresh or not path.is_file():
+                        doc = build_global_market_snapshot(td)
+                        persist_snapshot(ROOT, "global_market_snapshot", td, doc)
         except Exception as e:
             return {"success": False, "message": f"build_failed:{e}", "data": self._semantic.global_market_snapshot(td)}, 500
         data = self._semantic.global_market_snapshot(td)
@@ -426,9 +433,11 @@ class ApiServices:
         path = ROOT / "data" / "semantic" / "qdii_futures_snapshot" / f"{td}.json"
         try:
             if refresh or not path.is_file():
-                doc = build_qdii_futures_snapshot(td)
-                persist_snapshot(ROOT, "qdii_futures_snapshot", td, doc)
-                persist_qdii_futures_l3_events(ROOT, td, doc)
+                with _QDII_FUTURES_SNAPSHOT_BUILD_LOCK:
+                    if refresh or not path.is_file():
+                        doc = build_qdii_futures_snapshot(td)
+                        persist_snapshot(ROOT, "qdii_futures_snapshot", td, doc)
+                        persist_qdii_futures_l3_events(ROOT, td, doc)
         except Exception as e:
             return {"success": False, "message": f"build_failed:{e}", "data": self._semantic.qdii_futures_snapshot(td)}, 500
         data = self._semantic.qdii_futures_snapshot(td)

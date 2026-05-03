@@ -1,0 +1,26 @@
+---
+description: 助手侧行情/采集数据必须经 openclaw-data-china-stock 工具链（与 tool_runner 同源 merged/data_collection），禁止新增直连 yfinance/新浪 HTTP 等旁路
+globs:
+  - apps/chart_console/**/*.py
+  - src/data_cache_collection_core.py
+  - plugins/merged/**/*.py
+  - plugins/data_access/**/*.py
+  - plugins/analysis/**/*.py
+---
+
+# 助手侧数据采集：经插件工具
+
+## 硬约束
+
+- **新增或修改**行情、指数、ETF、期货、全球快照等 **L1/L2 拉取逻辑** 时，必须通过 **`plugins.merged.*` / `plugins.data_collection.*`** 中与 `config/tools_manifest.yaml`（插件仓）登记一致的 **`tool_fetch_*` / `tool_read_*` 实现**，由插件内再路由 yfinance/FMP/新浪等。
+- **禁止**在助手仓库上述 glob 内 **新写** `import yfinance`、`requests.get` 访问行情接口、或复制插件已提供的采集逻辑。
+- **代理与限流**：仍使用 `config/domains/market_data.yaml` 的 `network.proxy.per_source`；由插件 `proxy_context_for_source` 消费；助手进程内不要假设「直连 Yahoo 即可」。
+
+## 已知技术债（迁移中，非新代码模板）
+
+- `src/data_collector.py` 仍含大量历史直连；**已优先插件化的片段**：A50 现货 `fetch_global_index_spot_em` / `_find_a50_futures_code`、`get_stock_current_price` 的分钟兜底。其余（指数日线 Tushare 后备 ak、新浪 HTTP 分钟等）按任务继续收敛。Cron 采集以 `scripts/run_data_cache_job_cli.py` + 插件工具为准。
+
+## 自检
+
+- [ ] 本改动是否只通过插件已有工具或在其上增加编排？
+- [ ] 若需新数据源，是否在 **插件仓** 增加工具后再由助手调用？

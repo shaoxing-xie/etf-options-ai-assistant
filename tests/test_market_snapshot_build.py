@@ -37,7 +37,7 @@ def test_meta_block_has_required_keys():
 
 def test_qdii_snapshot_structure(monkeypatch):
     def fake_yf(*_a, **_k):
-        return (100.0, 1.0, 1.0, "yfinance")
+        return (100.0, 1.0, 1.0, "global_hist_sina")
 
     monkeypatch.setattr(
         "apps.chart_console.api.market_snapshot_build._yf_hist_metrics",
@@ -53,7 +53,7 @@ def test_qdii_snapshot_structure(monkeypatch):
 def test_persist_writes_file(tmp_path, monkeypatch):
     monkeypatch.setattr(
         "apps.chart_console.api.market_snapshot_build._yf_hist_metrics",
-        lambda *a, **k: (1.0, 0.1, 1.0, "yfinance"),
+        lambda *a, **k: (1.0, 0.1, 1.0, "global_hist_sina"),
     )
     doc = build_qdii_futures_snapshot("2026-04-25")
     p = persist_snapshot(tmp_path, "qdii_futures_snapshot", "2026-04-25", doc)
@@ -68,10 +68,10 @@ def test_future_item_does_not_use_index_fallback(monkeypatch):
     def fake_yf(sym, _cfg, **_kwargs):
         hist_calls.append(sym)
         if sym == "NOFUT":
-            return None, None, None, "yfinance_empty"
+            return None, None, None, "global_hist_empty"
         if sym == "^IDX":
-            return 100.0, 1.0, 1.0, "yfinance"
-        return None, None, None, "yfinance_empty"
+            return 100.0, 1.0, 1.0, "global_hist_sina"
+        return None, None, None, "global_hist_empty"
 
     def fake_intraday(sym, _cfg, **_kwargs):
         intraday_calls.append(sym)
@@ -154,54 +154,35 @@ def test_cn_index_proxy_fallback_for_kc50_and_chinext50(monkeypatch):
     assert cyb50["source_raw"].endswith("cn_proxy_etf:159915")
 
 
-def test_yf_hist_metrics_nan_is_treated_as_missing(monkeypatch):
-    import math
+def test_yf_hist_metrics_plugin_hist_empty(monkeypatch):
+    def fake_hist(*_a, **_k):
+        return {"success": True, "data": []}
 
-    class _FakeHist:
-        empty = False
-
-        def __init__(self, closes):
-            self._closes = closes
-            self.index = [1] * len(closes)
-
-        def __getitem__(self, _k):
-            class _Series:
-                def __init__(self, closes):
-                    self._c = closes
-
-                @property
-                def iloc(self):
-                    class _ILoc:
-                        def __init__(self, closes):
-                            self._c = closes
-
-                        def __getitem__(self, idx):
-                            return self._c[idx]
-
-                    return _ILoc(self._c)
-
-            return _Series(self._closes)
-
-    class _FakeTicker:
-        def __init__(self, _s):
-            pass
-
-        def history(self, **_k):
-            return _FakeHist([1.0, math.nan])
-
-    class _FakeYF:
-        Ticker = _FakeTicker
-
-    monkeypatch.setitem(__import__("sys").modules, "yfinance", _FakeYF())
     monkeypatch.setattr(
-        "plugins.utils.proxy_env.proxy_env_for_source",
-        lambda *_a, **_k: __import__("contextlib").nullcontext(),
+        "plugins.data_collection.index.fetch_global_hist_sina.tool_fetch_global_index_hist_sina",
+        fake_hist,
     )
     from apps.chart_console.api.market_snapshot_build import _yf_hist_metrics
 
-    last, ca, cp, tag = _yf_hist_metrics("X", {})
+    last, ca, cp, tag = _yf_hist_metrics("^DJI", {})
     assert last is None
-    assert tag == "yfinance_nan"
+    assert tag == "global_hist_empty"
+
+
+def test_yf_hist_metrics_plugin_hist_ok(monkeypatch):
+    def fake_hist(*_a, **_k):
+        return {"success": True, "data": [{"close": 100.0}, {"close": 101.0}]}
+
+    monkeypatch.setattr(
+        "plugins.data_collection.index.fetch_global_hist_sina.tool_fetch_global_index_hist_sina",
+        fake_hist,
+    )
+    from apps.chart_console.api.market_snapshot_build import _yf_hist_metrics
+
+    last, ca, cp, tag = _yf_hist_metrics("^DJI", {})
+    assert last == 101.0
+    assert ca is not None
+    assert tag == "global_hist_sina"
 
 
 def test_persist_l3_jsonl_append(tmp_path, monkeypatch):
@@ -209,7 +190,7 @@ def test_persist_l3_jsonl_append(tmp_path, monkeypatch):
 
     monkeypatch.setattr(
         "apps.chart_console.api.market_snapshot_build._yf_hist_metrics",
-        lambda *a, **k: (1.0, 0.1, 1.0, "yfinance"),
+        lambda *a, **k: (1.0, 0.1, 1.0, "global_hist_sina"),
     )
     doc = build_qdii_futures_snapshot("2026-04-25")
     p1 = persist_qdii_futures_l3_events(tmp_path, "2026-04-25", doc)
@@ -302,7 +283,7 @@ def test_global_snapshot_hscei_alias_mapping_without_cross_substitute(monkeypatc
     apac = next(g for g in doc["groups"] if g["group_id"] == "global_index")["subgroups"][0]["items"]
     hscei = next(x for x in apac if x["instrument_id"] == "global.apac.HSCEI")
     assert hscei["last_price"] == 9300.0
-    assert hscei["instrument_code"] == "^HSCEI"
+    assert hscei["instrument_code"] == "^HSCE"
     assert hscei["source_id"] == "yfinance"
 
 
@@ -365,4 +346,4 @@ def test_global_snapshot_missing_keeps_error_no_snapshot_fallback(monkeypatch):
     hscei = next(x for x in apac if x["instrument_id"] == "global.apac.HSCEI")
     assert hscei["last_price"] is None
     assert hscei["quality_status"] == "error"
-    assert "global_spot_missing:^HSCEI|^HSCE|2828.HK" == hscei["degraded_reason"]
+    assert "global_spot_missing:^HSCE|2828.HK" == hscei["degraded_reason"]

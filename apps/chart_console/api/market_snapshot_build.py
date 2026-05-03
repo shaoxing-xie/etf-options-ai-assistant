@@ -36,7 +36,7 @@ ROOT = _repo_root()
 _EM_FUTURES_CACHE: dict[str, Any] = {"ts": 0.0, "rows": None}
 _SOURCE_LAST_CALL_TS: dict[str, float] = {}
 _YF_MIN_INTERVAL_SEC = 0.6
-_GLOBAL_SPOT_MIN_INTERVAL_SEC = 0.8
+_GLOBAL_SPOT_MIN_INTERVAL_SEC = 1.0
 _PACE_LOCK = threading.Lock()
 _A50_ITEM_CACHE: dict[str, Any] = {"ts": 0.0, "item": None}
 _A50_CACHE_TTL_SEC = 30.0
@@ -229,7 +229,7 @@ def _cn_hist_metrics(
     except Exception:
         cache_resp = None
 
-    # If cache layer exists but misses/incomplete, return None and let outer fallbacks (yfinance/proxy) handle.
+    # If cache layer exists but misses/incomplete，外层走插件 hist / 代理 ETF 等（助手不直连 yfinance）。
     if isinstance(cache_resp, dict):
         if not bool(cache_resp.get("success")):
             return None, None, None, f"cn_hist_cache_miss:{cache_resp.get('message') or 'miss'}"
@@ -424,7 +424,7 @@ def _build_cn_index_items(trade_date: str) -> Tuple[list[dict[str, Any]], str, l
                 sid = "openclaw"
                 raw = f"{src}|{h_tag}"
                 tools.append("tool_fetch_index_data:historical")
-            # 国内 ETF 代理优先于 yfinance：网络/周末时 yf 常空，159790/159915 更稳
+            # 国内 ETF 代理优先于外盘 hist：网络/周末时 159790/159915 更稳
             if last is None and code in proxy_etf_map:
                 p_last, p_ca, p_cp, p_tag = _cn_proxy_etf_metrics(proxy_etf_map[code])
                 if p_last is not None:
@@ -439,9 +439,9 @@ def _build_cn_index_items(trade_date: str) -> Tuple[list[dict[str, Any]], str, l
                     if y_last is not None:
                         last, chg_a, chg_p = y_last, y_ca, y_cp
                         q = "ok"
-                        sid = "yfinance"
-                        raw = f"{src}|yf:{ysym}:{tag}"
-                        tools.append("yfinance")
+                        sid = "openclaw"
+                        raw = f"{src}|plugin_hist:{ysym}:{tag}"
+                        tools.append("tool_fetch_global_index_hist_sina")
                         break
         if q != "ok":
             worst = "degraded"
@@ -481,33 +481,8 @@ def _yf_hist_metrics(
     *,
     fast_path: bool = False,
 ) -> Tuple[Optional[float], Optional[float], Optional[float], str]:
-    # Prefer yfinance when available (fast path for chart console); fallback to plugin hist tool.
+    """日线 last/涨跌：仅经采集插件 ``tool_fetch_global_index_hist_sina``（助手侧禁止直连 yfinance）。"""
     del cfg, fast_path
-    try:
-        import yfinance as yf  # type: ignore
-
-        from plugins.utils.proxy_env import proxy_env_for_source  # type: ignore
-
-        with proxy_env_for_source("yfinance"):
-            t = yf.Ticker(str(symbol))
-            hist = t.history(period="7d", interval="1d")
-        if hist is None or getattr(hist, "empty", True):
-            raise RuntimeError("empty_history")
-        try:
-            last = float(hist["Close"].iloc[-1])  # type: ignore[index]
-            prev = float(hist["Close"].iloc[-2]) if len(hist.index) >= 2 else None  # type: ignore[index]
-        except Exception:
-            return None, None, None, "yfinance_parse_err"
-        if last is None or math.isnan(last) or math.isinf(last):
-            return None, None, None, "yfinance_nan"
-        if prev in (None, 0) or math.isnan(prev) or math.isinf(prev):
-            return last, None, None, "yfinance_prev_bad"
-        chg_a = last - prev
-        chg_p = (last / prev - 1.0) * 100.0
-        return last, chg_a, chg_p, "yfinance"
-    except Exception:
-        pass
-
     try:
         from plugins.data_collection.index.fetch_global_hist_sina import (  # type: ignore
             tool_fetch_global_index_hist_sina,
@@ -863,9 +838,9 @@ def _future_item(
         "quality_status": q,
         "degraded_reason": reason,
         "source_id": (
-            "yfinance"
-            if "yfinance" in src
-            else ("akshare" if "akshare.futures_global_spot_em" in src else ("openclaw" if "global_spot_intraday" in src else "unknown"))
+            "openclaw"
+            if ("global_hist_sina" in src or "global_spot_intraday" in src)
+            else ("yfinance" if "yfinance" in src else ("akshare" if "akshare.futures_global_spot_em" in src else "unknown"))
         ),
         "source_raw": src,
         "as_of": _utc_now_iso(),
@@ -886,7 +861,7 @@ def _build_future_item_from_spec(spec: dict[str, Any], cfg: dict[str, Any]) -> d
 
 
 def _future_item_a50_plugin_then_yf(cfg: dict[str, Any]) -> dict[str, Any]:
-    """A50 fixed route: cache -> openclaw tool -> yfinance fallback."""
+    """A50 fixed route: cache -> ``tool_fetch_a50_data`` -> 插件内 global_spot / hist 链（经 ``_future_item``，无助手直连 yfinance）。"""
     now = time.time()
     cached = _A50_ITEM_CACHE.get("item")
     if (
@@ -916,7 +891,7 @@ def _future_item_a50_plugin_then_yf(cfg: dict[str, Any]) -> dict[str, Any]:
         from plugins.data_collection.futures.fetch_a50 import tool_fetch_a50_data  # type: ignore
     except Exception as e:
         base["source_raw"] = f"a50_tool_import_err:{e}"
-        # 插件不可用时才走 yfinance 兜底，避免常态下多余探测
+        # 插件不可用时退回 _future_item（内部仍只调插件 merged/global 工具链）
         fb = _future_item(
             instrument_id="future.a50",
             display_name="富时A50",
@@ -1009,8 +984,8 @@ def build_global_market_snapshot(trade_date: str) -> dict[str, Any]:
     # Global indices — strict same-index mapping and one-round retry for misses.
     apac_specs: list[tuple[str, list[str], str]] = [
         ("HSI", ["^HSI"], "恒生指数"),
-        # Yahoo 上 ^HSCEI 常 404；^HSCE 与 2828.HK 更稳（手工探测 2026-05）
-        ("HSCEI", ["^HSCE", "^HSCEI", "2828.HK"], "国企指数"),
+        # Yahoo 上 ^HSCEI 常 404/异常帧；仅请求 ^HSCE 与 2828.HK（避免 batch 里带 ^HSCEI 触发 None 解析）
+        ("HSCEI", ["^HSCE", "2828.HK"], "国企指数"),
         ("N225", ["^N225"], "日经225"),
         ("KOSPI", ["^KS11"], "韩国KOSPI"),
         ("ASX200", ["^AXJO"], "澳大利亚标普200"),
@@ -1159,7 +1134,7 @@ def build_global_market_snapshot(trade_date: str) -> dict[str, Any]:
 def build_qdii_futures_snapshot(trade_date: str) -> dict[str, Any]:
     """Smaller L4 for research sub-tab: US / HK / global futures legs."""
     cfg = _load_market_proxy_config()
-    tools = ["tool_fetch_global_index_spot", "yfinance"]
+    tools = ["tool_fetch_global_index_spot", "tool_fetch_global_index_hist_sina"]
 
     t_us = time.perf_counter()
     us_items = [
