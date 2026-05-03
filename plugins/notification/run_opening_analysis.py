@@ -98,6 +98,36 @@ def _stable_json_dumps(obj: Any) -> str:
         return repr(obj)
 
 
+def _attach_global_spot_report_fields(rd: Dict[str, Any], gspot: Any) -> None:
+    """Normalize global spot diagnostics onto report_data (opening + daily sender)."""
+    if not isinstance(gspot, dict):
+        return
+    attempts = gspot.get("attempts")
+    if isinstance(attempts, list):
+        fail_codes = [str((x or {}).get("failure_code") or "") for x in attempts if isinstance(x, dict)]
+        rd["global_spot_failure_codes"] = [x for x in fail_codes if x]
+        rd["global_spot_attempts"] = len(attempts)
+    src = str(gspot.get("source") or "").strip()
+    if src:
+        rd["global_spot_source_used"] = src
+    em = gspot.get("elapsed_ms")
+    if em is not None:
+        rd["global_spot_elapsed_ms"] = em
+
+
+def _maybe_attach_global_spot_catalog_debug(rd: Dict[str, Any], gspot: Any) -> None:
+    try:
+        from src.plugin_catalog_observability import debug_plugin_catalog_enabled, extract_global_index_spot_catalog_debug
+    except Exception:
+        return
+    if not debug_plugin_catalog_enabled():
+        return
+    frag = extract_global_index_spot_catalog_debug(gspot)
+    if not frag:
+        return
+    rd.setdefault("_debug", {}).setdefault("plugin_catalog", {})["global_index_spot"] = frag
+
+
 def _memo_key(fn: Callable[..., Any], args: Tuple[Any, ...], kwargs: Dict[str, Any]) -> str:
     payload = {
         "fn": getattr(fn, "__name__", str(fn)),
@@ -1431,6 +1461,8 @@ def build_opening_report_data(fetch_mode: str = "production") -> Tuple[Dict[str,
         emb = gspot.get("global_market_digest")
         if isinstance(emb, dict) and str(emb.get("summary") or "").strip():
             rd["global_market_digest"] = emb
+        _attach_global_spot_report_fields(rd, gspot)
+        _maybe_attach_global_spot_catalog_debug(rd, gspot)
 
     idx_opening = _safe_step(
         "fetch_index_opening",
@@ -2133,15 +2165,8 @@ def tool_run_opening_analysis_and_send(
             emb = gspot.get("global_market_digest") if isinstance(gspot, dict) else None
             if isinstance(emb, dict) and str(emb.get("summary") or "").strip():
                 rd["global_market_digest"] = emb
-        if isinstance(gspot, dict):
-            attempts = gspot.get("attempts")
-            if isinstance(attempts, list):
-                fail_codes = [str((x or {}).get("failure_code") or "") for x in attempts if isinstance(x, dict)]
-                rd["global_spot_failure_codes"] = [x for x in fail_codes if x]
-                rd["global_spot_attempts"] = len(attempts)
-            src = str(gspot.get("source") or "").strip()
-            if src:
-                rd["global_spot_source_used"] = src
+        _attach_global_spot_report_fields(rd, gspot)
+        _maybe_attach_global_spot_catalog_debug(rd, gspot)
 
         pn = slow_results.get("tool_fetch_policy_news")
         if pn is not None:

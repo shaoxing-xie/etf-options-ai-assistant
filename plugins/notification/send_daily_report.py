@@ -1275,11 +1275,35 @@ def _build_opening_global_spot_diagnostics_line(report_data: Dict[str, Any]) -> 
     """
     开盘「隔夜/外盘」数据源诊断：用于监控与复盘（尽量一行，不影响正文阅读）。
     """
+    try:
+        from src.plugin_catalog_observability import (
+            compact_json_for_diag,
+            debug_plugin_catalog_enabled,
+            extract_global_index_spot_catalog_debug,
+        )
+    except Exception:  # pragma: no cover
+
+        def debug_plugin_catalog_enabled() -> bool:
+            return False
+
+        def extract_global_index_spot_catalog_debug(_p: Any) -> Dict[str, Any]:
+            return {}
+
+        def compact_json_for_diag(o: Any, max_len: int = 400) -> str:
+            return str(o)[:max_len]
+
     src = report_data.get("global_spot_source_used")
     attempts = report_data.get("global_spot_attempts")
     failure = report_data.get("global_spot_failure_code")
     elapsed_ms = report_data.get("global_spot_elapsed_ms")
-    if not any(x is not None and str(x).strip() for x in (src, attempts, failure, elapsed_ms)):
+    frag: Dict[str, Any] = {}
+    if debug_plugin_catalog_enabled():
+        raw_spot = report_data.get("tool_fetch_global_index_spot")
+        if not isinstance(raw_spot, dict):
+            raw_spot = report_data.get("global_index_spot")
+        frag = extract_global_index_spot_catalog_debug(raw_spot) if isinstance(raw_spot, dict) else {}
+    base_any = any(x is not None and str(x).strip() for x in (src, attempts, failure, elapsed_ms))
+    if not base_any and not frag:
         return None
     parts: List[str] = []
     if src is not None and str(src).strip():
@@ -1297,7 +1321,10 @@ def _build_opening_global_spot_diagnostics_line(report_data: Dict[str, Any]) -> 
         except Exception:
             parts.append(f"elapsed_ms={str(elapsed_ms)[:16]}")
     joined = " ".join(parts).strip()
-    return f"数据源诊断（global_spot）：`{joined}`" if joined else None
+    line = f"数据源诊断（global_spot）：`{joined}`" if joined else "数据源诊断（global_spot）："
+    if frag:
+        line += f" `catalog_debug={compact_json_for_diag(frag, max_len=360)}`"
+    return line
 
 
 def _build_opening_overnight_outer_lines(report_data: Dict[str, Any]) -> List[str]:

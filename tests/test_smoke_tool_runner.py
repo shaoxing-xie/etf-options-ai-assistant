@@ -99,3 +99,32 @@ def test_tool_screen_equity_factors_smoke() -> None:
         assert "config_hash" in out
         assert isinstance(out.get("data"), list)
 
+
+def test_tool_screen_by_factors_alias_smoke() -> None:
+    out = _run_tool(
+        "tool_screen_by_factors",
+        {
+            "universe": "custom",
+            "custom_symbols": "600000",
+            "top_n": 1,
+            "max_universe_size": 1,
+            "factors": ["reversal_5d"],
+            "max_concurrent_fetch": 1,
+        },
+    )
+    assert isinstance(out, dict)
+    assert "success" in out
+
+
+def test_tool_plugin_catalog_digest_smoke() -> None:
+    out = _run_tool("tool_plugin_catalog_digest", {})
+    assert out.get("success") is True
+    assert isinstance(out.get("data"), dict)
+    assert "source_chains" in out["data"]
+
+
+def test_tool_resolve_symbol_smoke() -> None:
+    out = _run_tool("tool_resolve_symbol", {"symbol": "sh600519"})
+    assert out.get("success") is True
+    assert out["data"]["canonical_code"] == "600519"
+

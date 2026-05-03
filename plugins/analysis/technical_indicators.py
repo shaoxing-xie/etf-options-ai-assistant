@@ -1071,6 +1071,14 @@ def calculate_technical_indicators(
 
         formatted_message = _format_indicators_message(result_data)
 
+        try:
+            from src.plugin_catalog_observability import debug_plugin_catalog_enabled
+
+            if debug_plugin_catalog_enabled():
+                result_data.setdefault("meta", {})["catalog_engine_order"] = [eff_engine]
+        except Exception:
+            pass
+
         return {
             "success": True,
             "data": result_data,
@@ -1331,6 +1339,16 @@ def tool_calculate_technical_indicators(
         ma_periods=ma_periods,
         rsi_length=rsi_length,
     )
+
+    try:
+        from src.plugin_catalog_observability import debug_plugin_catalog_enabled
+
+        if debug_plugin_catalog_enabled() and isinstance(result.get("data"), dict):
+            inner_meta = result["data"].get("meta")
+            if isinstance(inner_meta, dict) and inner_meta.get("catalog_engine_order") is not None:
+                result.setdefault("meta", {})["catalog_engine_order"] = inner_meta["catalog_engine_order"]
+    except Exception:
+        pass
 
     if result.get("success") and result.get("message"):
         return result

@@ -7,7 +7,7 @@ import pandas as pd
 from .services import ApiServices
 
 # Bump when adding semantic HTTP routes so operators can `curl /api/health` and detect stale processes.
-CHART_CONSOLE_ROUTES_TAG = "2026-05-03_semantic_data_source_health_history"
+CHART_CONSOLE_ROUTES_TAG = "2026-05-03_semantic_l4_valuation_pe"
 
 
 class ApiRoutes:
@@ -201,6 +201,26 @@ class ApiRoutes:
             trade_date = (query.get("trade_date") or [""])[0]
             refresh = str((query.get("refresh") or ["0"])[0]).lower() in ("1", "true", "yes", "on")
             payload, code = self.svc.get_semantic_qdii_futures_snapshot(str(trade_date), refresh=refresh)
+            return payload, code, {}
+        if path == "/api/semantic/l4_valuation_context":
+            trade_date = (query.get("trade_date") or [""])[0]
+            stock_code = (query.get("stock_code") or ["600519"])[0]
+            refresh = str((query.get("refresh") or ["0"])[0]).lower() in ("1", "true", "yes", "on")
+            payload, code = self.svc.get_semantic_l4_valuation_context(
+                str(trade_date), str(stock_code), refresh=refresh
+            )
+            return payload, code, {}
+        if path == "/api/semantic/l4_pe_ttm_percentile":
+            trade_date = (query.get("trade_date") or [""])[0]
+            stock_code = (query.get("stock_code") or ["600519"])[0]
+            refresh = str((query.get("refresh") or ["0"])[0]).lower() in ("1", "true", "yes", "on")
+            try:
+                window_years = int((query.get("window_years") or ["5"])[0])
+            except ValueError:
+                window_years = 5
+            payload, code = self.svc.get_semantic_l4_pe_ttm_percentile(
+                str(trade_date), str(stock_code), window_years=window_years, refresh=refresh
+            )
             return payload, code, {}
         if path == "/api/ops/events":
             trade_date = (query.get("trade_date") or [""])[0]

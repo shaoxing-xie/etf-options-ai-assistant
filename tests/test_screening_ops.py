@@ -13,6 +13,7 @@ import src.watchlist_storage as ws
 
 
 def test_finalize_screening_writes_artifact(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Nightliy finalize accepts the screening envelope shape produced by either tool_screen_equity_factors or tool_screen_by_factors."""
     monkeypatch.setattr(ws, "watchlist_dir", lambda: tmp_path)
     monkeypatch.setattr(sgf, "screening_data_dir", lambda: tmp_path)
 

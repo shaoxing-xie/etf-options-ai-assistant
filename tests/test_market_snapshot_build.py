@@ -256,6 +256,74 @@ def test_persist_l3_jsonl_append_network(tmp_path, monkeypatch):
     assert len(lines2) == 14
 
 
+def test_global_snapshot_includes_catalog_debug_when_env(monkeypatch):
+    monkeypatch.setenv("OPTION_TRADING_ASSISTANT_DEBUG_PLUGIN_CATALOG", "1")
+    monkeypatch.setattr(
+        "apps.chart_console.api.market_snapshot_build._build_cn_index_items",
+        lambda *_a, **_k: ([], "ok", []),
+    )
+
+    def fake_spot(symbols, retry_rounds=1):
+        data = {
+            "^HSI": {"code": "^HSI", "price": 1.0, "change": 0.0, "change_pct": 0.0, "source_id": "yfinance", "timestamp": "t"},
+        }
+        dbg = [
+            {"catalog_merge": {"dataset_id": "global_index_spot"}, "active_priority": ["yfinance"], "index_codes": ",".join(symbols)}
+        ]
+        return ({k: v for k, v in data.items() if k in symbols}, ["tool_fetch_global_index_spot"], "ok", dbg)
+
+    monkeypatch.setattr("apps.chart_console.api.market_snapshot_build._global_spot_map_with_retry", fake_spot)
+    monkeypatch.setattr(
+        "apps.chart_console.api.market_snapshot_build._build_future_item_from_spec",
+        lambda spec, _cfg: {
+            "instrument_id": spec["id"],
+            "instrument_code": spec["try"][0],
+            "display_name": spec["title"],
+            "subtitle": spec["sub"],
+            "category": "index_future",
+            "last_price": 1.0,
+            "change_abs": 0.0,
+            "change_pct": 0.0,
+            "display_price_role": "future",
+            "quality_status": "ok",
+            "degraded_reason": "",
+            "source_id": "akshare",
+            "source_raw": "akshare.futures_global_spot_em",
+            "as_of": "2026-04-29T00:00:00Z",
+            "data_semantics": "realtime_quote",
+            "fetched_at": "2026-04-29T00:00:00Z",
+            "freshness_age_sec": 0,
+        },
+    )
+    monkeypatch.setattr(
+        "apps.chart_console.api.market_snapshot_build._future_item_a50_plugin_then_yf",
+        lambda _cfg: {
+            "instrument_id": "future.a50",
+            "instrument_code": "CN=F",
+            "display_name": "富时A50",
+            "subtitle": "期指连续",
+            "category": "index_future",
+            "last_price": 1.0,
+            "change_abs": 0.0,
+            "change_pct": 0.0,
+            "display_price_role": "future",
+            "quality_status": "ok",
+            "degraded_reason": "",
+            "source_id": "openclaw",
+            "source_raw": "futures_global_spot_em",
+            "as_of": "2026-04-29T00:00:00Z",
+            "data_semantics": "realtime_quote",
+            "fetched_at": "2026-04-29T00:00:00Z",
+            "freshness_age_sec": 0,
+        },
+    )
+
+    doc = build_global_market_snapshot("2026-04-29")
+    dbg = doc.get("_debug", {}).get("plugin_catalog", {}).get("global_index_spot", {})
+    assert "apac_batches" in dbg and "us_eu_batches" in dbg
+    assert dbg["apac_batches"] and dbg["apac_batches"][0].get("catalog_merge")
+
+
 def test_global_snapshot_hscei_alias_mapping_without_cross_substitute(monkeypatch):
     monkeypatch.setattr(
         "apps.chart_console.api.market_snapshot_build._build_cn_index_items",
@@ -280,7 +348,7 @@ def test_global_snapshot_hscei_alias_mapping_without_cross_substitute(monkeypatc
             "^FCHI": {"code": "^FCHI", "price": 7900.0, "change": 4.0, "change_pct": 0.05, "source_id": "yfinance", "timestamp": "2026-04-29 08:00:00"},
             "^STOXX50E": {"code": "^STOXX50E", "price": 5000.0, "change": 5.0, "change_pct": 0.1, "source_id": "yfinance", "timestamp": "2026-04-29 08:00:00"},
         }
-        return ({k: v for k, v in data.items() if k in symbols}, ["tool_fetch_global_index_spot"], "ok")
+        return ({k: v for k, v in data.items() if k in symbols}, ["tool_fetch_global_index_spot"], "ok", [])
 
     monkeypatch.setattr("apps.chart_console.api.market_snapshot_build._global_spot_map_with_retry", fake_spot)
     monkeypatch.setattr(
@@ -343,7 +411,7 @@ def test_global_snapshot_missing_keeps_error_no_snapshot_fallback(monkeypatch):
     )
     monkeypatch.setattr(
         "apps.chart_console.api.market_snapshot_build._global_spot_map_with_retry",
-        lambda symbols, retry_rounds=1: ({}, ["tool_fetch_global_index_spot"], "ok"),
+        lambda symbols, retry_rounds=1: ({}, ["tool_fetch_global_index_spot"], "ok", []),
     )
     monkeypatch.setattr(
         "apps.chart_console.api.market_snapshot_build._build_future_item_from_spec",

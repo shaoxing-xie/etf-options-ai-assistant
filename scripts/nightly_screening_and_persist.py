@@ -270,7 +270,7 @@ def main() -> int:
     fin: Dict[str, Any] = {}
     try:
         screen = _run_tool(
-            "tool_screen_equity_factors",
+            "tool_screen_by_factors",
             {
                 "universe": args.universe,
                 "regime_hint": "oscillation",
@@ -367,7 +367,7 @@ def _persist_new_data_layer(*, screen: Dict[str, Any], fin: Dict[str, Any], arti
             trade_date=trade_date,
             quality_status=quality_status,
             lineage_refs=[str(fin.get("artifact_path") or "")],
-            source_tools=["tool_screen_equity_factors", "tool_finalize_screening_nightly"],
+            source_tools=["tool_screen_by_factors", "tool_finalize_screening_nightly"],
         ),
     )
 

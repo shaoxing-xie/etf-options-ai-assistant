@@ -81,6 +81,7 @@
 - 当前可用运行文档：
   - `docs/openclaw/工作流参考手册.md`
   - `docs/openclaw/信号与风控巡检工作流.md`
+- **采集插件 `openclaw-data-china-stock` 与助手契约、可观测性、L4 语义 API**：`docs/integration/plugin_assistant_integration_plan.md`（与根目录 `README.md`「数据源插件」一节互为索引）
 - 历史配置/集成文档已归档至：
   - `docs/archive/openclaw/`（不纳入发布清单）
 
@@ -94,7 +95,8 @@
 
 - **策略融合工具**：`tool_strategy_engine` — 见 `docs/reference/工具参考手册.md` 与 `config/tools_manifest.yaml`
 
-- **数据采集插件的分类与 Provider 约定**：`plugins/data_collection/README.md`、`plugins/data_collection/ROADMAP.md`\n+  - 注：该目录在部分部署形态中为指向 OpenClaw 扩展（如 `openclaw-data-china-stock`）的符号链接；若你是纯 clone 本仓库且未安装扩展，请先按 `docs/publish/plugins-and-skills.md` 完成扩展安装/链接，再阅读该索引。
+- **数据采集插件的分类与 Provider 约定**：`plugins/data_collection/README.md`、`plugins/data_collection/ROADMAP.md`
+  - 注：该目录在部分部署形态中为指向 OpenClaw 扩展（如 `openclaw-data-china-stock`）的符号链接；若你是纯 clone 本仓库且未安装扩展，请先按 `docs/publish/plugins-and-skills.md` 完成扩展安装/链接，再阅读该索引。
 - `docs/reference/工具参考手册.md`
 - `docs/reference/工具参考手册-速查.md`
 - `docs/reference/工具参考手册-场景.md`

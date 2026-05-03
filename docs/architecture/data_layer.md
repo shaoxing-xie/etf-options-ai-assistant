@@ -28,3 +28,7 @@ python scripts/scan_direct_connections.py --summary-only
 - 快照：`GET /api/semantic/data_source_health`
 - 趋势：`GET /api/semantic/data_source_health_history?days=7`  
   数据由插件侧 `tool_probe_source_health(write_snapshot=true)` 落盘与 rollup；详见 `docs/data-source-contract.md`「相关只读 API」节。
+
+## Chart Console 只读语义（L4 估值）
+
+- `GET /api/semantic/l4_valuation_context`、`GET /api/semantic/l4_pe_ttm_percentile`：优先读 `data/semantic/l4_*`；缺省受控调用插件 `tool_l4_*` 后落盘。契约登记：`data/meta/schema_registry.yaml`、`data/meta/task_data_map.yaml`；与插件协同边界见 `docs/integration/plugin_assistant_integration_plan.md`。

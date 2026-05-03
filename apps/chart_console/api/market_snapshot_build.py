@@ -21,6 +21,8 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 import yaml
 from zoneinfo import ZoneInfo
 
+from src.plugin_catalog_observability import debug_plugin_catalog_enabled, extract_global_index_spot_catalog_debug
+
 
 def _repo_root() -> Path:
     for key in ("ETF_OPTIONS_ASSISTANT_ROOT", "CHART_CONSOLE_REPO_ROOT"):
@@ -619,29 +621,36 @@ def _em_future_quote(instrument_id: str) -> Optional[dict[str, Any]]:
     return None
 
 
-def _global_spot_map(symbols: str) -> Tuple[dict[str, dict[str, Any]], list[str], str]:
+def _global_spot_map(symbols: str) -> Tuple[dict[str, dict[str, Any]], list[str], str, dict[str, Any]]:
     fn = _import_global_spot()
     if not fn:
-        return {}, [], "plugin_import_failed"
+        return {}, [], "plugin_import_failed", {}
+    dbg: dict[str, Any] = {}
     try:
         _pace_source("tool_fetch_global_index_spot", _GLOBAL_SPOT_MIN_INTERVAL_SEC)
         raw = fn(index_codes=symbols)
     except Exception as e:
-        return {}, [], f"tool_fetch_global_index_spot:{e}"
+        return {}, [], f"tool_fetch_global_index_spot:{e}", {}
+    if debug_plugin_catalog_enabled() and isinstance(raw, dict):
+        frag = extract_global_index_spot_catalog_debug(raw)
+        if frag:
+            dbg = {**frag, "index_codes": symbols}
     tools = ["tool_fetch_global_index_spot"]
     out: dict[str, dict[str, Any]] = {}
     if not isinstance(raw, dict) or not raw.get("success"):
-        return out, tools, str((raw or {}).get("message") or "spot_failed")
+        return out, tools, str((raw or {}).get("message") or "spot_failed"), dbg
     for row in raw.get("data") or []:
         if not isinstance(row, dict):
             continue
         code = str(row.get("code") or "").strip()
         if code:
             out[code] = row
-    return out, tools, "ok"
+    return out, tools, "ok", dbg
 
 
-def _global_spot_map_with_retry(symbols: list[str], retry_rounds: int = 1) -> Tuple[dict[str, dict[str, Any]], list[str], str]:
+def _global_spot_map_with_retry(
+    symbols: list[str], retry_rounds: int = 1
+) -> Tuple[dict[str, dict[str, Any]], list[str], str, list[dict[str, Any]]]:
     """Pull global spot with batch + missing retry.
 
     Goal: reduce provider burst/rate-limit and avoid partially missing symbol sets.
@@ -656,9 +665,10 @@ def _global_spot_map_with_retry(symbols: list[str], retry_rounds: int = 1) -> Tu
         seen.add(k)
         uniq_symbols.append(k)
     if not uniq_symbols:
-        return {}, [], "empty_symbols"
+        return {}, [], "empty_symbols", []
     tools: list[str] = []
     out: dict[str, dict[str, Any]] = {}
+    dbg_batches: list[dict[str, Any]] = []
 
     def _chunk(arr: list[str], n: int) -> list[list[str]]:
         if n <= 0:
@@ -672,8 +682,10 @@ def _global_spot_map_with_retry(symbols: list[str], retry_rounds: int = 1) -> Tu
         if not pending:
             break
         for batch in _chunk(pending, batch_size):
-            one, t, msg = _global_spot_map(",".join(batch))
+            one, t, msg, batch_dbg = _global_spot_map(",".join(batch))
             tools.extend(t)
+            if batch_dbg:
+                dbg_batches.append(batch_dbg)
             if msg != "ok":
                 # Keep going: a failed batch shouldn't poison the whole indicator.
                 continue
@@ -685,12 +697,14 @@ def _global_spot_map_with_retry(symbols: list[str], retry_rounds: int = 1) -> Tu
     # Final attempt: retry remaining missing symbols individually.
     pending = [s for s in uniq_symbols if s not in out]
     for sym in pending:
-        one, t, one_msg = _global_spot_map(sym)
+        one, t, one_msg, one_dbg = _global_spot_map(sym)
         tools.extend(t)
+        if one_dbg:
+            dbg_batches.append(one_dbg)
         if one_msg == "ok":
             out.update(one)
 
-    return out, tools, "ok"
+    return out, tools, "ok", dbg_batches
 
 
 def _pick_spot_row(spot_map: dict[str, dict[str, Any]], codes_try: list[str]) -> Optional[dict[str, Any]]:
@@ -1005,10 +1019,10 @@ def build_global_market_snapshot(trade_date: str) -> dict[str, Any]:
     apac_codes = [code for _, codes, _ in apac_specs for code in codes]
     us_eu_codes = [code for _, codes, _ in us_specs for code in codes]
     t1s = time.perf_counter()
-    apac_map, t1, apac_msg = _global_spot_map_with_retry(apac_codes, retry_rounds=2)
+    apac_map, t1, apac_msg, apac_dbg = _global_spot_map_with_retry(apac_codes, retry_rounds=2)
     _lineage_event(lineage, "global_spot_apac", apac_msg == "ok", int((time.perf_counter() - t1s) * 1000), apac_msg)
     t2s = time.perf_counter()
-    us_map, t2, us_msg = _global_spot_map_with_retry(us_eu_codes, retry_rounds=2)
+    us_map, t2, us_msg, us_dbg = _global_spot_map_with_retry(us_eu_codes, retry_rounds=2)
     _lineage_event(lineage, "global_spot_us_eu", us_msg == "ok", int((time.perf_counter() - t2s) * 1000), us_msg)
     tools.extend(t1)
     tools.extend(t2)
@@ -1128,6 +1142,15 @@ def build_global_market_snapshot(trade_date: str) -> dict[str, Any]:
             lineage_refs=lineage,
         ),
     }
+    if debug_plugin_catalog_enabled():
+        doc["_debug"] = {
+            "plugin_catalog": {
+                "global_index_spot": {
+                    "apac_batches": apac_dbg,
+                    "us_eu_batches": us_dbg,
+                }
+            }
+        }
     return doc
 
 

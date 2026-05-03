@@ -1,0 +1,23 @@
+name: catalog_digest_inspect
+description: |
+  巡检插件 catalog 摘要与 attempts 聚合（只读观测）；结果应由 Agent 写入运维卡片或 evidence 目录。
+schedule: "15 8 * * 1"
+timezone: "Asia/Shanghai"
+
+steps:
+  - name: catalog_digest
+    agent: data_collector_agent
+    tool: tool_plugin_catalog_digest
+    description: factor_registry + manifest 工具数量摘要
+    params: {}
+    continue_on_failure: true
+
+  - name: attempts_summary_placeholder
+    agent: data_collector_agent
+    tool: tool_summarize_attempts
+    description: 占位示例；生产请将 attempts_json 换成真实采集到的 JSON 数组字符串，并按需设置 dataset_id。
+    depends_on: [catalog_digest]
+    params:
+      attempts_json: "[]"
+      dataset_id: "global_index_spot"
+    continue_on_failure: true

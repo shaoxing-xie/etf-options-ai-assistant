@@ -38,3 +38,13 @@ description: 解读 tool_screen_equity_factors / tool_finalize_screening_nightly
 - 插件：`openclaw-data-china-stock/plugins/analysis/equity_factor_screening.py`
 - 助手收尾：`etf-options-ai-assistant/src/screening_ops.py`
 - Manifest：`config/tools_manifest.yaml` → `tool_screen_equity_factors`、`tool_finalize_screening_nightly`
+
+## 证据表（可复现）
+
+| 字段 | 证据来源 |
+|------|-----------|
+| `success` / `quality_score` / `degraded` / `config_hash` | **原始** `tool_screen_equity_factors` 或等价别名 **`tool_screen_by_factors`** 返回 JSON（两者信封一致） |
+| 夜盘落盘路径 | **`tool_finalize_screening_nightly`** 返回中的 `artifact_path` |
+| 估值/代码口径（若叙事涉及 PE/PB 等） | **`tool_l4_valuation_context`** / **`tool_l4_pe_ttm_percentile`** 或 Chart **`/api/semantic/l4_*`** 映射的落盘视图 |
+
+叙事中不可出现「正文独有的数值」却无任何工具 JSON 与之对应。

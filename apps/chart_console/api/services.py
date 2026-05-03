@@ -64,6 +64,7 @@ FEATURE_FLAGS_PATH = ROOT / "config" / "feature_flags.json"
 # 避免多标签/刷新轮询在语义文件尚未落盘时并发触发多次全量 yfinance 链（限流 + stderr 噪音）。
 _GLOBAL_MARKET_SNAPSHOT_BUILD_LOCK = threading.Lock()
 _QDII_FUTURES_SNAPSHOT_BUILD_LOCK = threading.Lock()
+_L4_SEMANTIC_BUILD_LOCK = threading.Lock()
 
 
 class ApiServices:
@@ -469,6 +470,75 @@ class ApiServices:
         except Exception as e:
             return {"success": False, "message": f"build_failed:{e}", "data": self._semantic.qdii_futures_snapshot(td)}, 500
         data = self._semantic.qdii_futures_snapshot(td)
+        return {"success": True, "message": "ok", "data": data}, 200
+
+    def _l4_semantic_path(self, subdir: str, trade_date: str, stock_code: str, *, window_years: int | None = None) -> Path:
+        suf = SemanticReader.l4_stock_file_suffix(stock_code)
+        if window_years is not None:
+            wy = max(1, int(window_years))
+            return ROOT / "data" / "semantic" / subdir / f"{trade_date}_{suf}_wy{wy}.json"
+        return ROOT / "data" / "semantic" / subdir / f"{trade_date}_{suf}.json"
+
+    @staticmethod
+    def _persist_l4_tool_snapshot(path: Path, payload: dict[str, Any]) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
+
+    def get_semantic_l4_valuation_context(
+        self, trade_date: str = "", stock_code: str = "600519", refresh: bool = False
+    ) -> tuple[dict[str, Any], int]:
+        td = str(trade_date or "").strip() or datetime.now(ZoneInfo("Asia/Shanghai")).strftime("%Y-%m-%d")
+        code = str(stock_code or "").strip() or "600519"
+        path = self._l4_semantic_path("l4_valuation_context", td, code)
+        try:
+            if refresh or not path.is_file():
+                with _L4_SEMANTIC_BUILD_LOCK:
+                    if refresh or not path.is_file():
+                        from plugins.analysis.l4_data_tools import tool_l4_valuation_context
+
+                        raw = tool_l4_valuation_context(stock_code=code, trade_date=td)
+                        if not isinstance(raw, dict):
+                            return {"success": False, "message": "invalid_tool_response", "data": None}, 500
+                        self._persist_l4_tool_snapshot(path, raw)
+        except Exception as e:
+            cached = self._semantic.l4_valuation_context_view(td, code)
+            if cached:
+                return {"success": True, "message": f"ok_cached_after_error:{e}", "data": cached}, 200
+            return {"success": False, "message": str(e), "data": None}, 500
+        data = self._semantic.l4_valuation_context_view(td, code)
+        if not data:
+            return {"success": False, "message": "missing_semantic_file", "data": None}, 404
+        return {"success": True, "message": "ok", "data": data}, 200
+
+    def get_semantic_l4_pe_ttm_percentile(
+        self,
+        trade_date: str = "",
+        stock_code: str = "600519",
+        window_years: int = 5,
+        refresh: bool = False,
+    ) -> tuple[dict[str, Any], int]:
+        td = str(trade_date or "").strip() or datetime.now(ZoneInfo("Asia/Shanghai")).strftime("%Y-%m-%d")
+        code = str(stock_code or "").strip() or "600519"
+        wy = max(1, int(window_years))
+        path = self._l4_semantic_path("l4_pe_ttm_percentile", td, code, window_years=wy)
+        try:
+            if refresh or not path.is_file():
+                with _L4_SEMANTIC_BUILD_LOCK:
+                    if refresh or not path.is_file():
+                        from plugins.analysis.l4_data_tools import tool_l4_pe_ttm_percentile
+
+                        raw = tool_l4_pe_ttm_percentile(stock_code=code, trade_date=td, window_years=wy)
+                        if not isinstance(raw, dict):
+                            return {"success": False, "message": "invalid_tool_response", "data": None}, 500
+                        self._persist_l4_tool_snapshot(path, raw)
+        except Exception as e:
+            cached = self._semantic.l4_pe_ttm_percentile_view(td, code, window_years=wy)
+            if cached:
+                return {"success": True, "message": f"ok_cached_after_error:{e}", "data": cached}, 200
+            return {"success": False, "message": str(e), "data": None}, 500
+        data = self._semantic.l4_pe_ttm_percentile_view(td, code, window_years=wy)
+        if not data:
+            return {"success": False, "message": "missing_semantic_file", "data": None}, 404
         return {"success": True, "message": "ok", "data": data}, 200
 
     def record_fallback_event(self, primary_url: str, fallback_url: str, reason: str = "") -> dict[str, Any]:

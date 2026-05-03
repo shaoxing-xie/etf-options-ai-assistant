@@ -1444,17 +1444,111 @@ tools:
       provider_preference:
         type: string
         default: auto
+- id: tool_screen_by_factors
+  label: 多因子选股（catalog 别名）
+  description: 与 tool_screen_equity_factors 等价；参数一致。
+  description_short: 多因子选股别名。
+  parameters:
+    type: object
+    properties:
+      universe:
+        type: string
+        default: hs300
+      factors:
+        type: array
+        items:
+          type: string
+      top_n:
+        type: number
+        default: 10
+- id: tool_l4_valuation_context
+  label: L4-data 估值上下文
+  description: 插件确定性估值字段快照（PE/PB/ROE 等），无投资建议。
+  description_short: L4 估值上下文。
+  parameters:
+    type: object
+    properties:
+      stock_code:
+        type: string
+        default: '600519'
+      trade_date:
+        type: string
+        default: ''
+    required:
+    - stock_code
+- id: tool_l4_pe_ttm_percentile
+  label: L4-data PE_TTM 历史分位
+  description: 基于报告期 PE_TTM 序列的经验分位（0–100）；非投资建议。
+  description_short: L4 PE 分位。
+  parameters:
+    type: object
+    properties:
+      stock_code:
+        type: string
+        default: '600519'
+      trade_date:
+        type: string
+        default: ''
+      window_years:
+        type: integer
+        default: 5
+    required:
+    - stock_code
+- id: tool_resolve_symbol
+  label: L2 代码解析
+  description: 归一化股票/ETF/指数代码与 entity_id 草稿。
+  description_short: 符号解析。
+  parameters:
+    type: object
+    properties:
+      symbol:
+        type: string
+        default: '510300'
+    required:
+    - symbol
+- id: tool_get_entity_meta
+  label: L2 实体卡片
+  description: resolve + master_meta 静态叠加。
+  description_short: 实体元数据。
+  parameters:
+    type: object
+    properties:
+      symbol:
+        type: string
+        default: '510300'
+    required:
+    - symbol
+- id: tool_plugin_catalog_digest
+  label: 插件 catalog 摘要（观测）
+  description: factor_registry 与 manifest 工具数量只读摘要。
+  description_short: catalog digest。
+  parameters:
+    type: object
+    properties: {}
+- id: tool_summarize_attempts
+  label: attempts 聚合（观测）
+  description: JSON 数组字符串聚合；可选 dataset_id。
+  description_short: attempts 摘要。
+  parameters:
+    type: object
+    properties:
+      attempts_json:
+        type: string
+        default: '[]'
+      dataset_id:
+        type: string
+        default: ''
 - id: tool_finalize_screening_nightly
   label: 夜盘选股收尾（落盘+门禁+观察池）
   description: >-
-    接收 tool_screen_equity_factors 完整 JSON，写入 data/screening/YYYY-MM-DD.json；若未熔断且质量门禁通过则合并 data/watchlist。
+    接收多因子选股完整 JSON（tool_screen_equity_factors 或与 tool_screen_by_factors 等价的同一信封），写入 data/screening/YYYY-MM-DD.json；若未熔断且质量门禁通过则合并 data/watchlist。
   description_short: screening 落盘与观察池合并。
   parameters:
     type: object
     properties:
       screening_result:
         type: object
-        description: tool_screen_equity_factors 的完整返回
+        description: tool_screen_equity_factors / tool_screen_by_factors 的完整返回（字段契约一致）
       run_date:
         type: string
         description: 可选，默认上海日历日 YYYY-MM-DD

@@ -1,5 +1,5 @@
 name: nightly_stock_screening
-description: 盘后多因子选股（tool_screen_equity_factors）并提示落盘观察池
+description: 盘后多因子选股（tool_screen_by_factors，与 tool_screen_equity_factors 等价）并提示落盘观察池
 
 schedule: "0 20 * * 1-5"
 timezone: "Asia/Shanghai"
@@ -14,8 +14,8 @@ steps:
 
   - name: screen_hs300
     agent: data_collector_agent
-    tool: tool_screen_equity_factors
-    description: 沪深300成分内震荡模板选股（可改 universe）
+    tool: tool_screen_by_factors
+    description: 沪深300成分内震荡模板选股（tool_screen_by_factors / tool_screen_equity_factors 等价；可改 universe）
     depends_on: [check_trading_status]
     params:
       universe: "hs300"
@@ -42,5 +42,5 @@ steps:
       mode: "prod"
 
 structured_message: |
-  盘后顺序：`tool_screen_equity_factors` → `tool_finalize_screening_nightly`（门禁见 `src/screening_quality_gate.py` + `tool_payload_quality`）。
+  盘后顺序：`tool_screen_by_factors`（或与 `tool_screen_equity_factors` 等价入口）→ `tool_finalize_screening_nightly`（门禁见 `src/screening_quality_gate.py` + `tool_payload_quality`）。
   定调 pause 见 `config/weekly_calibration.json`；紧急熔断见 `screening_emergency_stop.yaml`。

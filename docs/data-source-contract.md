@@ -27,6 +27,7 @@
 
 - Chart Console：`GET /api/semantic/data_source_health`（读插件落盘的 `source_health_snapshot.json`；无快照时按页面提示运行 `tool_probe_source_health(write_snapshot=true)`）。
 - 成功率趋势：`GET /api/semantic/data_source_health_history?days=7`（读插件 `data/meta/source_health_history_rollup.json`；由每次 `write_snapshot=true` 的 probe 采样刷新）。
+- L4 估值 / PE 分位：`GET /api/semantic/l4_valuation_context`、`GET /api/semantic/l4_pe_ttm_percentile`（读 `data/semantic/l4_*`；缺时由 Chart 服务受控调用插件 `tool_l4_*` 落盘后再返回）。集成说明见 `docs/integration/plugin_assistant_integration_plan.md`。
 
 ## `src/data_collector.py` 收口清单（Phase 1）
 

@@ -1804,3 +1804,26 @@ class SemanticReader:
                 "lineage_refs": [],
             },
         }
+
+    @staticmethod
+    def l4_stock_file_suffix(stock_code: str) -> str:
+        c = str(stock_code or "").strip()
+        safe = re.sub(r"[^0-9A-Za-z._-]", "_", c)
+        return safe or "unknown"
+
+    def l4_valuation_context_view(self, trade_date: str, stock_code: str) -> dict[str, Any]:
+        td = (trade_date or "").strip() or datetime.now(ZoneInfo("Asia/Shanghai")).strftime("%Y-%m-%d")
+        code = str(stock_code or "").strip() or "600519"
+        suf = self.l4_stock_file_suffix(code)
+        p = self.root / "data" / "semantic" / "l4_valuation_context" / f"{td}_{suf}.json"
+        doc = _read_json(p)
+        return doc if isinstance(doc, dict) else {}
+
+    def l4_pe_ttm_percentile_view(self, trade_date: str, stock_code: str, window_years: int = 5) -> dict[str, Any]:
+        td = (trade_date or "").strip() or datetime.now(ZoneInfo("Asia/Shanghai")).strftime("%Y-%m-%d")
+        code = str(stock_code or "").strip() or "600519"
+        suf = self.l4_stock_file_suffix(code)
+        wy = max(1, int(window_years))
+        p = self.root / "data" / "semantic" / "l4_pe_ttm_percentile" / f"{td}_{suf}_wy{wy}.json"
+        doc = _read_json(p)
+        return doc if isinstance(doc, dict) else {}

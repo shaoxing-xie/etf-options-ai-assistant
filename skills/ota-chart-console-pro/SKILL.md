@@ -31,6 +31,7 @@ kill <PID>
 1. `curl -I http://127.0.0.1:8611/` 期望 `200`
 2. `curl http://127.0.0.1:8611/api/health` 期望 `{"success": true}`
 3. `curl /api/ohlcv` / `curl /api/indicators` / `curl /api/backtest` 至少返回 `success=true`
+4. （可选）L4 只读语义：`curl 'http://127.0.0.1:8611/api/semantic/l4_valuation_context?stock_code=600519'`、`curl 'http://127.0.0.1:8611/api/semantic/l4_pe_ttm_percentile?stock_code=600519&window_years=5'` — 首次请求可能触发落盘到 `data/semantic/l4_*`（来源 `tool_l4_*`）；数值以工具 JSON 为准，勿手写复述。
 
 ## 二期 UI 验收要点
 

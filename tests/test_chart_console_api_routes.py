@@ -25,6 +25,20 @@ class _Svc:
     def record_fallback_event(self, primary_url: str, fallback_url: str, reason: str):
         return {"success": True, "data": {"primary_url": primary_url, "fallback_url": fallback_url, "reason": reason}}
 
+    def get_semantic_l4_valuation_context(self, trade_date: str, stock_code: str, refresh: bool = False):
+        _ = refresh
+        return {"success": True, "message": "ok", "data": {"trade_date": trade_date, "stock_code": stock_code}}, 200
+
+    def get_semantic_l4_pe_ttm_percentile(
+        self, trade_date: str, stock_code: str, window_years: int = 5, refresh: bool = False
+    ):
+        _ = refresh
+        return {
+            "success": True,
+            "message": "ok",
+            "data": {"trade_date": trade_date, "stock_code": stock_code, "window_years": window_years},
+        }, 200
+
 
 def test_routes_semantic_analysis_endpoints() -> None:
     routes = ApiRoutes(_Svc())
@@ -62,6 +76,24 @@ def test_health_includes_routes_tag() -> None:
     assert code == 200
     assert payload.get("success") is True
     assert payload.get("data", {}).get("routes_tag") == CHART_CONSOLE_ROUTES_TAG
+
+
+def test_routes_semantic_l4_endpoints() -> None:
+    routes = ApiRoutes(_Svc())
+    payload, code, _ = routes.handle_get(
+        "/api/semantic/l4_valuation_context",
+        {"trade_date": ["2026-05-01"], "stock_code": ["600519"]},
+    )
+    assert code == 200
+    assert payload["success"] is True
+    assert payload["data"]["stock_code"] == "600519"
+
+    payload, code, _ = routes.handle_get(
+        "/api/semantic/l4_pe_ttm_percentile",
+        {"trade_date": ["2026-05-01"], "stock_code": ["600519"], "window_years": ["3"]},
+    )
+    assert code == 200
+    assert payload["data"]["window_years"] == 3
 
 
 def test_routes_record_fallback() -> None:

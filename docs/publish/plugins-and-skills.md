@@ -12,7 +12,7 @@
 
 ## 2. 建议项（能力增强）
 
-- **`openclaw-data-china-stock`**（A 股/ETF 等采集与情绪四工具 + `market-sentinel`）：安装、同步到 `~/.openclaw/extensions`、与 `etf-options-ai-assistant` Agent/工具白名单对齐见 [`openclaw-data-china-stock-etf-assistant.md`](../openclaw/openclaw-data-china-stock-etf-assistant.md)。
+- **`openclaw-data-china-stock`**（A 股/ETF 等采集与情绪四工具 + `market-sentinel`）：安装、同步到 `~/.openclaw/extensions`、与 `etf-options-ai-assistant` Agent/工具白名单对齐见 [`openclaw-data-china-stock-etf-assistant.md`](../openclaw/openclaw-data-china-stock-etf-assistant.md)。**契约与宿主集成真源**：[`docs/integration/plugin_assistant_integration_plan.md`](../integration/plugin_assistant_integration_plan.md)（含 `plugins/data_collection` 符号链接、`china_stock_upstream`、L4 只读 API、`OPTION_TRADING_ASSISTANT_DEBUG_PLUGIN_CATALOG` 等）。
 - `tavily-search`：外部信息检索与事件补全
 - `topic-monitor`：主题监控（如已采用）
 - `qmd-cli` / 记忆相关技能：研究上下文沉淀
@@ -29,7 +29,7 @@
 
 **本仓库自研 Skill**：只放在仓库 `skills/<name>/`，改完后在仓库根执行 `bash scripts/sync_repo_skills_to_openclaw.sh` 再重载 Gateway；详见 `skills/README.md`。
 
-**叙事类（与工具解耦）**：默认不在 Python 内二次调用 LLM（合并后配置 → `llm_enhancer.enabled: false`）。晨报/波动/信号的可读解读依赖 Gateway 主模型 + `ota_openclaw_tool_narration`、`ota_volatility_prediction_narration`、`ota_signal_watch_narration`；**历史已实现波动**（`tool_calculate_historical_volatility` / `tool_underlying_historical_snapshot`）与预测类工具区分见 **`ota_historical_volatility_snapshot`**；**单标的风险评估**（`tool_assess_risk`，ETF/指数/A 股、合并后配置 → `risk_assessment`）见 **`ota_risk_assessment_brief`**；**盘后/盘前/开盘趋势三工具**另需 **`ota_trend_analysis_brief`**（`report_meta` / `daily_report_overlay` / 落盘 / `after_close_basis` 等边界）。**A 股多因子选股**（`tool_screen_equity_factors`，`success`/quality/degraded 契约；夜盘收尾 `tool_finalize_screening_nightly`）见 **`ota_equity_factor_screening_brief`**；**轮动 / 策略研究闭环**分别见 **`ota_etf_rotation_research`**、**`ota_strategy_research_loop`**——**`etf_main` 与 `etf_business_core_agent` 应与 `etf_analysis_agent` 一并勾选**，避免入口会话缺规程。以上勾选见 `config/snippets/openclaw_agents_ota_skills.json`。若定时任务只跑工具、无 Agent 总结步骤，推送正文可能仅有结构化片段——应在工作流中保留「模型生成摘要」一步。
+**叙事类（与工具解耦）**：默认不在 Python 内二次调用 LLM（合并后配置 → `llm_enhancer.enabled: false`）。晨报/波动/信号的可读解读依赖 Gateway 主模型 + `ota_openclaw_tool_narration`、`ota_volatility_prediction_narration`、`ota_signal_watch_narration`；**历史已实现波动**（`tool_calculate_historical_volatility` / `tool_underlying_historical_snapshot`）与预测类工具区分见 **`ota_historical_volatility_snapshot`**；**单标的风险评估**（`tool_assess_risk`，ETF/指数/A 股、合并后配置 → `risk_assessment`）见 **`ota_risk_assessment_brief`**；**盘后/盘前/开盘趋势三工具**另需 **`ota_trend_analysis_brief`**（`report_meta` / `daily_report_overlay` / 落盘 / `after_close_basis` 等边界）。**A 股多因子选股**（`tool_screen_equity_factors` 或与 **`tool_screen_by_factors`** 等价入口，`success`/quality/degraded 契约；夜盘收尾 `tool_finalize_screening_nightly`）见 **`ota_equity_factor_screening_brief`**；**轮动 / 策略研究闭环**分别见 **`ota_etf_rotation_research`**、**`ota_strategy_research_loop`**——**`etf_main` 与 `etf_business_core_agent` 应与 `etf_analysis_agent` 一并勾选**，避免入口会话缺规程。以上勾选见 `config/snippets/openclaw_agents_ota_skills.json`。若定时任务只跑工具、无 Agent 总结步骤，推送正文可能仅有结构化片段——应在工作流中保留「模型生成摘要」一步。
 
 ## 3. 安装/校验建议
 

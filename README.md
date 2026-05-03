@@ -43,6 +43,9 @@
 - 本仓库优先通过 **`scripts/link_china_stock_data_collection.sh`** 将 `plugins/data_collection` 链到插件克隆或 `~/.openclaw/extensions/openclaw-data-china-stock`。
 - **直连兜底依赖**（AkShare / Tushare / Baostock 等）集中在 [`requirements-cn-market-direct.txt`](requirements-cn-market-direct.txt)，由根目录 [`requirements.txt`](requirements.txt) 引用，便于分层审计。
 - Chart Console 只读语义：`GET /api/semantic/data_source_health`（快照）；`GET /api/semantic/data_source_health_history?days=7`（7 日成功率 rollup）。插件侧需周期性执行 `tool_probe_source_health(write_snapshot=true)` 以落盘并累积趋势。
+- **L4 只读语义（估值 / PE 分位）**：`GET /api/semantic/l4_valuation_context`、`GET /api/semantic/l4_pe_ttm_percentile`（查询参数 `trade_date`、`stock_code`、`window_years`、`refresh`）。优先读 `data/semantic/l4_*` 落盘；缺失时由服务端受控调用插件 `tool_l4_*` 再写入，避免 UI 私自拼口径。契约登记见 `data/meta/schema_registry.yaml`、`data/meta/task_data_map.yaml`。
+- **全球指数 catalog 可观测（运维）**：设置 `OPTION_TRADING_ASSISTANT_DEBUG_PLUGIN_CATALOG=1` 时，Chart `global_market_snapshot`、开盘/日报链路可附带 `source_route` 中的 `catalog_merge` / `active_priority` 等调试片段（默认关闭，不影响终端用户文案）。
+- **选股别名**：夜盘与部分工作流使用 `tool_screen_by_factors`，与插件侧 `tool_screen_equity_factors` **参数与返回信封一致**；`tool_finalize_screening_nightly` 可接任一输出。集成边界与禁止项见 **[`docs/integration/plugin_assistant_integration_plan.md`](docs/integration/plugin_assistant_integration_plan.md)**（含 `china_stock_upstream` 动态加载、**禁止**在助手 `plugins/utils/` 下新增上游薄封装等硬约束）。
 - 契约说明见 [`docs/data-source-contract.md`](docs/data-source-contract.md)；分层与 backlog 索引见 [`docs/architecture/data_layer.md`](docs/architecture/data_layer.md)。直连引用季度扫描：`python scripts/scan_direct_connections.py --summary-only`。
 
 ## ETF Stock 龙虾（OpenClaw）生态长项：从“会分析”到“会复现、会迭代、会进化”
@@ -206,7 +209,8 @@ bash install_plugin.sh
 
 本项目的详细文档都集中在 `docs/` 目录下，建议从这里开始：
 
-- **数据采集插件（标的物 / 数据域 / 行情周期、Provider 矩阵）**：`plugins/data_collection/README.md`（与 [`ROADMAP.md`](plugins/data_collection/ROADMAP.md) 互链）
+- **数据采集插件（标的物 / 数据域 / 行情周期、Provider 矩阵）**：`plugins/data_collection/README.md`（与 [`ROADMAP.md`](plugins/data_collection/ROADMAP.md) 互链；目录通常 **符号链接** 至独立仓库 `openclaw-data-china-stock`）
+- **助手 × 插件集成（契约 / 观测 / L4）**：`docs/integration/plugin_assistant_integration_plan.md`
 - **文档首页**：`docs/README.md`
 - **入门（Getting Started）**：  
   - `docs/getting-started/README.md`  
@@ -251,7 +255,8 @@ CHART_CONSOLE_PRO_PORT=8611 python3 apps/chart_console/api/server.py
 ```
 
 - 前端：`http://localhost:8611/`
-- API 示例：`http://localhost:8611/api/health`
+- API 示例：`http://localhost:8611/api/health`（`routes_tag` 见响应体，用于判断进程是否已加载新路由）
+- **语义只读（节选）**：`/api/semantic/global_market_snapshot`、`/api/semantic/qdii_futures_snapshot`、`/api/semantic/l4_valuation_context`、`/api/semantic/l4_pe_ttm_percentile`；运维验收见 `skills/ota-chart-console-pro/SKILL.md`
 
 二期增强（均衡推进）：
 
