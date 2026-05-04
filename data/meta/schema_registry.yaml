@@ -1,0 +1,44 @@
+# 宿主统一数据层：插件产出 schema 登记（先契约后实现）
+# 与 openclaw-data-china-stock 工具 `_meta.schema_name` / `data_layer` 对齐。
+version: "1"
+schemas:
+  - schema_name: valuation_context_v1
+    schema_version: "1.0.0"
+    data_layer: L4_data
+    lineage_note: "插件 tool_l4_valuation_context"
+  - schema_name: pe_ttm_percentile_band_v1
+    schema_version: "1.0.0"
+    data_layer: L4_data
+    lineage_note: "插件 tool_l4_pe_ttm_percentile"
+  - schema_name: rotation_feature_aggregate_v1
+    schema_version: "1.0.0"
+    data_layer: L3_aggregate
+    lineage_note: "插件 tool_etf_rotation_research"
+  - schema_name: entity_resolve_v1
+    schema_version: "1.0.0"
+    data_layer: L2_entity
+    lineage_note: "插件 tool_resolve_symbol"
+  - schema_name: entity_meta_v1
+    schema_version: "1.0.0"
+    data_layer: L2_entity
+    lineage_note: "插件 tool_get_entity_meta"
+  - schema_name: attempts_summary_v1
+    schema_version: "1.0.0"
+    data_layer: L2_entity
+    lineage_note: "插件 tool_summarize_attempts（观测）"
+  - schema_name: plugin_catalog_digest_v1
+    schema_version: "1.0.0"
+    data_layer: L2_entity
+    lineage_note: "插件 tool_plugin_catalog_digest（观测）"
+  - schema_name: portfolio_valuation_context_v1
+    schema_version: "1.0.0"
+    data_layer: L4_data
+    lineage_note: "助手 tool_l4_portfolio_valuation_context（组合插件 L4）"
+  - schema_name: task_run_record_v1
+    schema_version: "1.0.0"
+    data_layer: L4_semantic_ops
+    lineage_note: "orchestrator 任务运行摘要落盘 data/semantic/task_runs_v1；payload 可含 dependency_execution_order（跨任务拓扑）、步骤级 dry_run/工具输出摘要"
+  - schema_name: report_l4_snapshot_attachment_v1
+    schema_version: "1.0.0"
+    data_layer: L4_data
+    lineage_note: "T2 Cron 报告附录：批量 tool_l4_valuation_context + tool_l4_pe_ttm_percentile；挂于 report_data.l4_snapshot 或决策 payload.l4_attachment"

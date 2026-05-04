@@ -1,0 +1,79 @@
+# 任务 → 产出 schema 映射（回放与语义层接线）
+version: "1"
+tasks:
+  - task_id: l4-valuation-context
+    outputs:
+      - schema_name: valuation_context_v1
+        data_layer: L4_data
+  - task_id: l4-pe-ttm-percentile
+    outputs:
+      - schema_name: pe_ttm_percentile_band_v1
+        data_layer: L4_data
+  - task_id: etf-rotation-research
+    outputs:
+      - schema_name: rotation_feature_aggregate_v1
+        data_layer: L3_aggregate
+      - schema_name: report_l4_snapshot_attachment_v1
+        data_layer: L4_data
+  - task_id: position-tracking
+    outputs:
+      - schema_name: report_l4_snapshot_attachment_v1
+        data_layer: L4_data
+  - task_id: strategy-calibration
+    outputs:
+      - schema_name: report_l4_snapshot_attachment_v1
+        data_layer: L4_data
+  - task_id: weekly-selection-review
+    outputs:
+      - schema_name: report_l4_snapshot_attachment_v1
+        data_layer: L4_data
+  - task_id: intraday-tail-screening
+    outputs:
+      - schema_name: report_l4_snapshot_attachment_v1
+        data_layer: L4_data
+  - task_id: nightly-stock-screening
+    outputs:
+      - schema_name: report_l4_snapshot_attachment_v1
+        data_layer: L4_data
+  - task_id: 8c548101-85b7-4c95-a458-8b0e15317d46
+    outputs:
+      - schema_name: report_l4_snapshot_attachment_v1
+        data_layer: L4_data
+  - task_id: f0d82a29-45de-4377-9570-5dda65b3f58a
+    outputs:
+      - schema_name: report_l4_snapshot_attachment_v1
+        data_layer: L4_data
+  - task_id: 8f2ef8c2-4d0e-4df4-b3ad-3524d74b47be
+    outputs:
+      - schema_name: report_l4_snapshot_attachment_v1
+        data_layer: L4_data
+  - task_id: etf-midday-recap-1200
+    outputs:
+      - schema_name: report_l4_snapshot_attachment_v1
+        data_layer: L4_data
+  - task_id: entity-resolve
+    outputs:
+      - schema_name: entity_resolve_v1
+        data_layer: L2_entity
+  - task_id: chart-console-l4-valuation-read
+    outputs:
+      - schema_name: valuation_context_v1
+        data_layer: L4_data
+  - task_id: chart-console-l4-pe-percentile-read
+    outputs:
+      - schema_name: pe_ttm_percentile_band_v1
+        data_layer: L4_data
+  - task_id: ops-catalog-digest-inspect
+    outputs:
+      - schema_name: plugin_catalog_digest_v1
+        data_layer: L2_entity
+      - schema_name: attempts_summary_v1
+        data_layer: L2_entity
+  - task_id: orchestrator-l4-portfolio
+    outputs:
+      - schema_name: portfolio_valuation_context_v1
+        data_layer: L4_data
+  - task_id: orchestrator-task-run-write
+    outputs:
+      - schema_name: task_run_record_v1
+        data_layer: L4_semantic_ops

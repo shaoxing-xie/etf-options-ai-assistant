@@ -7,6 +7,8 @@ The format is inspired by Keep a Changelog and follows semantic versioning.
 ## [Unreleased]
 
 ### Added
+- **T2 Cron L4 附录**：`plugins/analysis/l4_report_attachment.py`；各 T2 链路透传 `tool_l4_valuation_context` + `tool_l4_pe_ttm_percentile` 摘要，钉钉/落盘追加 **`## L4 / 估值摘要`**；开关 **`ASSISTANT_INCLUDE_L4_SNAPSHOT`**（未设置或 `1` 开启，`0`/`false`/`off` 关闭基线）。单测：`tests/test_l4_report_attachment.py`；编排说明：`docs/orchestration/t2_l4_tier_matrix.md`、`docs/orchestration/cron_parity.md`（T2 表）。
+- **契约入仓**：`.gitignore` 对 `data/` 改为「默认忽略 + **`data/meta/` 下四份契约文件白名单**」，便于评审与克隆一致（`schema_registry.yaml`、`task_data_map.yaml`、`data_contract_version.json`、`error_codes.yaml`）。
 - **`data/meta/error_codes.yaml`**：稳定 `error_code` 与 `quality_status` 枚举说明，供工具返回与契约测试对齐。
 - **`config/feature_flags.json.example`**：说明 `legacy_write_enabled` 显式开关；未提供配置文件时默认不写 legacy 目录。
 - **`tests/test_plugin_tool_contract_shapes.py`**：契约形状单测（`error_codes.yaml` + 指数历史 fixture）。

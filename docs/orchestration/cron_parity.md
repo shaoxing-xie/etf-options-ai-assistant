@@ -66,6 +66,17 @@
 | `8f2ef8c2-4d0e-4df4-b3ad-3524d74b47be` | `tool_run_opening_analysis_and_send`（realtime variant） | 同上 |
 | `etf-midday-recap-1200` | `tool_run_midday_recap_and_send` | 固定宽基 ETF |
 
+### 一致性验证（推荐命令，与代码一致）
+
+- **自动化（mock L4，不依赖外网）**：
+
+```bash
+cd /home/xie/etf-options-ai-assistant
+.venv/bin/python -m pytest tests/test_l4_report_attachment.py tests/test_analyze_after_close_and_send_daily_report.py -q
+```
+
+- **说明**：附录与核心榜单/打分 **解耦**；生产级「0/1 双跑」可按任务在预发对同一 `trade_date` 切换 `ASSISTANT_INCLUDE_L4_SNAPSHOT`，对 Ding 正文或落盘 JSON 剔除 `## L4 / 估值摘要` 段后做人工或脚本 diff（尚无统一 `compare_*` 包装脚本时，以本 pytest + 任务入口为准）。
+
 ## 变更记录
 
 - **2026-05-04**：`quality-backstop-audit` 切换为 `orchestrator_cli.py run daily_health`（`schedule` 未改）。

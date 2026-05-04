@@ -1,0 +1,23 @@
+# 助手侧与插件工具返回对齐的稳定错误码（人类可读说明）。
+# 失败响应建议字段：success=false, error_code, quality_status=error, message（可选）, _meta（可选）
+version: 1
+error_codes:
+  UPSTREAM_FETCH_FAILED:
+    zh: 上游数据源请求失败
+  RATE_LIMITED:
+    zh: 触发限流或配额超限
+  INVALID_PARAMS:
+    zh: 参数错误
+  NO_DATA:
+    zh: 无数据返回
+  PLUGIN_UNAVAILABLE:
+    zh: 插件或合并工具不可用
+  CACHE_MISS:
+    zh: 缓存未命中且在线拉取失败
+
+quality_status:
+  enum: [ok, degraded, error]
+  descriptions:
+    ok: 主路径成功
+    degraded: 降级或部分缺失仍可用
+    error: 不可用

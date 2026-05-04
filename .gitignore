@@ -38,8 +38,14 @@ log/
 tmp/
 temp/
 
-# Runtime output directories (do not publish)
-data/
+# Runtime output under data/ (do not publish). Track only contract mirrors in data/meta/.
+data/*
+!data/meta/
+data/meta/*
+!data/meta/schema_registry.yaml
+!data/meta/task_data_map.yaml
+!data/meta/data_contract_version.json
+!data/meta/error_codes.yaml
 memory/
 workflows/data/
 workflows/logs/
