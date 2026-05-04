@@ -18,6 +18,7 @@ from analysis.etf_rotation_core import (
 )
 from src.rotation_config_loader import load_rotation_config
 from src.services.indicator_runtime import resolve_indicator_runtime
+from plugins.analysis.l4_report_attachment import attach_l4_snapshot_to_report_data
 from plugins.analysis.three_factor_engine_v3 import compute_three_factor_v3_candidates
 
 
@@ -1645,19 +1646,27 @@ def tool_etf_rotation_research(
         )
 
     # 落盘：给“发送工具（按 last report 读取）”提供稳定数据源，避免 agent 大段传参导致 summary 丢失/退化。
+    report_data: Dict[str, Any] = {
+        "report_type": "etf_rotation_research",
+        "llm_summary": llm_summary,
+        "raw": {
+            "ranked": ranked_payload,
+            "sector_rotation": sector_rotation,
+            "errors": errors,
+            "shadow_compare": shadow_compare,
+            "artifact_refs": artifact_refs,
+        },
+    }
+    attach_l4_snapshot_to_report_data(
+        report_data,
+        symbols=[str(x.get("symbol") or "") for x in top5_payload if isinstance(x, dict)],
+        trade_date=trade_date,
+        task_id="etf-rotation-research",
+        run_id=run_id,
+        max_symbols=8,
+    )
     try:
         date_key = _today_key()
-        report_data = {
-            "report_type": "etf_rotation_research",
-            "llm_summary": llm_summary,
-            "raw": {
-                "ranked": ranked_payload,
-                "sector_rotation": sector_rotation,
-                "errors": errors,
-                "shadow_compare": shadow_compare,
-                "artifact_refs": artifact_refs,
-            },
-        }
         _safe_write_json(
             _memory_dir() / f"etf_rotation_last_report_{date_key}.json",
             {"sentable": True, "date_key": date_key, "report_data": report_data},
@@ -1730,6 +1739,14 @@ def tool_etf_rotation_research(
                     "three_factor_context": three_factor_context,
                     "artifacts": artifact_refs,
                 },
+                **(
+                    {
+                        "l4_snapshot": report_data["l4_snapshot"],
+                        "l4_markdown_appendix": report_data.get("l4_markdown_appendix"),
+                    }
+                    if report_data.get("l4_snapshot") or report_data.get("l4_markdown_appendix")
+                    else {}
+                ),
             },
         },
     }

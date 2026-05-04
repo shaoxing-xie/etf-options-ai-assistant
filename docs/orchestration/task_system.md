@@ -16,6 +16,7 @@
 1. **Registry 总开关**：`tasks_registry.yaml` 顶层 `orchestrator.enabled: false` 时，CLI 返回 `orchestrator_disabled_in_registry`。
 2. **单任务开关**：各 `tasks[].enabled: false`。
 3. **Cron**：保持原 `tool_run_*` 的 `jobs.json` 条目，不改为 `exec` 即回滚到旧路径（时间保持，§2.1）。
+4. **T2 L4 附录**：`ASSISTANT_INCLUDE_L4_SNAPSHOT=0` 关闭所有 T2 链路上的 `tool_l4_*` 附加块（核心正文与旧行为对齐）；契约字段见 `report_l4_snapshot_attachment_v1`（`data/meta/schema_registry.yaml`）。
 
 ## 时间保持与 `cron_parity` 对表
 

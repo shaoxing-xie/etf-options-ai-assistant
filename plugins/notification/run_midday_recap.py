@@ -1155,6 +1155,22 @@ def tool_run_midday_recap_and_send(
         for e in errs[:6]:
             if isinstance(e, dict):
                 lines.append(f"- {e.get('step')}: {e.get('error')}")
+    try:
+        from plugins.analysis.l4_report_attachment import attach_l4_snapshot_to_report_data
+
+        _td = str(mr.get("date") or report_data.get("date") or "").strip()
+        attach_l4_snapshot_to_report_data(
+            report_data,
+            symbols=["510300", "510500", "588000", "159915"],
+            trade_date=_td,
+            task_id="etf-midday-recap-1200",
+        )
+        _apx = str(report_data.get("l4_markdown_appendix") or "").strip()
+        if _apx:
+            lines.append("")
+            lines.extend(_apx.splitlines())
+    except Exception:
+        pass
     message = "\n".join(lines).strip()
 
     from .send_dingtalk_message import tool_send_dingtalk_message

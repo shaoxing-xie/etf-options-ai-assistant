@@ -351,13 +351,29 @@ def _persist_new_data_layer(*, screen: Dict[str, Any], fin: Dict[str, Any], arti
     quality_status = "degraded" if bool((screen or {}).get("degraded")) else "ok"
 
     recommendations_path = ROOT / "data" / "decisions" / "recommendations" / f"nightly_{trade_date}.json"
+    payload: Dict[str, Any] = {
+        "run_date": trade_date,
+        "screening": screen,
+        "artifact": artifact,
+    }
+    try:
+        from plugins.analysis.l4_report_attachment import build_l4_bundle_for_symbols, include_l4_snapshot
+
+        if include_l4_snapshot():
+            rows = list(screen.get("data") or [])[:8]
+            syms = [str(r.get("symbol") or "") for r in rows if isinstance(r, dict)]
+            if syms:
+                payload["l4_attachment"] = build_l4_bundle_for_symbols(
+                    syms,
+                    trade_date=trade_date,
+                    task_id="nightly-stock-screening",
+                    run_id=run_id,
+                )
+    except Exception:
+        pass
     write_contract_json(
         recommendations_path,
-        payload={
-            "run_date": trade_date,
-            "screening": screen,
-            "artifact": artifact,
-        },
+        payload=payload,
         meta=MetaEnvelope(
             schema_name="screening_candidates_v1",
             schema_version="1.0.0",

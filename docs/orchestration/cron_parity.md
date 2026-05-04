@@ -47,6 +47,25 @@
 
 并把 `description` 改回描述 `run_quality_backstop_audit_cli.py` 的文案即可。
 
+## T2：`tool_l4_*` 附录（定点接入）
+
+- **开关**：`ASSISTANT_INCLUDE_L4_SNAPSHOT=1`（默认）在下列链路附加报告/产物末尾 **`## L4 / 估值摘要`**（`report_l4_snapshot_attachment_v1`）；`0`/`false`/`off` 关闭，正文与旧版一致（parity 基线）。
+- **失败策略**：L4 调用失败时降级（`quality_status` 在 `l4_snapshot._meta` / `l4_attachment._meta`），**不阻断**主报告核心段落。
+- **分档清单**：见 [`t2_l4_tier_matrix.md`](t2_l4_tier_matrix.md)。
+
+| job_id | 锚点入口 | L4 挂载 |
+|--------|-----------|---------|
+| `etf-rotation-research` | `tool_etf_rotation_research` / `report_data` | Top5 标的批量估值+PE |
+| `position-tracking` | `position_tracking_and_persist.py` | 观察池 symbols |
+| `strategy-calibration` | `strategy_calibration_and_persist.py` | 飞书定调消息附录 |
+| `weekly-selection-review` | `weekly_selection_review_and_persist.py` | `weekly_review.json` → `l4_attachment` |
+| `intraday-tail-screening` | `intraday_tail_screening_and_persist.py` | 推荐列表标的；飞书通知追加附录 |
+| `nightly-stock-screening` | `nightly_screening_and_persist.py` | 打分 Top 标的 → `nightly_*.json` payload |
+| `8c548101-85b7-4c95-a458-8b0e15317d46` | `tool_analyze_after_close_and_send_daily_report` | 日报 ETF 清单 |
+| `f0d82a29-45de-4377-9570-5dda65b3f58a` | `tool_run_opening_analysis_and_send`（legacy variant） | 开盘采集 ETF |
+| `8f2ef8c2-4d0e-4df4-b3ad-3524d74b47be` | `tool_run_opening_analysis_and_send`（realtime variant） | 同上 |
+| `etf-midday-recap-1200` | `tool_run_midday_recap_and_send` | 固定宽基 ETF |
+
 ## 变更记录
 
 - **2026-05-04**：`quality-backstop-audit` 切换为 `orchestrator_cli.py run daily_health`（`schedule` 未改）。

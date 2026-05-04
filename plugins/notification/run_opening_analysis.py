@@ -2480,6 +2480,23 @@ def tool_run_opening_analysis_and_send(
         if (runner_errs or policy_is_error)
         else ("ok_degraded" if (analysis_degraded or has_stage_degraded or policy_is_degraded) else "ok_full")
     )
+    try:
+        from plugins.analysis.l4_report_attachment import attach_l4_snapshot_to_report_data, symbols_from_opening_report_data
+
+        _td = str(report_data.get("trade_date") or report_data.get("date") or "").strip()
+        _tid = (
+            "8f2ef8c2-4d0e-4df4-b3ad-3524d74b47be"
+            if str(report_data.get("opening_report_variant") or "").strip().lower() == "realtime"
+            else "f0d82a29-45de-4377-9570-5dda65b3f58a"
+        )
+        attach_l4_snapshot_to_report_data(
+            report_data,
+            symbols=symbols_from_opening_report_data(report_data),
+            trade_date=_td,
+            task_id=_tid,
+        )
+    except Exception:
+        pass
     out = tool_send_analysis_report(
         report_data=report_data,
         mode=mode,

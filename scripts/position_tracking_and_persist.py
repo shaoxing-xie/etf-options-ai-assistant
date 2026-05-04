@@ -13,6 +13,11 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from plugins.analysis.l4_report_attachment import (
+    build_l4_bundle_for_symbols,
+    format_l4_appendix_markdown,
+    include_l4_snapshot,
+)
 from src.data_layer import MetaEnvelope, write_contract_json
 from src.orchestration.task_state_manager import TaskStateManager
 
@@ -97,7 +102,11 @@ def main() -> int:
             trade_date=trade_date,
             quality_status="ok" if rt else "degraded",
             lineage_refs=[str(ROOT / "data" / "watchlist" / "default.json")],
-            source_tools=["position_tracking_and_persist.py"],
+            source_tools=(
+                ["position_tracking_and_persist.py", "tool_l4_valuation_context", "tool_l4_pe_ttm_percentile"]
+                if snapshot.get("l4_attachment")
+                else ["position_tracking_and_persist.py"]
+            ),
         ),
     )
     mgr.finish(to_state="succeeded", reason="completed", depends_on=depends_on, condition_met=True)

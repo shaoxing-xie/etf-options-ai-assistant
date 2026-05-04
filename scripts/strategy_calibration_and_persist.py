@@ -13,6 +13,11 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from plugins.analysis.l4_report_attachment import (
+    build_l4_bundle_for_symbols,
+    format_l4_appendix_markdown,
+    include_l4_snapshot,
+)
 from src.data_layer import MetaEnvelope, write_contract_json
 from src.orchestration.task_state_manager import TaskStateManager
 
@@ -102,8 +107,17 @@ def main() -> int:
 
     # 通知（不强制失败）
     try:
+        msg_body = f"{trade_date} regime={regime} position_ceiling={position_ceiling}"
+        if include_l4_snapshot():
+            bundle = build_l4_bundle_for_symbols(
+                ["510300", "588000", "159915"],
+                trade_date=trade_date,
+                task_id="strategy-calibration",
+                run_id=run_id,
+            )
+            msg_body += "\n\n" + format_l4_appendix_markdown(bundle)
         subprocess.run(
-            [sys.executable, str(ROOT / "tool_runner.py"), "tool_send_feishu_message", json.dumps({"title": "周度策略定调", "message": f"{trade_date} regime={regime} position_ceiling={position_ceiling}", "cooldown_minutes": 0}, ensure_ascii=False)],
+            [sys.executable, str(ROOT / "tool_runner.py"), "tool_send_feishu_message", json.dumps({"title": "周度策略定调", "message": msg_body, "cooldown_minutes": 0}, ensure_ascii=False)],
             cwd=str(ROOT),
             text=True,
             capture_output=True,

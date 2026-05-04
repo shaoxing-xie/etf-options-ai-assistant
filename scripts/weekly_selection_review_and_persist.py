@@ -12,6 +12,10 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from plugins.analysis.l4_report_attachment import (
+    build_l4_bundle_for_symbols,
+    include_l4_snapshot,
+)
 from src.orchestration.task_state_manager import TaskStateManager
 
 
@@ -51,6 +55,13 @@ def main() -> int:
         "metrics": {},
         "suggestions": [],
     }
+    if include_l4_snapshot():
+        weekly["l4_attachment"] = build_l4_bundle_for_symbols(
+            ["510300", "510500", "588000", "159915"],
+            trade_date=trade_date,
+            task_id="weekly-selection-review",
+            run_id=run_id,
+        )
     (out_dir / "weekly_review.json").write_text(json.dumps(weekly, ensure_ascii=False, indent=2), encoding="utf-8")
 
     # 反馈事件化（闭环）：写入 orchestration events

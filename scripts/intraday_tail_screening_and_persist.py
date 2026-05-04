@@ -2305,6 +2305,23 @@ def run_tail_screening(max_candidates: int, notify_mode: str) -> dict[str, Any]:
 
 
 def persist_result(result: dict[str, Any]) -> dict[str, str]:
+    try:
+        from plugins.analysis.l4_report_attachment import build_l4_bundle_for_symbols, include_l4_snapshot
+
+        if include_l4_snapshot():
+            recs = result.get("recommended") if isinstance(result.get("recommended"), list) else []
+            syms = [str(x.get("symbol") or "") for x in recs[:8] if isinstance(x, dict)]
+            td = str(result.get("run_date") or _today_shanghai())
+            rid = str(result.get("run_id") or "")
+            if syms:
+                result["l4_attachment"] = build_l4_bundle_for_symbols(
+                    syms,
+                    trade_date=td,
+                    task_id="intraday-tail-screening",
+                    run_id=rid,
+                )
+    except Exception:
+        pass
     out_dir = _tail_data_dir()
     date_key = str(result.get("run_date") or _today_shanghai())
     date_path = out_dir / f"{date_key}.json"
@@ -2397,6 +2414,15 @@ def notify(result: dict[str, Any], mode: str = "prod") -> dict[str, Any]:
         reasons = x.get("reasons") or []
         if reasons:
             lines.append(f"  逻辑：{', '.join(str(r) for r in reasons[:3])}")
+    try:
+        from plugins.analysis.l4_report_attachment import format_l4_appendix_markdown
+
+        att = result.get("l4_attachment")
+        if isinstance(att, dict) and att.get("per_symbol"):
+            lines.append("")
+            lines.extend(format_l4_appendix_markdown(att).splitlines())
+    except Exception:
+        pass
     lines.append("")
     lines.append("风险提示：仅供研究参考，不构成投资建议。")
     return _run_tool(

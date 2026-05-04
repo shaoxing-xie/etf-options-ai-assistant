@@ -3578,6 +3578,11 @@ def tool_send_daily_report(
     title, structured_message = _format_daily_report(
         report_data=payload, report_date=report_date, _timing_out=fmt_timing
     )
+    appendix = ""
+    if isinstance(payload, dict):
+        appendix = str(payload.get("l4_markdown_appendix") or "").strip()
+    if appendix:
+        structured_message = structured_message.rstrip() + "\n\n" + appendix
     if timing_sink is not None and _t_fmt0 is not None:
         timing_sink["send_format_total_s"] = time.perf_counter() - _t_fmt0
         if fmt_timing:
@@ -4252,6 +4257,21 @@ def tool_analyze_after_close_and_send_daily_report(
 
     if timing_sink is not None and _tp2 is not None:
         timing_sink["pipeline_3_ensure_derive_normalize_gate_s"] = time.perf_counter() - _tp2
+
+    try:
+        from plugins.analysis.l4_report_attachment import attach_l4_snapshot_to_report_data, symbols_from_daily_report_data
+
+        _td = (report_date or "").strip() or str(
+            (rd.get("analysis") or {}).get("date") or rd.get("date") or ""
+        ).strip()
+        attach_l4_snapshot_to_report_data(
+            rd,
+            symbols=symbols_from_daily_report_data(rd),
+            trade_date=_td,
+            task_id="8c548101-85b7-4c95-a458-8b0e15317d46",
+        )
+    except Exception:
+        pass
 
     send_kw: Dict[str, Any] = dict(kwargs)
     if secret is not None:
