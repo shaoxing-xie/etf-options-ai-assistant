@@ -1,0 +1,29 @@
+执行综合健康巡检（系统+LLM+数据采集异常）。
+
+A. 系统健康检查：调用 system-monitor 插件的 system_health_check，解析 CPU/内存/磁盘/关键进程状态。若在 WSL2 且唯一告警为 sshd 未运行，视为可忽略，不触发告警。
+
+【日志路径硬约束】运行日志仅允许读取 `/home/xie/.openclaw/cron/runs/*.jsonl`；禁止读取 `~/.openclaw/workspaces/shared/cron/runs/*`。
+
+B1. LLM 健康巡检：扫描 `/home/xie/.openclaw/cron/runs/*.jsonl` 最近30分钟记录，识别 403/401/429/auth/quota/rate limit/All models failed 等错误并按 provider/model/job 聚合。
+
+B2. 数据采集异常巡检（新增）：扫描 `/home/xie/.openclaw/cron/runs/*.jsonl` **当天 00:00~当前** 的记录（以 ts/runAtMs 作为时间口径），聚合“数据采集工具处理异常/数据源采集失败”信号，输出 Top 异常摘要。
+- 关注对象：与数据采集相关的任务（例如 etf_data_collector_agent 等）以及 summary 中出现采集工具/数据源关键词的任务。
+- 识别规则（命中任一即计入异常事件）：
+  1) 记录 status=error，且 error/summary 与采集/数据源相关；
+  2) summary 含典型错误模式：`tool_fetch_`/`tool_`(采集类)、`[API Error]`、blocked/unauthorized/403/401/429/rate limit/quota、timeout、NoneType/AttributeError/Traceback/Exception、"采集失败"/"数据源异常"/"接口异常"/"部分缺失"；
+  3) 同一 jobId 在当日窗口内重复出现同类错误（按“错误签名=归一化错误摘要”合并）。
+- 汇总输出字段（用于飞书摘要）：jobId/job name（若可得）、异常类型（鉴权/限流/超时/解析异常/空数据/未知）、次数、最近发生时间、代表性错误摘要（1行）。
+
+C. 告警策略：若系统告警=true，或 LLM 异常满足（单模型30分钟>=2次，或出现403/封禁/配额阻断），或 B2 命中“数据采集硬失败/阻断类异常”（鉴权/封禁/连续失败>=3/影响关键数据源），发送一条汇总 Markdown 告警。**运维通道（硬约束）**：仅允许 `tool_send_feishu_message`（飞书 webhook）；禁止钉钉、`tool_send_daily_report` 及任何钉钉侧发送。
+D. 当无异常：输出保守口径「窗口内未观察到明确异常」；并发送一条低噪声飞书心跳摘要（仅包含窗口结论与关键统计，B2 也要给出 0 命中或降级说明）。
+
+【投递硬约束】cron delivery=none；禁止依赖调度器 announce。
+
+【执行完成硬约束】
+- 无论 C 条告警或 D 条无异常，均必须调用一次 `tool_send_feishu_message`（告警摘要或健康心跳摘要）。
+- 若未产生真实发送成功 toolResult，输出 `ERROR_NO_DELIVERY_TOOL_CALL`。
+
+【防空跑硬约束】
+- 总工具调用轮数上限：12；禁止先完整跑完全部采集再发送。
+- 在第6轮工具调用前必须进入投递分支；数据已可用则立刻 `tool_send_feishu_message`，缺失则仍用飞书发「降级版快报（含缺失项说明）」。
+- 禁止输出长篇过程说明；最终输出仅保留发送结果与必要失败原因。

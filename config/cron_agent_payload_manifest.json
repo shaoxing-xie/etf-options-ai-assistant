@@ -1,0 +1,20 @@
+{
+  "etf-backtesting-research-on-demand": {
+    "agent_id": "etf_cron_research_agent",
+    "timeout_seconds": 3600,
+    "thinking": "off",
+    "message_file": "config/cron_agent_messages/etf-backtesting-research-on-demand.txt"
+  },
+  "ops-health-merged-aedca0060dd8": {
+    "agent_id": "ops_agent",
+    "timeout_seconds": 1800,
+    "thinking": "off",
+    "message_file": "config/cron_agent_messages/ops-health-merged-aedca0060dd8.txt"
+  },
+  "manual-once-screening-emergency-stop": {
+    "agent_id": "etf_cron_inspection_agent",
+    "timeout_seconds": 900,
+    "thinking": "off",
+    "message_file": "config/cron_agent_messages/manual-once-screening-emergency-stop.txt"
+  }
+}

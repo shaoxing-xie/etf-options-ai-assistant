@@ -39,6 +39,33 @@ ROOT = _repo_root_for_data()
 ALERTS_PATH = ROOT / "config" / "alerts.yaml"
 
 
+def _orchestrator_task_runs_summary(runs: list[dict[str, Any]], trade_date_filter: str) -> dict[str, Any]:
+    """Dashboard 用聚合：步级成功率、任务 id 分布、L4 语义层 task_run 契约提示。"""
+    task_ids: list[str] = []
+    ratios: list[float] = []
+    l4_schema_hits = 0
+    for r in runs:
+        if str(r.get("schema_name") or "") == "task_run_record_v1":
+            l4_schema_hits += 1
+        p = r.get("payload") if isinstance(r.get("payload"), dict) else {}
+        tid = str(p.get("task_id") or "")
+        if tid:
+            task_ids.append(tid)
+        steps = p.get("steps")
+        if isinstance(steps, list) and steps:
+            ok = sum(1 for s in steps if isinstance(s, dict) and s.get("ok"))
+            ratios.append(ok / max(1, len(steps)))
+    out: dict[str, Any] = {
+        "run_count": len(runs),
+        "trade_date_filter": trade_date_filter or None,
+        "task_run_schema_coverage_ratio": (l4_schema_hits / len(runs)) if runs else None,
+        "unique_task_ids": sorted(set(task_ids)),
+        "step_ok_ratio_avg": (sum(ratios) / len(ratios)) if ratios else None,
+        "l4_semantic_layer": "task_runs_v1 under data/semantic",
+    }
+    return out
+
+
 def _openclaw_data_china_stock_root() -> Path:
     """Resolve plugin dev directory for health snapshot JSON (symlink or env)."""
     for key in ("OPENCLAW_DATA_CHINA_STOCK_REPO", "OPENCLAW_CHINA_STOCK_PLUGIN_ROOT"):
@@ -540,6 +567,36 @@ class ApiServices:
         if not data:
             return {"success": False, "message": "missing_semantic_file", "data": None}, 404
         return {"success": True, "message": "ok", "data": data}, 200
+
+    def get_orchestrator_task_runs(self, trade_date: str = "", limit: int = 50) -> dict[str, Any]:
+        """读取 data/semantic/task_runs_v1 下落盘的 orchestrator 运行摘要。"""
+        base = ROOT / "data" / "semantic" / "task_runs_v1"
+        if not base.is_dir():
+            return {
+                "success": True,
+                "message": "no_runs_dir",
+                "data": {"runs": [], "summary": _orchestrator_task_runs_summary([], "")},
+            }
+        lim = max(1, min(200, int(limit)))
+        td = str(trade_date or "").strip()
+        files = list(base.rglob("*.json"))
+        files.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+        runs: list[dict[str, Any]] = []
+        for fp in files:
+            try:
+                doc = json.loads(fp.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            if td:
+                payload = doc.get("payload") if isinstance(doc.get("payload"), dict) else {}
+                dtd = str(doc.get("trade_date") or payload.get("trade_date") or "")
+                if dtd != td:
+                    continue
+            runs.append(doc)
+            if len(runs) >= lim:
+                break
+        summary = _orchestrator_task_runs_summary(runs, td)
+        return {"success": True, "message": "ok", "data": {"runs": runs, "summary": summary}}
 
     def record_fallback_event(self, primary_url: str, fallback_url: str, reason: str = "") -> dict[str, Any]:
         now = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")

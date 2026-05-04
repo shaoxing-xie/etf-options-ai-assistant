@@ -17,6 +17,14 @@ from apps.chart_console.api.serializers import sanitize
 from apps.chart_console.api.services import ApiServices
 
 
+def _safe_wfile_write(handler: BaseHTTPRequestHandler, data: bytes) -> None:
+    """写入响应体；客户端提前断开（刷新/切页）时忽略 BrokenPipe，避免线程里刷屏 traceback。"""
+    try:
+        handler.wfile.write(data)
+    except (BrokenPipeError, ConnectionAbortedError, ConnectionResetError):
+        pass
+
+
 def _normalize_request_path(path: str) -> str:
     """Collapse duplicate slashes and strip a trailing slash so routing matches common URL variants."""
     p = path or "/"
@@ -43,7 +51,7 @@ class ChartApiHandler(BaseHTTPRequestHandler):
         for k, v in (headers or {}).items():
             self.send_header(str(k), str(v))
         self.end_headers()
-        self.wfile.write(payload)
+        _safe_wfile_write(self, payload)
 
     def _read_json(self) -> dict:
         length = int(self.headers.get("Content-Length", "0") or "0")
@@ -57,6 +65,10 @@ class ChartApiHandler(BaseHTTPRequestHandler):
             return {}
 
     def _serve_static(self, path: str) -> None:
+        if path == "/favicon.ico":
+            self.send_response(HTTPStatus.NO_CONTENT)
+            self.end_headers()
+            return
         if path in ("/", ""):
             target = self.frontend_dir / "index.html"
         else:
@@ -82,7 +94,7 @@ class ChartApiHandler(BaseHTTPRequestHandler):
         self.send_header("Pragma", "no-cache")
         self.send_header("Expires", "0")
         self.end_headers()
-        self.wfile.write(body)
+        _safe_wfile_write(self, body)
 
     def do_GET(self) -> None:  # noqa: N802
         parsed = urlparse(self.path)
@@ -122,6 +134,10 @@ class ChartApiHandler(BaseHTTPRequestHandler):
             self.end_headers()
             return
 
+        if path == "/favicon.ico":
+            self.send_response(HTTPStatus.NO_CONTENT)
+            self.end_headers()
+            return
         if path in ("/", ""):
             target = self.frontend_dir / "index.html"
         else:

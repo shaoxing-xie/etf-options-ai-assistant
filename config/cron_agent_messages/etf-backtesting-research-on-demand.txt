@@ -1,0 +1,1 @@
+执行按需回测研究。唯一依据：workflows/backtesting_research_on_demand.yaml。严格按该工作流 structured_message 的顺序执行：先数据插件采集/缓存读取与技术指标，再做回测与参数优化；最后输出研究结论（样本期、参数、收益、回撤、Sharpe、胜率、风险提示），不得输出确定性实盘指令。

@@ -408,6 +408,10 @@ TOOL_MAP: Dict[str, ToolSpec] = {
         module_path="plugins.analysis.l4_data_tools",
         function_name="tool_l4_pe_ttm_percentile",
     ),
+    "tool_l4_portfolio_valuation_context": ToolSpec(
+        module_path="plugins.analysis.l4_compose.portfolio_tool",
+        function_name="tool_l4_portfolio_valuation_context",
+    ),
     "tool_plugin_catalog_digest": ToolSpec(
         module_path="plugins.catalog_digest_upstream",
         function_name="tool_plugin_catalog_digest",

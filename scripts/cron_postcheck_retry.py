@@ -61,6 +61,28 @@ def _is_target_tool_success(tool_result_message: dict[str, Any], expected_tool: 
     if tool_result_message.get("isError") is True:
         return False
 
+    # Cron 统一 orchestrator_cli：外层仅一次 exec；成功以 exit=0 为主（details 结构因版本而异）
+    if expected_tool == "exec":
+        details = tool_result_message.get("details")
+        if isinstance(details, dict):
+            if details.get("exitCode") in (0, "0") or details.get("exit_code") in (0, "0"):
+                return True
+            if details.get("success") is True:
+                return True
+        text_fragments: list[str] = []
+        for item in tool_result_message.get("content") or []:
+            if item.get("type") != "text":
+                continue
+            text_fragments.append(str(item.get("text") or ""))
+        merged = "\n".join(text_fragments)
+        if '"success": true' in merged.replace(" ", "") or "'success': True" in merged:
+            return True
+        if "exitCode" in merged and ("exitCode\": 0" in merged or "exitCode\":0" in merged.replace(" ", "")):
+            return True
+        if "exit code: 0" in merged.lower():
+            return True
+        return False
+
     details = tool_result_message.get("details")
     if isinstance(details, dict):
         details_text = json.dumps(details, ensure_ascii=False)
@@ -356,6 +378,8 @@ def _extract_tools_from_message(message: str) -> list[str]:
 def _extract_expected_tool_from_constraints(message: str) -> str | None:
     if not message:
         return None
+    if "orchestrator_cli.py run" in message and "`exec`" in message:
+        return "exec"
     # Prefer explicit "single required action" constraints and parse tool call forms.
     # Example: 只调用一次 `tool_xxx(...)`；禁止调用其它工具（包括 `tool_yyy`）。
     priority_patterns = [

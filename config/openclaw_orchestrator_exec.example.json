@@ -1,0 +1,13 @@
+{
+  "_comment": "复制到 ~/.openclaw/cron/jobs.json 时合并字段；勿提交真实 token。schedule 须与现网对表。",
+  "example_daily_health_via_orchestrator": {
+    "id": "orchestrator-daily-health-example",
+    "name": "orchestrator: daily_health (example)",
+    "enabled": false,
+    "schedule": "30 16 * * 1-5",
+    "payload": {
+      "kind": "exec",
+      "command": "/bin/bash -lc \"set -a; source /home/xie/.openclaw/.env || true; set +a; cd /home/xie/etf-options-ai-assistant && /home/xie/etf-options-ai-assistant/.venv/bin/python scripts/orchestrator_cli.py run daily_health --trade-date $(date -d yesterday +%Y-%m-%d 2>/dev/null || date +%Y-%m-%d)\""
+    }
+  }
+}

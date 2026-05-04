@@ -108,6 +108,7 @@ usage() {
 环境变量:
   JOBS_JSON=<path>           等价于 --jobs
   MANUAL_ORCH_SESSION_TYPE   cron 手工触发时注入的 ORCH_SESSION_TYPE（默认: manual）
+  ORCHESTRATOR_SMOKE=0       跳过开头的 orchestrator_cli list / daily_health --dry-run 冒烟
 
 示例:
   # 工具冒烟（不发真实通知）
@@ -150,6 +151,27 @@ if [[ "${PREFLIGHT_CHECK:-1}" == "1" ]]; then
     exit 1
   fi
 fi
+
+# 仓库内 orchestrator 冒烟（不读 jobs.json；与 OpenClaw 解耦）
+# 设置 ORCHESTRATOR_SMOKE=0 可跳过
+ORCHESTRATOR_SMOKE="${ORCHESTRATOR_SMOKE:-1}"
+run_orchestrator_smoke() {
+  if [[ "$ORCHESTRATOR_SMOKE" != "1" ]]; then
+    return 0
+  fi
+  if ! "$PY_BIN" scripts/orchestrator_cli.py list >/dev/null 2>&1; then
+    echo "[test_cron_tools] ORCHESTRATOR_SMOKE_FAIL: orchestrator_cli list" >&2
+    exit 1
+  fi
+  local _td
+  _td="$(date -d yesterday +%Y-%m-%d 2>/dev/null || date +%Y-%m-%d)"
+  if ! "$PY_BIN" scripts/orchestrator_cli.py run daily_health --dry-run --trade-date "$_td" >/dev/null 2>&1; then
+    echo "[test_cron_tools] ORCHESTRATOR_SMOKE_FAIL: orchestrator_cli run daily_health --dry-run" >&2
+    exit 1
+  fi
+}
+
+run_orchestrator_smoke
 
 mkdir -p "$OUT_DIR"
 LOG="$OUT_DIR/run_$(date +%Y%m%d_%H%M%S).log"

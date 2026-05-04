@@ -1,0 +1,21 @@
+# 午间行情盘点（12:00）
+# Cron：单次调用 tool_run_midday_recap_and_send（见 workflows/README.md）
+# 完整采集逻辑见 plugins/notification/run_midday_recap.py
+
+name: midday_recap
+description: |
+  午间行情盘点与下午操作指引（report_type=midday_recap）。
+  硬推荐：`tool_run_midday_recap_and_send(mode='prod', fetch_mode='production', ...)`
+
+schedule: "0 12 * * 1-5"
+timezone: "Asia/Shanghai"
+
+steps:
+  - name: midday_recap_send
+    agent: data_collector_agent
+    tool: tool_run_midday_recap_and_send
+    description: 进程内采集并发送午间盘点（钉钉）
+    params:
+      mode: prod
+      fetch_mode: production
+    continue_on_failure: false

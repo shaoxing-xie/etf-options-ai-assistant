@@ -7,7 +7,7 @@ import pandas as pd
 from .services import ApiServices
 
 # Bump when adding semantic HTTP routes so operators can `curl /api/health` and detect stale processes.
-CHART_CONSOLE_ROUTES_TAG = "2026-05-03_semantic_l4_valuation_pe"
+CHART_CONSOLE_ROUTES_TAG = "2026-05-04_orchestrator_task_runs"
 
 
 class ApiRoutes:
@@ -210,6 +210,21 @@ class ApiRoutes:
                 str(trade_date), str(stock_code), refresh=refresh
             )
             return payload, code, {}
+        if path == "/api/orchestrator/task-runs":
+            trade_date = (query.get("trade_date") or [""])[0]
+            try:
+                lim = int((query.get("limit") or ["50"])[0])
+            except Exception:
+                lim = 50
+            return self.svc.get_orchestrator_task_runs(str(trade_date), limit=lim), 200, {}
+        if path == "/api/orchestrator/task-dashboard":
+            # 别名：与方案文档路径对齐，等同 task-runs
+            trade_date = (query.get("trade_date") or [""])[0]
+            try:
+                lim = int((query.get("limit") or ["50"])[0])
+            except Exception:
+                lim = 50
+            return self.svc.get_orchestrator_task_runs(str(trade_date), limit=lim), 200, {}
         if path == "/api/semantic/l4_pe_ttm_percentile":
             trade_date = (query.get("trade_date") or [""])[0]
             stock_code = (query.get("stock_code") or ["600519"])[0]

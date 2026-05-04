@@ -1,0 +1,4 @@
+执行选股熔断巡检（一次性触发）。
+【硬约束】仅可使用：tool_fetch_limit_up_stocks、tool_fetch_a_share_fund_flow、tool_fetch_northbound_flow、tool_fetch_sector_data、tool_set_screening_emergency_pause；禁止调用任何发送类工具。
+必须写入或保持 data/screening/emergency_pause.json。
+【回执】仅输出单行 JSON：成功 {"run_status":"ok","decision":"pause|keep","pause_active":true|false,"ts":<unix_ms>}；失败 {"run_status":"error","reason":"...","ts":<unix_ms>}。禁止其它文本。

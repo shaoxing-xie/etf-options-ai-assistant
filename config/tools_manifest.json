@@ -2024,6 +2024,32 @@
       }
     },
     {
+      "id": "tool_l4_portfolio_valuation_context",
+      "label": "L4 持仓估值聚合",
+      "description": "按权重批量调用 L4 估值上下文并聚合 confidence（非投资建议）。",
+      "description_short": "L4 持仓估值。",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "weights": {
+            "type": "object",
+            "description": "代码到权重的映射"
+          },
+          "trade_date": {
+            "type": "string",
+            "default": ""
+          },
+          "aggregation": {
+            "type": "string",
+            "default": "weighted_avg_confidence"
+          }
+        },
+        "required": [
+          "weights"
+        ]
+      }
+    },
+    {
       "id": "tool_resolve_symbol",
       "label": "L2 代码解析",
       "description": "归一化股票/ETF/指数代码与 entity_id 草稿。",
