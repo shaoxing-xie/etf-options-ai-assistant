@@ -23,6 +23,17 @@
 }
 ```
 
+## 插件侧缓存、预热与熔断（`openclaw-data-china-stock` ≥ 0.5.12）
+
+- **进程内 TTL/LRU**：`plugins/utils/cache.py`（含资金流二次内存缓存）；高频工具勿重复自建 TTLCache。
+- **磁盘预热**：插件仓库 `config/preheat_config.yaml` + `scripts/preheat_cache.py`，摘要落盘 `data/meta/preheat_result.json`；默认关闭 `preheat.enabled`。
+- **Cron（宿主）**：在 `~/.openclaw/cron/jobs.json` 增加 exec 时须 **`bash -lc`**、**`set -a; source /home/xie/.openclaw/.env; set +a`**，并用插件 venv 绝对路径调用预热脚本，例如：
+  - `/home/xie/.openclaw/extensions/openclaw-data-china-stock/.venv/bin/python`（或克隆路径下的 `.venv`）  
+  - `.../scripts/preheat_cache.py --config .../config/preheat_config.yaml`
+- 与本机 `jobs.json` 对齐的 job 片段归档：[`config/openclaw_cron_plugin_preheat_job.example.json`](../config/openclaw_cron_plugin_preheat_job.example.json)（合并时注意 id 唯一与分类排序约定）。
+- **熔断**：环境变量 `OPENCLAW_CIRCUIT_BREAKER_ENABLED=1` 启用；OPEN 时返回 `error_code=CIRCUIT_OPEN`，**非静默成功**。全球指数抓取已在各 provider 外包一层（`global_index_spot:<provider>`）。
+- **动态源 tie-break（可选）**：`config/source_priority.yaml` 默认 `dynamic_priority_enabled: false`；启用时仅在 `merge_global_index_spot_priority` 内按 `source_health_history_rollup` 成功率重排，审计追加 `data/meta/dynamic_priority_audit.jsonl`。
+
 ## 相关只读 API
 
 - Chart Console：`GET /api/semantic/data_source_health`（读插件落盘的 `source_health_snapshot.json`；无快照时按页面提示运行 `tool_probe_source_health(write_snapshot=true)`）。

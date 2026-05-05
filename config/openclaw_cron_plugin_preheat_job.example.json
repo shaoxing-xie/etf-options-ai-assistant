@@ -1,0 +1,24 @@
+{
+  "_comment": "归档示例：合并到 ~/.openclaw/cron/jobs.json 的 jobs 数组时需重新校验排序与 id 唯一性。插件路径以本机克隆为准。",
+  "id": "0496e1a9-bbec-428c-9350-51dd9a256e58",
+  "name": "plugin: 数据插件缓存预热（openclaw-data-china-stock）",
+  "description": "工作日 9:05：加载 ~/.openclaw/.env 后以插件仓库 venv 执行 scripts/preheat_cache.py。默认 preheat.enabled=false 时跳过。",
+  "enabled": true,
+  "schedule": {
+    "kind": "cron",
+    "expr": "5 9 * * 1-5",
+    "tz": "Asia/Shanghai"
+  },
+  "sessionTarget": "isolated",
+  "wakeMode": "now",
+  "payload": {
+    "kind": "agentTurn",
+    "lightContext": true,
+    "timeoutSeconds": 600,
+    "toolsAllow": ["exec"],
+    "message": "【唯一动作（硬约束）】只调用一次 `exec`，禁止调用其它工具。\nexec.arguments={\"yieldMs\": 600000, \"command\": \"/bin/bash -lc \\\"set -euo pipefail; set -a; source /home/xie/.openclaw/.env || true; set +a; /home/xie/openclaw-data-china-stock/.venv/bin/python /home/xie/openclaw-data-china-stock/scripts/preheat_cache.py --config /home/xie/openclaw-data-china-stock/config/preheat_config.yaml\\\"\"}\n必须等待命令结束并按退出码回执：exit=0 仅回复「成功」；非0仅输出一行失败原因。（payload.timeoutSeconds=600）"
+  },
+  "delivery": { "mode": "none" },
+  "agentId": "etf_data_collector_agent",
+  "category": "data_collection_cache"
+}

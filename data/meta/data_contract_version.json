@@ -1,5 +1,5 @@
 {
-  "version": "1.2.3",
-  "notes": "decision_memory_entry_v1 / decision_reflection_v1：编排决策记忆与预测验证反思（L3 JSONL）。",
-  "compatible_plugins_min": "0.5.9"
+  "version": "1.2.4",
+  "notes": "compatible_plugins_min 0.5.12：插件缓存增强、预热脚本、熔断与可选动态 tie-break；详见 docs/data-source-contract.md。",
+  "compatible_plugins_min": "0.5.12"
 }
