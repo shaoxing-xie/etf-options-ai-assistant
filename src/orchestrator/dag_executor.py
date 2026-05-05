@@ -11,10 +11,13 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Callable
 
+from src.orchestrator.checkpoint_store import CheckpointStore, filter_checkpoint_context
+from src.orchestrator.decision_memory import append_decision_memory_entry, build_memory_injection_text
 from src.orchestrator.gate import apply_l4_gate
 from src.orchestrator.registry import StepDef, TaskDef, TasksRegistry, load_tasks_registry, project_root, task_execution_plan
 from src.orchestrator.resource_lock import advisory_file_lock
 from src.orchestrator.run_record import write_task_run_v1
+from src.orchestrator.routing import merged_step_index, resolve_next_step_id, validate_step_graph
 
 
 @dataclass
@@ -35,6 +38,7 @@ class ExecutionResult:
     steps: list[StepResult] = field(default_factory=list)
     message: str = ""
     dependency_execution_order: list[str] = field(default_factory=list)
+    resumed_from_checkpoint: bool = False
 
 
 def _default_retry_cfg(defaults: dict[str, Any]) -> tuple[int, list[float]]:
@@ -257,11 +261,99 @@ class DAGExecutor:
         dry_run: bool,
         on_step: Callable[[StepResult], None] | None,
         step_prefix: str,
-    ) -> tuple[bool, list[StepResult]]:
+        orchestrator_run_id: str,
+        orchestrator_checkpoint: bool,
+        resume_checkpoint: bool,
+        force_new_run: bool,
+        clear_checkpoint: bool,
+        enable_checkpoint_for_this_task: bool,
+    ) -> tuple[bool, list[StepResult], bool, str]:
         task = self.registry.tasks[tid]
         steps_out: list[StepResult] = []
+        resumed = False
+        effective_run_id = orchestrator_run_id
+
+        if dry_run:
+            overall_ok = True
+            for step in task.steps:
+                sr = _run_step(
+                    step,
+                    task=task,
+                    defaults=self.registry.defaults,
+                    context=ctx,
+                    root=root,
+                    trade_date_env=trade_date,
+                    dry_run=True,
+                )
+                out_sr = replace(sr, step_id=f"{step_prefix}{sr.step_id}") if step_prefix else sr
+                steps_out.append(out_sr)
+                if on_step:
+                    on_step(out_sr)
+                if not sr.ok and not step.continue_on_failure:
+                    overall_ok = False
+                    break
+            if overall_ok and not _apply_quality_gates(task, ctx):
+                overall_ok = False
+            return overall_ok, steps_out, False, effective_run_id
+
+        gerr = validate_step_graph(task)
+        if gerr:
+            sr = StepResult(
+                "orchestrator_registry",
+                False,
+                {"error": gerr},
+                error=gerr,
+            )
+            out_sr = replace(sr, step_id=f"{step_prefix}{sr.step_id}") if step_prefix else sr
+            return False, [out_sr], False, effective_run_id
+
+        use_ckpt = enable_checkpoint_for_this_task and (task.checkpoint_enabled or orchestrator_checkpoint)
+        ck_store = CheckpointStore(root, ttl_hours=float(task.checkpoint_ttl_hours or 24))
+        if use_ckpt and clear_checkpoint:
+            ck_store.clear(tid, trade_date)
+
+        current_id: str | None = None
+        if not task.steps:
+            return True, [], False, effective_run_id
+        current_id = task.steps[0].id
+
+        if use_ckpt and resume_checkpoint and not force_new_run:
+            cp = ck_store.load(tid, trade_date)
+            if cp and cp.next_step_id:
+                ctx.update(cp.ctx_snapshot)
+                current_id = cp.next_step_id
+                resumed = True
+                if cp.run_id:
+                    effective_run_id = cp.run_id
+
+        idx = merged_step_index(task)
         overall_ok = True
-        for step in task.steps:
+
+        while current_id:
+            step = idx.get(current_id)
+            if not step:
+                overall_ok = False
+                sr = StepResult(
+                    current_id,
+                    False,
+                    {"error": f"unknown_step:{current_id}"},
+                    error=f"unknown_step:{current_id}",
+                )
+                out_sr = replace(sr, step_id=f"{step_prefix}{sr.step_id}") if step_prefix else sr
+                steps_out.append(out_sr)
+                if on_step:
+                    on_step(out_sr)
+                break
+
+            if task.inject_decision_memory and current_id in task.inject_memory_before_steps:
+                ent_key = task.decision_entity_context_key
+                entity = str(ctx.get(ent_key) or ctx.get("entity") or "").strip()
+                if entity:
+                    td = trade_date or ""
+                    ctx["memory_injection"] = build_memory_injection_text(
+                        entity=entity, trade_date=td, root=root
+                    )
+
             sr = _run_step(
                 step,
                 task=task,
@@ -269,20 +361,67 @@ class DAGExecutor:
                 context=ctx,
                 root=root,
                 trade_date_env=trade_date,
-                dry_run=dry_run,
+                dry_run=False,
             )
+            out = sr.output if isinstance(sr.output, dict) else {}
+            ctx["last_step_result"] = {"step_id": current_id, "ok": sr.ok, "output": out}
+            ctx.setdefault("step_results", {})
+            ctx["step_results"][current_id] = dict(ctx["last_step_result"])
+
             out_sr = replace(sr, step_id=f"{step_prefix}{sr.step_id}") if step_prefix else sr
             steps_out.append(out_sr)
             if on_step:
                 on_step(out_sr)
 
+            if current_id in task.record_decision_after_steps and sr.ok:
+                ent_key = task.decision_entity_context_key
+                entity = str(ctx.get(ent_key) or ctx.get("entity") or "").strip()
+                if entity:
+                    try:
+                        append_decision_memory_entry(
+                            task_id=tid,
+                            run_id=effective_run_id,
+                            trade_date=trade_date or "",
+                            entity=entity,
+                            decision={"step_id": current_id, "summary": "post_step_record"},
+                            signals=[{"output_keys": list(out.keys())[:40]}],
+                            step_id=current_id,
+                            root=root,
+                            quality_status=str((out.get("_meta") or {}).get("quality_status") or "ok")
+                            if isinstance(out.get("_meta"), dict)
+                            else "ok",
+                            lineage_refs=[],
+                        )
+                    except OSError:
+                        pass
+
             if not sr.ok and not step.continue_on_failure:
                 overall_ok = False
                 break
 
+            next_id = resolve_next_step_id(task, current_step_id=current_id, step_ok=sr.ok, output=out)
+
+            if use_ckpt and sr.ok and next_id is not None:
+                snap = filter_checkpoint_context(ctx, task.checkpoint_context_keys)
+                ck_store.save(
+                    tid,
+                    trade_date,
+                    run_id=effective_run_id,
+                    next_step_id=next_id,
+                    ctx_snapshot=snap,
+                )
+
+            if next_id is None:
+                break
+            current_id = next_id
+
         if overall_ok and not _apply_quality_gates(task, ctx):
             overall_ok = False
-        return overall_ok, steps_out
+
+        if overall_ok and use_ckpt:
+            ck_store.clear(tid, trade_date)
+
+        return overall_ok, steps_out, resumed, effective_run_id
 
     def execute(
         self,
@@ -293,6 +432,10 @@ class DAGExecutor:
         dry_run: bool = False,
         run_id: str | None = None,
         on_step: Callable[[StepResult], None] | None = None,
+        orchestrator_checkpoint: bool = False,
+        resume_checkpoint: bool = True,
+        force_new_run: bool = False,
+        clear_checkpoint: bool = False,
     ) -> ExecutionResult:
         ctx = dict(context or {})
         if ctx.get("profile") and not ctx.get("job"):
@@ -324,6 +467,13 @@ class DAGExecutor:
                     dependency_execution_order=list(plan),
                 )
 
+        single_plan = len(plan) == 1
+        use_ckpt_goal = (
+            single_plan
+            and not dry_run
+            and (orchestrator_checkpoint or self.registry.tasks[task_id].checkpoint_enabled)
+        )
+
         lock_path, lock_to = _goal_file_lock_path(task, trade_date=trade_date, context=ctx, root=root)
         use_lock = (
             lock_path is not None
@@ -334,12 +484,15 @@ class DAGExecutor:
 
         steps_out: list[StepResult] = []
         overall_ok = True
+        resumed_any = False
 
         try:
             with lock_ctx:
                 for pt in plan:
                     prefix = f"{pt}::" if len(plan) > 1 else ""
-                    ok, part = self._run_single_task_steps(
+                    enable_ckpt = use_ckpt_goal and (pt == task_id)
+                    can_resume = enable_ckpt and resume_checkpoint and single_plan
+                    ok, part, resumed, eff_rid = self._run_single_task_steps(
                         pt,
                         ctx=ctx,
                         root=root,
@@ -347,7 +500,16 @@ class DAGExecutor:
                         dry_run=dry_run,
                         on_step=on_step,
                         step_prefix=prefix,
+                        orchestrator_run_id=tid,
+                        orchestrator_checkpoint=orchestrator_checkpoint,
+                        resume_checkpoint=can_resume,
+                        force_new_run=force_new_run,
+                        clear_checkpoint=clear_checkpoint and enable_ckpt,
+                        enable_checkpoint_for_this_task=enable_ckpt,
                     )
+                    tid = eff_rid
+                    if resumed:
+                        resumed_any = True
                     steps_out.extend(part)
                     if not ok:
                         overall_ok = False
@@ -368,6 +530,7 @@ class DAGExecutor:
             "success": overall_ok,
             "trade_date": trade_date,
             "dry_run": dry_run,
+            "resumed_from_checkpoint": resumed_any,
             "dependency_execution_order": list(plan),
             "steps": [
                 {
@@ -394,6 +557,7 @@ class DAGExecutor:
             steps=steps_out,
             message="" if overall_ok else "step_failed_or_gate_block",
             dependency_execution_order=list(plan),
+            resumed_from_checkpoint=resumed_any,
         )
 
 

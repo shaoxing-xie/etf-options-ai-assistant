@@ -1,5 +1,5 @@
 {
-  "version": "1.2.2",
-  "notes": "report_l4_snapshot_attachment_v1：T2 Cron 报告/决策附录 L4 快照契约（估值+PE 分位摘要）。",
+  "version": "1.2.3",
+  "notes": "decision_memory_entry_v1 / decision_reflection_v1：编排决策记忆与预测验证反思（L3 JSONL）。",
   "compatible_plugins_min": "0.5.9"
 }

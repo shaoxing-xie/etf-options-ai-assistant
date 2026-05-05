@@ -93,3 +93,11 @@ tasks:
     outputs:
       - schema_name: portfolio_concentration_brief_v1
         data_layer: L4_semantic
+  - task_id: orchestrator-decision-memory
+    outputs:
+      - schema_name: decision_memory_entry_v1
+        data_layer: L3_decision
+  - task_id: prediction-verification-reflection
+    outputs:
+      - schema_name: decision_reflection_v1
+        data_layer: L3_decision

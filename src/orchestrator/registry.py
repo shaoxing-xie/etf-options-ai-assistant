@@ -39,6 +39,16 @@ class TaskDef:
     task_type: str = "dag"
     # 方案 §9：同刻争用 — file_lock 等
     concurrency: dict[str, Any] = field(default_factory=dict)
+    # LangGraph 风格扩展（可选）
+    checkpoint_enabled: bool = False
+    checkpoint_ttl_hours: int = 24
+    checkpoint_context_keys: tuple[str, ...] | None = None
+    routing: tuple[dict[str, Any], ...] = ()
+    branch_steps: list[StepDef] = field(default_factory=list)
+    inject_decision_memory: bool = False
+    inject_memory_before_steps: tuple[str, ...] = ()
+    record_decision_after_steps: tuple[str, ...] = ()
+    decision_entity_context_key: str = "symbol"
 
 
 @dataclass
@@ -47,6 +57,32 @@ class TasksRegistry:
     orchestrator_enabled: bool
     defaults: dict[str, Any]
     tasks: dict[str, TaskDef]
+
+
+def _steps_from_yaml(step_list: object) -> list[StepDef]:
+    steps: list[StepDef] = []
+    if not isinstance(step_list, list):
+        return steps
+    for s in step_list:
+        if not isinstance(s, dict):
+            continue
+        pfc = s.get("params_from_context")
+        pfc_t: tuple[str, ...] = ()
+        if isinstance(pfc, list):
+            pfc_t = tuple(str(x) for x in pfc if str(x).strip())
+        steps.append(
+            StepDef(
+                id=str(s.get("id") or "").strip() or "step",
+                kind=str(s.get("kind") or "tool").strip(),
+                tool=(str(s["tool"]) if s.get("tool") else None),
+                params=dict(s.get("params") or {}) if isinstance(s.get("params"), dict) else {},
+                argv_template=list(s["argv_template"]) if isinstance(s.get("argv_template"), list) else None,
+                continue_on_failure=bool(s.get("continue_on_failure", False)),
+                timeout_seconds=int(s["timeout_seconds"]) if s.get("timeout_seconds") is not None else None,
+                params_from_context=pfc_t,
+            )
+        )
+    return steps
 
 
 def _taskdefs_from_yaml_tasks(task_list: object) -> dict[str, TaskDef]:
@@ -59,26 +95,25 @@ def _taskdefs_from_yaml_tasks(task_list: object) -> dict[str, TaskDef]:
         tid = str(t.get("id") or "").strip()
         if not tid:
             continue
-        steps: list[StepDef] = []
-        for s in t.get("steps") or []:
-            if not isinstance(s, dict):
-                continue
-            pfc = s.get("params_from_context")
-            pfc_t: tuple[str, ...] = ()
-            if isinstance(pfc, list):
-                pfc_t = tuple(str(x) for x in pfc if str(x).strip())
-            steps.append(
-                StepDef(
-                    id=str(s.get("id") or "").strip() or "step",
-                    kind=str(s.get("kind") or "tool").strip(),
-                    tool=(str(s["tool"]) if s.get("tool") else None),
-                    params=dict(s.get("params") or {}) if isinstance(s.get("params"), dict) else {},
-                    argv_template=list(s["argv_template"]) if isinstance(s.get("argv_template"), list) else None,
-                    continue_on_failure=bool(s.get("continue_on_failure", False)),
-                    timeout_seconds=int(s["timeout_seconds"]) if s.get("timeout_seconds") is not None else None,
-                    params_from_context=pfc_t,
-                )
-            )
+        steps = _steps_from_yaml(t.get("steps") or [])
+        branch_steps = _steps_from_yaml(t.get("branch_steps") or [])
+        routing_raw = t.get("routing") or []
+        routing_t: tuple[dict[str, Any], ...] = ()
+        if isinstance(routing_raw, list):
+            routing_t = tuple(x for x in routing_raw if isinstance(x, dict))
+        cttl = t.get("checkpoint_ttl_hours")
+        try:
+            ttl_h = int(cttl) if cttl is not None else 24
+        except (TypeError, ValueError):
+            ttl_h = 24
+        ck_keys = t.get("checkpoint_context_keys")
+        ck_t: tuple[str, ...] | None = None
+        if isinstance(ck_keys, list):
+            ck_t = tuple(str(x) for x in ck_keys if str(x).strip())
+        inj_steps = t.get("inject_memory_before_steps") or []
+        inj_t = tuple(str(x) for x in inj_steps if str(x).strip()) if isinstance(inj_steps, list) else ()
+        rec_steps = t.get("record_decision_after_steps") or []
+        rec_t = tuple(str(x) for x in rec_steps if str(x).strip()) if isinstance(rec_steps, list) else ()
         repl = t.get("replacement_task_id")
         repl_s = str(repl).strip() if repl else ""
         conc = t.get("concurrency") if isinstance(t.get("concurrency"), dict) else {}
@@ -93,6 +128,15 @@ def _taskdefs_from_yaml_tasks(task_list: object) -> dict[str, TaskDef]:
             steps=steps,
             task_type=str(t.get("task_type") or "dag"),
             concurrency=dict(conc),
+            checkpoint_enabled=bool(t.get("checkpoint_enabled", False)),
+            checkpoint_ttl_hours=max(1, ttl_h),
+            checkpoint_context_keys=ck_t,
+            routing=routing_t,
+            branch_steps=branch_steps,
+            inject_decision_memory=bool(t.get("inject_decision_memory", False)),
+            inject_memory_before_steps=inj_t,
+            record_decision_after_steps=rec_t,
+            decision_entity_context_key=str(t.get("decision_entity_context_key") or "symbol").strip() or "symbol",
         )
     return tasks
 

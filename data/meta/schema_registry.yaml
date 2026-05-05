@@ -58,3 +58,11 @@ schemas:
     schema_version: "1.0.0"
     data_layer: L4_semantic
     lineage_note: "助手 tool_semantic_portfolio_concentration_brief"
+  - schema_name: decision_memory_entry_v1
+    schema_version: "1.0.0"
+    data_layer: L3_decision
+    lineage_note: "orchestrator 决策记忆 append-only JSONL data/decisions/memory/；含 entity、decision、signals、task_id、run_id"
+  - schema_name: decision_reflection_v1
+    schema_version: "1.0.0"
+    data_layer: L3_decision
+    lineage_note: "预测验证或规则引擎事后反思；可关联 decision_id / prediction 记录 lineage_refs"

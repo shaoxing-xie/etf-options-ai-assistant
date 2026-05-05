@@ -31,6 +31,26 @@ def main() -> int:
         action="store_true",
         help="跳过 Registry concurrency.file_lock（等价 context.skip_file_lock）",
     )
+    pr.add_argument(
+        "--checkpoint",
+        action="store_true",
+        help="启用步骤级 checkpoint（可与任务级 checkpoint_enabled 叠加；仅单任务依赖链时恢复）",
+    )
+    pr.add_argument(
+        "--no-resume",
+        action="store_true",
+        help="有 checkpoint 文件也不恢复，从头执行（仍会写入新的 checkpoint）",
+    )
+    pr.add_argument(
+        "--clear-checkpoint",
+        action="store_true",
+        help="执行前删除该 task_id + trade_date 的 orchestrator checkpoint",
+    )
+    pr.add_argument(
+        "--force-new-run",
+        action="store_true",
+        help="忽略已有 checkpoint，从新 run_id 开始（与 --no-resume 类似，语义对齐 TradingAgents）",
+    )
     pr.add_argument("--registry", type=str, default="", help="自定义 tasks_registry.yaml 路径")
 
     pl = sub.add_parser("list", help="列出已注册任务 id")
@@ -80,11 +100,16 @@ def main() -> int:
             context=ctx,
             trade_date=td,
             dry_run=bool(args.dry_run),
+            orchestrator_checkpoint=bool(getattr(args, "checkpoint", False)),
+            resume_checkpoint=not bool(getattr(args, "no_resume", False)),
+            force_new_run=bool(getattr(args, "force_new_run", False)),
+            clear_checkpoint=bool(getattr(args, "clear_checkpoint", False)),
         )
         out = {
             "success": res.success,
             "task_id": res.task_id,
             "run_id": res.run_id,
+            "resumed_from_checkpoint": res.resumed_from_checkpoint,
             "message": res.message,
             "dependency_execution_order": res.dependency_execution_order,
             "steps": [

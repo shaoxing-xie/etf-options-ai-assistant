@@ -1,4 +1,4 @@
-# 任务编排系统（v0.6）
+# 任务编排系统（v0.7）
 
 ## 目标完成度（核心原则）
 
@@ -8,8 +8,8 @@
 
 - **任务定义**：[`config/tasks_registry.yaml`](../../config/tasks_registry.yaml)
 - **执行入口**：`scripts/orchestrator_cli.py`（`run` / `list`）
-- **实现包**：`src/orchestrator/`（`DAGExecutor`、`gate`、Registry 加载）
-- **运行落盘**：`data/semantic/task_runs_v1/{YYYY_MM_DD}/{run_id}.json`（`task_run_record_v1`）
+- **实现包**：`src/orchestrator/`（`DAGExecutor`、`gate`、Registry、`routing`、`checkpoint_store`、`decision_memory`）
+- **运行落盘**：`data/semantic/task_runs_v1/{YYYY_MM_DD}/{run_id}.json`（`task_run_record_v1`）；checkpoint：`data/meta/orchestrator_checkpoints/`；决策记忆：`data/decisions/memory/decisions_{YYYY-MM-DD}.jsonl`
 
 ## 回滚开关
 
@@ -51,6 +51,29 @@
 - **monitor phase**：`unified_intraday` 示例步骤使用 `params_from_context: [phase]`，由 `--context '{"phase":"midday"}'` 覆盖 YAML 默认 `phase`。
 - **§9 同刻争用**：`tasks[].concurrency.file_lock: true` 时，非 dry-run 对 `data/meta/orchestrator_locks/<task>_<trade_date>_<job>.lock` 使用 **fcntl 建议锁**；超时见 `lock_acquire_timeout_seconds`。测试或紧急旁路：`ORCHESTRATOR_NO_FILE_LOCK=1` 或 CLI **`--no-file-lock`**（写入 `context.skip_file_lock`）。
 
+## 条件路由（步骤级分支）
+
+- **语义**：`routing` 决定「下一步 step_id」；**`quality_gates`** 仍在**全部步骤完成后**对 `context` 做最终硬闸（与 routing 分工：routing=流向，gate=出口）。
+- **主链**：仅 `steps` 按顺序构成默认下一跳；`branch_steps` 仅在被 routing 指到时执行。
+- **`when` 语法**（安全比较，禁止任意代码）：左值须为 `ok`、`step_id` 或 `output` 开头的点路径；支持运算符 `==`、`!=`、`<`、`>`、`<=`、`>=`。右值为字面量（无引号单词、`true`/`false`、数字或引号字符串）。
+  - 示例：`output.quality_status == error`、`output.success == false`、`ok == true`
+- **实现**：`src/orchestrator/routing.py`；配置校验：`validate_step_graph`（未知 source/target 会失败）。
+
+## Checkpoint（步骤级恢复）
+
+- **启用**：任务级 `checkpoint_enabled: true` 和/或 CLI `--checkpoint`；**仅当依赖展开为单任务**（`len(plan)==1`）时恢复，避免依赖任务与目标混跑导致重复副作用。
+- **键**：`task_id` + `trade_date`；TTL：`checkpoint_ttl_hours`（默认 24）。
+- **CLI**：`--checkpoint`、`--no-resume`、`--clear-checkpoint`、`--force-new-run`（见 `scripts/orchestrator_cli.py --help`）。
+- **成功收尾**：任务整体成功（含 quality gate）后删除 checkpoint 文件；失败或中断保留以便下次恢复。
+- **上下文体积**：`checkpoint_context_keys` 可限定快照键；默认过滤大对象（见 `filter_checkpoint_context`）。
+
+## 决策记忆与预测验证衔接（L3）
+
+- **契约**：`decision_memory_entry_v1`、`decision_reflection_v1`（见 `data/meta/schema_registry.yaml`）。
+- **落盘**：`data/decisions/memory/decisions_{trade_date}.jsonl`（append-only，含 `_meta`）。
+- **任务级字段**：`inject_decision_memory`、`inject_memory_before_steps`、`record_decision_after_steps`、`decision_entity_context_key`（上下文需提供标的，如 `symbol`）。
+- **预测验证写反思**：`python scripts/verify_predictions.py --date YYYYMMDD --write-decision-reflection`（与区间/方向验证结果联动）。
+
 ## 现网 jobs 对表导出（仓库侧）
 
 ```bash
@@ -81,6 +104,8 @@ cd /home/xie/etf-options-ai-assistant
 .venv/bin/python -m pytest \
   tests/test_orchestrator_registry.py tests/test_orchestrator_gate.py \
   tests/test_orchestrator_dag_dry_run.py tests/test_orchestrator_dag_dependencies.py \
+  tests/test_orchestrator_routing.py tests/test_orchestrator_checkpoint.py \
+  tests/test_orchestrator_decision_memory.py \
   tests/test_orchestrator_daily_health_budget.py tests/test_orchestrator_context_inject.py \
   tests/integration/test_orchestrator_cli_smoke.py tests/integration/test_orchestrator_task_runs_api.py \
   tests/integration/test_export_cron_parity.py -q

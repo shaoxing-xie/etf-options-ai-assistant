@@ -89,6 +89,12 @@ tasks:
     enabled: false
     deprecated: false
     dependencies: []
+    # 灰度：启用后请在 Cron --context 传入 symbol（或 entity）以便记忆注入/落库；单任务链方可 --checkpoint 恢复
+    checkpoint_enabled: false
+    inject_decision_memory: false
+    inject_memory_before_steps: [prediction_verification]
+    record_decision_after_steps: [prediction_verification]
+    decision_entity_context_key: symbol
     steps:
       - id: prediction_verification
         kind: tool

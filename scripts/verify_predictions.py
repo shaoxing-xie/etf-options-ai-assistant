@@ -185,7 +185,43 @@ def verify_prediction_record(
     
     return record
 
-def verify_predictions_for_date(date: str, symbol: Optional[str] = None) -> Dict[str, Any]:
+def _maybe_append_range_reflection(
+    *,
+    record: Dict[str, Any],
+    symbol: str,
+    trade_date_yyyymmdd: str,
+    write_reflection: bool,
+) -> None:
+    if not write_reflection:
+        return
+    try:
+        from src.orchestrator.decision_memory import append_decision_reflection, rule_reflection_from_range_hit
+        import uuid
+
+        ar = record.get("actual_range") if isinstance(record.get("actual_range"), dict) else {}
+        hit = bool(ar.get("hit"))
+        cov = ar.get("coverage_rate")
+        try:
+            cov_f = float(cov) if cov is not None else None
+        except (TypeError, ValueError):
+            cov_f = None
+        td = f"{trade_date_yyyymmdd[:4]}-{trade_date_yyyymmdd[4:6]}-{trade_date_yyyymmdd[6:8]}"
+        refl = rule_reflection_from_range_hit(symbol=symbol, hit=hit, coverage_rate=cov_f)
+        append_decision_reflection(
+            task_id="prediction-verification-reflection",
+            run_id=f"ver_{uuid.uuid4().hex[:12]}",
+            trade_date=td,
+            entity=symbol,
+            reflection=refl,
+            lineage_refs=[],
+        )
+    except Exception as e:
+        logger.warning("写入 decision_reflection_v1 失败: %s", e)
+
+
+def verify_predictions_for_date(
+    date: str, symbol: Optional[str] = None, *, write_decision_reflection: bool = False
+) -> Dict[str, Any]:
     """
     验证指定日期的所有预测记录
     
@@ -230,7 +266,13 @@ def verify_predictions_for_date(date: str, symbol: Optional[str] = None) -> Dict
         
         # 验证预测
         record = verify_prediction_record(record, actual_prices)
-        
+        _maybe_append_range_reflection(
+            record=record,
+            symbol=str(record_symbol),
+            trade_date_yyyymmdd=date,
+            write_reflection=write_decision_reflection,
+        )
+
         # 统计
         verified_count += 1
         if record['actual_range']['hit']:
@@ -295,7 +337,39 @@ def _load_index_daily_close(symbol: str, date: str) -> Optional[float]:
     return None
 
 
-def verify_direction_predictions_for_target_date(target_date: str) -> Dict[str, Any]:
+def _maybe_append_direction_reflection(
+    *,
+    symbol: str,
+    predicted: str,
+    actual: str,
+    hit: bool,
+    target_date_yyyy_mm_dd: str,
+    write_reflection: bool,
+) -> None:
+    if not write_reflection:
+        return
+    try:
+        from src.orchestrator.decision_memory import append_decision_reflection, rule_reflection_from_direction
+        import uuid
+
+        refl = rule_reflection_from_direction(
+            symbol=symbol, predicted=predicted, actual=actual, hit=hit
+        )
+        append_decision_reflection(
+            task_id="prediction-verification-reflection",
+            run_id=f"ver_{uuid.uuid4().hex[:12]}",
+            trade_date=target_date_yyyy_mm_dd,
+            entity=symbol,
+            reflection=refl,
+            lineage_refs=[],
+        )
+    except Exception as e:
+        logger.warning("写入方向 decision_reflection_v1 失败: %s", e)
+
+
+def verify_direction_predictions_for_target_date(
+    target_date: str, *, write_decision_reflection: bool = False
+) -> Dict[str, Any]:
     verified = 0
     hit = 0
     miss = 0
@@ -337,6 +411,19 @@ def verify_direction_predictions_for_target_date(target_date: str) -> Dict[str, 
             record["direction_verified"] = True
             dirty = True
             verified += 1
+            td_iso = (
+                f"{target_date[:4]}-{target_date[4:6]}-{target_date[6:8]}"
+                if len(target_date) == 8 and target_date.isdigit()
+                else target_date
+            )
+            _maybe_append_direction_reflection(
+                symbol=symbol,
+                predicted=predicted_direction,
+                actual=actual_direction,
+                hit=ok,
+                target_date_yyyy_mm_dd=td_iso,
+                write_reflection=write_decision_reflection,
+            )
             if ok:
                 hit += 1
             else:
@@ -392,14 +479,22 @@ def main():
         help='仅验证该标的；省略则验证当日文件内全部标的',
     )
     parser.add_argument('--report', action='store_true', help='生成报告')
-    
+    parser.add_argument(
+        '--write-decision-reflection',
+        action='store_true',
+        help='将验证结果以 decision_reflection_v1 追加写入 data/decisions/memory/（契约化 JSONL）',
+    )
+
     args = parser.parse_args()
     
     logger.info(f"开始验证 {args.date} 的预测记录...")
     
     # 同日区间 + 次日方向 两类验证
-    range_stats = verify_predictions_for_date(args.date, args.symbol)
-    direction_stats = verify_direction_predictions_for_target_date(args.date)
+    wdr = bool(getattr(args, "write_decision_reflection", False))
+    range_stats = verify_predictions_for_date(args.date, args.symbol, write_decision_reflection=wdr)
+    direction_stats = verify_direction_predictions_for_target_date(
+        args.date, write_decision_reflection=wdr
+    )
     stats = {
         "verified": int(range_stats.get("verified", 0)) + int(direction_stats.get("verified", 0)),
         "hit": int(range_stats.get("hit", 0)) + int(direction_stats.get("hit", 0)),
