@@ -403,6 +403,13 @@ function renderDataSourceHealthTrend(payload) {
   });
 }
 
+/** 供投研总览等模块跳转：打开运维「数据源健康」子页并拉取快照。 */
+export async function openOpsDataSourceHealthView() {
+  setView("ops");
+  setOpsSubview("datasources");
+  await loadDataSourceHealth();
+}
+
 async function loadDataSourceHealth() {
   const tb = qs("opsDataSourcesTbody");
   const hint = qs("opsDataSourcesHint");

@@ -1512,6 +1512,88 @@ tools:
         default: weighted_avg_confidence
     required:
     - weights
+- id: tool_semantic_equity_valuation_brief
+  label: L4-semantic 单标的估值摘要
+  description: 基于 L2/L4-data 的模板化估值摘要（PE/PB/分位）；非投资建议。
+  description_short: 语义估值摘要 brief。
+  parameters:
+    type: object
+    properties:
+      symbol:
+        type: string
+        description: 股票/ETF/指数代码或简称解析入口
+        default: '600519'
+      trade_date:
+        type: string
+        description: 语义交易日 YYYY-MM-DD，空则当前日
+        default: ''
+      window_years:
+        type: integer
+        description: PE 分位回溯年数
+        default: 5
+    required:
+    - symbol
+- id: tool_semantic_flow_sentiment_brief
+  label: L4-semantic 资金流向与情绪摘要
+  description: 基于 A 股资金流向工具模板的资金/板块摘要；非投资建议。
+  description_short: 语义资金情绪 brief。
+  parameters:
+    type: object
+    properties:
+      trade_date:
+        type: string
+        default: ''
+      sector_window:
+        type: string
+        description: sector_rank 的 rank_window，如 d5/d10
+        default: d5
+      limit:
+        type: number
+        default: 8
+- id: tool_semantic_market_regime_brief
+  label: L4-semantic 市场状态综合摘要
+  description: 市场 regime 识别 + 指数快照 + 可选板块热度；非投资建议。
+  description_short: 语义市场 regime brief。
+  parameters:
+    type: object
+    properties:
+      benchmark_etf:
+        type: string
+        default: '510300'
+      index_code:
+        type: string
+        default: '000001'
+      mode:
+        type: string
+        description: tool_detect_market_regime 的 prod|test
+        default: prod
+      trade_date:
+        type: string
+        default: ''
+      include_sector_heat:
+        type: boolean
+        default: true
+- id: tool_semantic_portfolio_concentration_brief
+  label: L4-semantic 持仓集中度与估值摘要
+  description: 组合集中度（HHI）+ 逐标的 PE 分位 brief；非投资建议。
+  description_short: 语义组合集中度 brief。
+  parameters:
+    type: object
+    properties:
+      weights:
+        type: object
+        description: 代码到权重映射，如 {"600519":0.3,"510300":0.7}
+      trade_date:
+        type: string
+        default: ''
+      window_years:
+        type: integer
+        default: 5
+      max_symbols:
+        type: integer
+        default: 25
+    required:
+    - weights
 - id: tool_resolve_symbol
   label: L2 代码解析
   description: 归一化股票/ETF/指数代码与 entity_id 草稿。

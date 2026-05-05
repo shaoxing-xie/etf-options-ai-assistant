@@ -47,6 +47,16 @@ def test_tool_detect_market_regime_smoke() -> None:
     assert "success" in out
 
 
+def test_tool_semantic_equity_valuation_brief_smoke() -> None:
+    out = _run_tool(
+        "tool_semantic_equity_valuation_brief",
+        {"symbol": "510300", "trade_date": "2026-05-05", "window_years": 5},
+    )
+    assert isinstance(out, dict)
+    assert "success" in out
+    assert (out.get("_meta") or {}).get("data_layer") == "L4_semantic"
+
+
 def test_tool_etf_rotation_research_smoke() -> None:
     # Use a single symbol to reduce dependency on full ETF pool cache.
     out = _run_tool(

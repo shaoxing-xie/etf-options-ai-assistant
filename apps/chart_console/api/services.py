@@ -568,6 +568,80 @@ class ApiServices:
             return {"success": False, "message": "missing_semantic_file", "data": None}, 404
         return {"success": True, "message": "ok", "data": data}, 200
 
+    def get_semantic_equity_valuation_brief(
+        self,
+        trade_date: str = "",
+        stock_code: str = "600519",
+        window_years: int = 5,
+    ) -> tuple[dict[str, Any], int]:
+        """与 tool_semantic_equity_valuation_brief 同源，供 Chart 只读消费。"""
+        from plugins.analysis.semantic.equity_valuation_brief import tool_semantic_equity_valuation_brief
+
+        td = str(trade_date or "").strip()
+        code = str(stock_code or "").strip() or "600519"
+        raw = tool_semantic_equity_valuation_brief(symbol=code, trade_date=td, window_years=int(window_years))
+        if not isinstance(raw, dict):
+            return {"success": False, "message": "invalid_tool_response", "data": None}, 500
+        st = 200 if raw.get("success") or raw.get("quality_status") != "error" else 500
+        return raw, st
+
+    def get_semantic_flow_sentiment_brief(
+        self,
+        trade_date: str = "",
+        sector_window: str = "d5",
+        limit: int = 8,
+    ) -> tuple[dict[str, Any], int]:
+        from plugins.analysis.semantic.flow_sentiment_brief import tool_semantic_flow_sentiment_brief
+
+        raw = tool_semantic_flow_sentiment_brief(
+            trade_date=str(trade_date or "").strip(),
+            sector_window=str(sector_window or "d5"),
+            limit=int(limit),
+        )
+        if not isinstance(raw, dict):
+            return {"success": False, "message": "invalid_tool_response", "data": None}, 500
+        st = 200 if raw.get("success") or raw.get("quality_status") != "error" else 500
+        return raw, st
+
+    def get_semantic_market_regime_brief(
+        self,
+        trade_date: str = "",
+        benchmark_etf: str = "510300",
+        index_code: str = "000001",
+        mode: str = "prod",
+        include_sector_heat: bool = True,
+    ) -> tuple[dict[str, Any], int]:
+        from plugins.analysis.semantic.market_regime_brief import tool_semantic_market_regime_brief
+
+        raw = tool_semantic_market_regime_brief(
+            benchmark_etf=str(benchmark_etf or "510300"),
+            index_code=str(index_code or "000001"),
+            mode=str(mode or "prod"),
+            trade_date=str(trade_date or "").strip(),
+            include_sector_heat=bool(include_sector_heat),
+        )
+        if not isinstance(raw, dict):
+            return {"success": False, "message": "invalid_tool_response", "data": None}, 500
+        st = 200 if raw.get("success") or raw.get("quality_status") != "error" else 500
+        return raw, st
+
+    def post_semantic_portfolio_concentration_brief(self, body: dict[str, Any]) -> tuple[dict[str, Any], int]:
+        from plugins.analysis.semantic.portfolio_concentration_brief import tool_semantic_portfolio_concentration_brief
+
+        weights = body.get("weights")
+        if not isinstance(weights, dict):
+            return {"success": False, "message": "weights object required", "data": None}, 400
+        raw = tool_semantic_portfolio_concentration_brief(
+            weights=weights,
+            trade_date=str(body.get("trade_date") or ""),
+            window_years=int(body.get("window_years") or 5),
+            max_symbols=int(body.get("max_symbols") or 25),
+        )
+        if not isinstance(raw, dict):
+            return {"success": False, "message": "invalid_tool_response", "data": None}, 500
+        st = 200 if raw.get("success") or raw.get("quality_status") != "error" else 500
+        return raw, st
+
     def get_orchestrator_task_runs(self, trade_date: str = "", limit: int = 50) -> dict[str, Any]:
         """读取 data/semantic/task_runs_v1 下落盘的 orchestrator 运行摘要。"""
         base = ROOT / "data" / "semantic" / "task_runs_v1"

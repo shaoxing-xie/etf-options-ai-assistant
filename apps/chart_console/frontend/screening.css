@@ -18,6 +18,34 @@
   line-height: 1.45;
 }
 
+.research-inline-link {
+  background: transparent;
+  border: none;
+  color: #9ad1ff;
+  padding: 0 4px 0 0;
+  cursor: pointer;
+  font-size: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.research-inline-link:hover {
+  color: #c8e4ff;
+}
+
+.research-task-health-warn {
+  padding: 6px 8px;
+  border-radius: 8px;
+  border: 1px solid #7a5a1d;
+  background: rgba(122, 90, 29, 0.18);
+}
+
+.research-task-health-list {
+  margin: 6px 0 0 1.1em;
+  padding: 0;
+  line-height: 1.5;
+}
+
 .screening-help-list {
   margin: 6px 0 0 1em;
   padding: 0;

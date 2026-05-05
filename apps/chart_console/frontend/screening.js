@@ -1,5 +1,6 @@
 import { jget, jpost } from "./api.js";
 import { loadChartForSymbol, setView } from "./app.js";
+import { openOpsDataSourceHealthView } from "./ops.js";
 
 function qs(id) {
   return document.getElementById(id);
@@ -48,6 +49,12 @@ let cachedSummary = null;
 let tailCached = null;
 let researchCache = { dashboard: {}, view: {}, timeline: [] };
 let researchSixIndexSnapshot = {};
+/** 投研懒加载与跨页跳转：轮动 / 六指数按需拉取；与主交易日同步。 */
+let researchLastTradeDate = "";
+let researchRotationDatesList = [];
+let researchSixIndexDatesList = [];
+let researchRotationLoadedFor = "";
+let researchSixIndexLoadedFor = "";
 let fallbackBannerTimer = null;
 const RESEARCH_ALERT_DEFAULTS = {
   hit_rate_5d_pct: { warn_below: 0.45, bad_below: 0.35 },
@@ -1576,6 +1583,103 @@ function renderResearchAnomalyDrawer() {
     .join("");
 }
 
+function getActiveResearchSubview() {
+  if (qs("subtab-research-six-index")?.getAttribute("aria-selected") === "true") return "six-index";
+  if (qs("subtab-research-rotation")?.getAttribute("aria-selected") === "true") return "rotation";
+  if (qs("subtab-research-tail")?.getAttribute("aria-selected") === "true") return "tail";
+  if (qs("subtab-research-nightly")?.getAttribute("aria-selected") === "true") return "nightly";
+  if (qs("subtab-research-overview")?.getAttribute("aria-selected") === "true") return "overview";
+  return "overview";
+}
+
+function renderResearchTaskHealth(taskHealth) {
+  const el = qs("researchTaskHealthPanel");
+  if (!el) return;
+  const th = taskHealth && typeof taskHealth === "object" ? taskHealth : {};
+  const n = Number(th.stale_or_missing_count);
+  const tasks = Array.isArray(th.stale_or_missing_tasks) ? th.stale_or_missing_tasks.filter(Boolean) : [];
+  if (!Number.isFinite(n) || n <= 0) {
+    el.innerHTML = `<div class="screening-muted">聚合任务健康：无缺失/陈旧快照（<code>research_metrics.task_health</code>）。</div>`;
+    return;
+  }
+  const list = tasks.length
+    ? `<ul class="research-task-health-list">${tasks.map((t) => `<li><code>${esc(t)}</code></li>`).join("")}</ul>`
+    : "";
+  el.innerHTML = `<div class="research-task-health-warn"><strong>聚合提醒</strong>：${esc(String(n))} 个任务缺失或快照陈旧。</div>${list}<div class="screening-muted" style="margin-top:4px;">对照左侧任务表与右侧时间轴；可与运维任务看板交叉核对。</div>`;
+}
+
+async function fetchRotationWithFallback(tradeDateOverride, rotationDates, tradeDate) {
+  let rotation = await jgetWithFallback(
+    tradeDate
+      ? `/api/semantic/rotation_latest?trade_date=${encodeURIComponent(tradeDate)}`
+      : "/api/semantic/rotation_latest",
+    "",
+  );
+  let outDate = tradeDate;
+  if (!tradeDateOverride && rotationDates.length > 1 && tradeDate) {
+    const curRecs = Array.isArray((rotation.data || {}).recommendations) ? rotation.data.recommendations : [];
+    if (curRecs.length > 0 && curRecs.length < 5) {
+      const sorted = rotationDates.slice().sort();
+      const prev = sorted.filter((d) => String(d) < String(tradeDate)).pop();
+      if (prev) {
+        const prevRot = await jgetWithFallback(`/api/semantic/rotation_latest?trade_date=${encodeURIComponent(prev)}`, "");
+        const prevRecs = Array.isArray((prevRot.data || {}).recommendations) ? prevRot.data.recommendations : [];
+        if (prevRecs.length >= curRecs.length) {
+          rotation = prevRot;
+          if (!rotation.data || typeof rotation.data !== "object") rotation.data = {};
+          rotation.data._requested_trade_date = tradeDate;
+          rotation.data._auto_fallback_to_prev_trade_date = true;
+          outDate = prev;
+        }
+      }
+    }
+  }
+  return { rotation, tradeDate: outDate };
+}
+
+async function ensureResearchRotationLoaded() {
+  const td = String(qs("researchDatePick")?.value || researchLastTradeDate || "").trim();
+  if (!td) return;
+  if (researchRotationLoadedFor === td) return;
+  const rotationDates = researchRotationDatesList.length ? researchRotationDatesList : [];
+  const { rotation } = await fetchRotationWithFallback("", rotationDates, td);
+  renderRotationPanel(rotation.data || {});
+  researchRotationLoadedFor = td;
+}
+
+async function ensureResearchSixIndexLoaded() {
+  const pick = qs("researchSixIndexDatePick");
+  const sixIndexDates = researchSixIndexDatesList;
+  const tdPick = String(pick?.value || "").trim();
+  const tradeDatePick = String(qs("researchDatePick")?.value || researchLastTradeDate || "").trim();
+  const sixIndexLatestTradeDate = sixIndexDates.reduce((acc, d) => (String(d) > String(acc) ? d : acc), "");
+  const sixIndexTradeDate =
+    (tdPick && sixIndexDates.includes(tdPick) ? tdPick : "") ||
+    (tradeDatePick && sixIndexDates.includes(tradeDatePick) ? tradeDatePick : "") ||
+    sixIndexLatestTradeDate;
+  if (!sixIndexTradeDate) {
+    renderSixIndexMeta({});
+    renderSixIndexSummaryCards({});
+    renderSixIndexCards({});
+    researchSixIndexLoadedFor = "";
+    return;
+  }
+  if (researchSixIndexLoadedFor === sixIndexTradeDate && researchSixIndexSnapshot && Object.keys(researchSixIndexSnapshot).length) {
+    return;
+  }
+  const sixIndexResp = await jget(
+    sixIndexTradeDate
+      ? `/api/semantic/six_index_next_day?trade_date=${encodeURIComponent(sixIndexTradeDate)}`
+      : "/api/semantic/six_index_next_day",
+  );
+  const sixIndexData = sixIndexResp.data || {};
+  renderSixIndexMeta(sixIndexData);
+  renderSixIndexSummaryCards(sixIndexData);
+  renderSixIndexCards(sixIndexData);
+  if (pick) pick.value = sixIndexData.trade_date || sixIndexTradeDate || "";
+  researchSixIndexLoadedFor = sixIndexTradeDate;
+}
+
 function setResearchSubview(name) {
   const views = Array.from(document.querySelectorAll(".research-view[data-subview]"));
   for (const v of views) {
@@ -1793,6 +1897,7 @@ function renderRotationPanel(payload) {
 async function loadResearch(tradeDateOverride = "") {
   const status = qs("researchStatus");
   if (status) status.textContent = "加载中…";
+  const prevResearchTd = researchLastTradeDate;
   try {
     const hist = await jgetWithFallback("/api/semantic/trade_dates", "/api/tail_screening/history");
     const dates = Array.isArray(hist.data)
@@ -1834,33 +1939,21 @@ async function loadResearch(tradeDateOverride = "") {
           `/api/screening/by-date?date=${encodeURIComponent(tradeDate)}`,
         )
       : { data: {} };
-    let rotation = await jgetWithFallback(
-      tradeDate
-        ? `/api/semantic/rotation_latest?trade_date=${encodeURIComponent(tradeDate)}`
-        : "/api/semantic/rotation_latest",
-      "",
-    );
-    // Non-trading-day fallback:
-    // when user did not explicitly pick a date and current snapshot has too few RPS rows,
-    // fall back to the previous available rotation trade date for a more stable default view.
-    if (!tradeDateOverride && rotationDates.length > 1) {
-      const curRecs = Array.isArray((rotation.data || {}).recommendations) ? rotation.data.recommendations : [];
-      if (curRecs.length > 0 && curRecs.length < 5) {
-        const sorted = rotationDates.slice().sort();
-        const prev = sorted.filter((d) => String(d) < String(tradeDate)).pop();
-        if (prev) {
-          const prevRot = await jgetWithFallback(`/api/semantic/rotation_latest?trade_date=${encodeURIComponent(prev)}`, "");
-          const prevRecs = Array.isArray((prevRot.data || {}).recommendations) ? prevRot.data.recommendations : [];
-          if (prevRecs.length >= curRecs.length) {
-            rotation = prevRot;
-            if (!rotation.data || typeof rotation.data !== "object") rotation.data = {};
-            rotation.data._requested_trade_date = tradeDate;
-            rotation.data._auto_fallback_to_prev_trade_date = true;
-            tradeDate = prev;
-          }
-        }
+    const activeSub = getActiveResearchSubview();
+    const eagerRotation = Boolean(tradeDateOverride) || activeSub === "rotation";
+    const eagerSix = Boolean(tradeDateOverride) || activeSub === "six-index";
+
+    let rotation = { data: {} };
+    if (eagerRotation) {
+      if (tradeDate) {
+        const r = await fetchRotationWithFallback(tradeDateOverride, rotationDates, tradeDate);
+        rotation = r.rotation;
+        tradeDate = r.tradeDate;
+      } else {
+        rotation = await jgetWithFallback("/api/semantic/rotation_latest", "");
       }
     }
+
     const sixIndexDatesResp = await jget("/api/semantic/six_index_next_day_trade_dates");
     const sixIndexDates = Array.isArray(sixIndexDatesResp.data) ? sixIndexDatesResp.data.filter(Boolean) : [];
     // "默认选中最新交易日"必须做成与数组顺序无关的选择（避免出现显示最旧日期）。
@@ -1873,18 +1966,23 @@ async function loadResearch(tradeDateOverride = "") {
       (tradeDateOverride && sixIndexDates.includes(tradeDateOverride) ? tradeDateOverride : "") ||
       (tradeDate && sixIndexDates.includes(tradeDate) ? tradeDate : "") ||
       sixIndexLatestTradeDate;
-    const sixIndexResp = await jget(
-      sixIndexTradeDate
-        ? `/api/semantic/six_index_next_day?trade_date=${encodeURIComponent(sixIndexTradeDate)}`
-        : "/api/semantic/six_index_next_day",
-    );
+    let sixIndexData = {};
+    if (eagerSix) {
+      const sixIndexResp = await jget(
+        sixIndexTradeDate
+          ? `/api/semantic/six_index_next_day?trade_date=${encodeURIComponent(sixIndexTradeDate)}`
+          : "/api/semantic/six_index_next_day",
+      );
+      sixIndexData = sixIndexResp.data || {};
+    }
+
     const viewData = view.data || {};
     const rotationData = rotation.data || {};
-    const sixIndexData = sixIndexResp.data || {};
     const sent = metricsData.sentiment_trend || {};
     const market = data.market_state || {};
     const risk = data.risk_snapshot || {};
     renderResearchQuality(metricsData._meta || {});
+    renderResearchTaskHealth(metricsData.task_health || {});
     renderResearchKV("researchSentiment", [
       { k: "综合得分", v: sent.current_score },
       { k: "阶段", v: sent.current_stage },
@@ -1912,10 +2010,22 @@ async function loadResearch(tradeDateOverride = "") {
     renderStrategyAttribution((attributionResp.data || {}).attribution || {});
     renderResearchTaskPools(viewData);
     renderResearchTop(data.top_recommendations || []);
-    renderRotationPanel(rotationData);
-    renderSixIndexMeta(sixIndexData);
-    renderSixIndexSummaryCards(sixIndexData);
-    renderSixIndexCards(sixIndexData);
+    if (eagerRotation) {
+      renderRotationPanel(rotationData);
+    } else {
+      renderRotationPanel({});
+      researchRotationLoadedFor = "";
+    }
+    if (eagerSix) {
+      renderSixIndexMeta(sixIndexData);
+      renderSixIndexSummaryCards(sixIndexData);
+      renderSixIndexCards(sixIndexData);
+    } else {
+      renderSixIndexMeta({});
+      renderSixIndexSummaryCards({});
+      renderSixIndexCards({});
+      researchSixIndexLoadedFor = "";
+    }
     const pick = qs("researchDatePick");
     if (pick) {
       pick.innerHTML = dates
@@ -1959,7 +2069,7 @@ async function loadResearch(tradeDateOverride = "") {
         .reverse()
         .map((d) => `<option value="${esc(d)}">${esc(d)}</option>`)
         .join("");
-      sixIndexPick.value = sixIndexData.trade_date || sixIndexTradeDate || "";
+      sixIndexPick.value = eagerSix ? sixIndexData.trade_date || sixIndexTradeDate || "" : sixIndexTradeDate || "";
     }
     if (tradeDate) {
       const timeline = await jgetWithFallback(`/api/semantic/timeline?trade_date=${encodeURIComponent(tradeDate)}`, "");
@@ -1978,6 +2088,15 @@ async function loadResearch(tradeDateOverride = "") {
       renderSubTimeline("researchRotationTimeline", [], false);
       renderResearchAnomalyDrawer();
     }
+    if (String(tradeDate || "") !== String(prevResearchTd || "")) {
+      researchRotationLoadedFor = "";
+      researchSixIndexLoadedFor = "";
+    }
+    researchLastTradeDate = tradeDate || "";
+    researchRotationDatesList = Array.isArray(rotationDates) ? rotationDates.slice() : [];
+    researchSixIndexDatesList = sixIndexDates.slice();
+    if (eagerRotation && tradeDate) researchRotationLoadedFor = tradeDate;
+    if (eagerSix && sixIndexTradeDate) researchSixIndexLoadedFor = sixIndexTradeDate;
     if (status) status.textContent = "已更新";
   } catch (e) {
     if (status) status.textContent = String(e?.message || e);
@@ -2048,8 +2167,26 @@ qs("researchTailTimelineOnlyAnomaly")?.addEventListener("change", async () => {
 qs("subtab-research-overview")?.addEventListener("click", () => setResearchSubview("overview"));
 qs("subtab-research-nightly")?.addEventListener("click", () => setResearchSubview("nightly"));
 qs("subtab-research-tail")?.addEventListener("click", () => setResearchSubview("tail"));
-qs("subtab-research-rotation")?.addEventListener("click", () => setResearchSubview("rotation"));
-qs("subtab-research-six-index")?.addEventListener("click", () => setResearchSubview("six-index"));
+qs("subtab-research-rotation")?.addEventListener("click", () => {
+  setResearchSubview("rotation");
+  ensureResearchRotationLoaded().catch((err) => {
+    const st = qs("researchStatus");
+    if (st) st.textContent = String(err?.message || err);
+  });
+});
+qs("subtab-research-six-index")?.addEventListener("click", () => {
+  setResearchSubview("six-index");
+  ensureResearchSixIndexLoaded().catch((err) => {
+    const st = qs("researchStatus");
+    if (st) st.textContent = String(err?.message || err);
+  });
+});
+qs("btnResearchOpenOpsDs")?.addEventListener("click", () => {
+  openOpsDataSourceHealthView().catch((err) => {
+    const st = qs("researchStatus");
+    if (st) st.textContent = String(err?.message || err);
+  });
+});
 qs("btnResearchSixIndexCopy")?.addEventListener("click", async () => {
   const btn = qs("btnResearchSixIndexCopy");
   const text = buildSixIndexClipboardText(researchSixIndexSnapshot);
@@ -2082,14 +2219,14 @@ qs("btnResearchSixIndexCopy")?.addEventListener("click", async () => {
 qs("researchRotationDatePick")?.addEventListener("change", async (e) => {
   const v = e.target?.value || "";
   if (!v) return;
-  await loadResearch(v);
   setResearchSubview("rotation");
+  await loadResearch(v);
 });
 qs("researchSixIndexDatePick")?.addEventListener("change", async (e) => {
   const v = e.target?.value || "";
   if (!v) return;
-  await loadResearch(v);
   setResearchSubview("six-index");
+  await loadResearch(v);
 });
 qs("btnResearchAnomalyDrawer")?.addEventListener("click", () => {
   const el = qs("researchAnomalyDrawer");

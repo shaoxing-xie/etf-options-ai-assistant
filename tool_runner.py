@@ -461,6 +461,22 @@ TOOL_MAP: Dict[str, ToolSpec] = {
         module_path="utils.llm_structured_extract",
         function_name="tool_llm_json_extract",
     ),
+    "tool_semantic_equity_valuation_brief": ToolSpec(
+        module_path="plugins.analysis.semantic.equity_valuation_brief",
+        function_name="tool_semantic_equity_valuation_brief",
+    ),
+    "tool_semantic_flow_sentiment_brief": ToolSpec(
+        module_path="plugins.analysis.semantic.flow_sentiment_brief",
+        function_name="tool_semantic_flow_sentiment_brief",
+    ),
+    "tool_semantic_market_regime_brief": ToolSpec(
+        module_path="plugins.analysis.semantic.market_regime_brief",
+        function_name="tool_semantic_market_regime_brief",
+    ),
+    "tool_semantic_portfolio_concentration_brief": ToolSpec(
+        module_path="plugins.analysis.semantic.portfolio_concentration_brief",
+        function_name="tool_semantic_portfolio_concentration_brief",
+    ),
 }
 
 def main():

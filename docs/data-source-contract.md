@@ -38,3 +38,11 @@
 ## 配置门闸
 
 - Legacy 目录写入门闸：`config/feature_flags.json` 与示例 [`config/feature_flags.json.example`](../config/feature_flags.json.example)。代码缺省 **`legacy_write_enabled: false`**；本仓库已提交的 `feature_flags.json` 若含 `legacy_write_enabled: true` 则保持兼容旧行为。
+
+## `tool_semantic_*_brief`（L4_semantic）
+
+- **数据层**：`_meta.data_layer` 固定为 **`L4_semantic`**，与插件侧 **L4-data**（`tool_l4_*` 事实与分位）区分；叙事仅来自模板与阈值，不在工具内调用 LLM。
+- **`_meta` 必填字段**（与统一投研契约一致）：`schema_name` / `schema_version`、`task_id`、`run_id`（由 `semantic_meta` 生成）、`data_layer`、`generated_at`、`trade_date`、`lineage_refs`（上游 `tool_*` id 列表）、`source_tools`、`quality_status`、`confidence`（0–1）。
+- **`quality_status`**：`ok` / `degraded` / `error`；上游降级时语义工具应合并为 `degraded`（除非完全不可用则为 `error`），且 **`data.summary` 在 degraded 时仍须可读**（模板兜底句）。
+- **血缘**：估值类须包含 `tool_resolve_symbol`、`tool_l4_valuation_context`、`tool_l4_pe_ttm_percentile` 等；具体以各工具返回的 `_meta.lineage_refs` 为准。登记见 [`data/meta/schema_registry.yaml`](../data/meta/schema_registry.yaml)。
+- **Chart / Agent**：Chart 只读路由与 `tool_runner` 调用同一 Python 实现；详见 [`docs/ops/semantic_l4_openclaw_registration.md`](ops/semantic_l4_openclaw_registration.md)。

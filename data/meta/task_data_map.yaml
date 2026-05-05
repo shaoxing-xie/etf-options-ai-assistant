@@ -77,3 +77,19 @@ tasks:
     outputs:
       - schema_name: task_run_record_v1
         data_layer: L4_semantic_ops
+  - task_id: semantic-equity-valuation-brief
+    outputs:
+      - schema_name: equity_valuation_brief_v1
+        data_layer: L4_semantic
+  - task_id: semantic-flow-sentiment-brief
+    outputs:
+      - schema_name: flow_sentiment_brief_v1
+        data_layer: L4_semantic
+  - task_id: semantic-market-regime-brief
+    outputs:
+      - schema_name: market_regime_brief_v1
+        data_layer: L4_semantic
+  - task_id: semantic-portfolio-concentration-brief
+    outputs:
+      - schema_name: portfolio_concentration_brief_v1
+        data_layer: L4_semantic

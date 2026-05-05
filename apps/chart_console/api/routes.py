@@ -237,6 +237,42 @@ class ApiRoutes:
                 str(trade_date), str(stock_code), window_years=window_years, refresh=refresh
             )
             return payload, code, {}
+        if path == "/api/semantic/equity_valuation_brief":
+            trade_date = (query.get("trade_date") or [""])[0]
+            stock_code = (query.get("stock_code") or ["600519"])[0]
+            try:
+                window_years = int((query.get("window_years") or ["5"])[0])
+            except ValueError:
+                window_years = 5
+            payload, code = self.svc.get_semantic_equity_valuation_brief(
+                str(trade_date), str(stock_code), window_years=window_years
+            )
+            return payload, code, {}
+        if path == "/api/semantic/flow_sentiment_brief":
+            trade_date = (query.get("trade_date") or [""])[0]
+            sector_window = (query.get("sector_window") or ["d5"])[0]
+            try:
+                lim = int((query.get("limit") or ["8"])[0])
+            except ValueError:
+                lim = 8
+            payload, code = self.svc.get_semantic_flow_sentiment_brief(
+                str(trade_date), str(sector_window), limit=lim
+            )
+            return payload, code, {}
+        if path == "/api/semantic/market_regime_brief":
+            trade_date = (query.get("trade_date") or [""])[0]
+            benchmark_etf = (query.get("benchmark_etf") or ["510300"])[0]
+            index_code = (query.get("index_code") or ["000001"])[0]
+            mode = (query.get("mode") or ["prod"])[0]
+            inc = str((query.get("include_sector_heat") or ["1"])[0]).lower() in ("1", "true", "yes", "on")
+            payload, code = self.svc.get_semantic_market_regime_brief(
+                str(trade_date),
+                benchmark_etf=str(benchmark_etf),
+                index_code=str(index_code),
+                mode=str(mode),
+                include_sector_heat=inc,
+            )
+            return payload, code, {}
         if path == "/api/ops/events":
             trade_date = (query.get("trade_date") or [""])[0]
             return self.svc.get_ops_events(str(trade_date)), 200, {"X-Deprecated": "true", "X-Replacement": "/api/semantic/ops_events"}
@@ -284,6 +320,9 @@ class ApiRoutes:
                 return {"success": False, "message": "template must be object"}, 400
             saved = self.svc.workspace.save_template(name, template)
             return {"success": True, "data": saved}, 200
+        if path == "/api/semantic/portfolio_concentration_brief":
+            payload, code = self.svc.post_semantic_portfolio_concentration_brief(body if isinstance(body, dict) else {})
+            return payload, code, {}
         if path == "/api/internal/record_fallback":
             primary_url = str(body.get("primary_url", "")).strip()
             fallback_url = str(body.get("fallback_url", "")).strip()

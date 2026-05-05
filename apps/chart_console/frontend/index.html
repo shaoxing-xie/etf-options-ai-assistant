@@ -49,7 +49,7 @@
       @media (max-width: 980px) { .config-grid { grid-template-columns: 1fr; } }
       .rotation-box { background:#101831;border:1px solid #28335f;border-radius:10px;padding:10px;margin-bottom:10px; }
     </style>
-    <link rel="stylesheet" href="/screening.css" />
+    <link rel="stylesheet" href="/screening.css?v=20260504-research-overview" />
     <script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/js-yaml@4.1.0/dist/js-yaml.min.js"></script>
   </head>
@@ -371,6 +371,11 @@
             <div class="research-view active" id="research-overview-left" data-subview="overview">
               <h4 class="screening-h4">数据质量与口径</h4>
               <div id="researchQualityBadge" class="small"></div>
+              <div id="researchTaskHealthPanel" class="small research-task-health" style="margin-top:8px;"></div>
+              <div id="researchOpsCrossLinks" class="small screening-muted" style="margin-top:6px;">
+                <button type="button" id="btnResearchOpenOpsDs" class="research-inline-link">数据源健康（运维）</button>
+                <span>只读语义快照</span>
+              </div>
               <h4 class="screening-h4">市场状态</h4>
               <div id="researchMarketState" class="small"></div>
               <h4 class="screening-h4">风险快照</h4>
@@ -663,7 +668,7 @@
       </div>
     </div>
     <script type="module" src="/app.js?v=20260501-2026"></script>
-    <script type="module" src="/screening.js?v=20260501-2026"></script>
+    <script type="module" src="/screening.js?v=20260504-research-overview"></script>
     <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.1/dist/echarts.min.js"></script>
     <script type="module" src="/ops.js?v=20260503-health"></script>
   </body>

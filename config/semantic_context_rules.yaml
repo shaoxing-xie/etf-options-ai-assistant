@@ -1,0 +1,34 @@
+# L4-semantic 叙事阈值（模板填槽）。不使用 LLM 生成数值结论。
+# cache_ttl_seconds：预留；0 表示不显式缓存（由上游工具自有缓存接管）。
+cache_ttl_seconds: 0
+cache_scope: trade_date
+
+valuation:
+  pe_percentile_bands:
+    - max_exclusive: 30
+      label_key: percentile_low
+    - max_exclusive: 70
+      label_key: percentile_mid
+    - max_exclusive: 101
+      label_key: percentile_high
+
+flow_sentiment:
+  flow_score_bands:
+    - max_exclusive: -50
+      label_key: flow_weak
+    - max_exclusive: 50
+      label_key: flow_neutral
+    - max_exclusive: 10000
+      label_key: flow_strong
+
+market_regime:
+  regime_labels:
+    trending_up: regime_uptrend
+    trending_down: regime_downtrend
+    range: regime_range
+    high_vol_risk: regime_high_vol
+
+portfolio:
+  concentration:
+    hhi_high_threshold: 0.35
+    top_weight_high_threshold: 0.45

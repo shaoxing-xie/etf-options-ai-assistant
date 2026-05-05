@@ -42,3 +42,19 @@ schemas:
     schema_version: "1.0.0"
     data_layer: L4_data
     lineage_note: "T2 Cron 报告附录：批量 tool_l4_valuation_context + tool_l4_pe_ttm_percentile；挂于 report_data.l4_snapshot 或决策 payload.l4_attachment"
+  - schema_name: equity_valuation_brief_v1
+    schema_version: "1.0.0"
+    data_layer: L4_semantic
+    lineage_note: "助手 tool_semantic_equity_valuation_brief"
+  - schema_name: flow_sentiment_brief_v1
+    schema_version: "1.0.0"
+    data_layer: L4_semantic
+    lineage_note: "助手 tool_semantic_flow_sentiment_brief"
+  - schema_name: market_regime_brief_v1
+    schema_version: "1.0.0"
+    data_layer: L4_semantic
+    lineage_note: "助手 tool_semantic_market_regime_brief"
+  - schema_name: portfolio_concentration_brief_v1
+    schema_version: "1.0.0"
+    data_layer: L4_semantic
+    lineage_note: "助手 tool_semantic_portfolio_concentration_brief"

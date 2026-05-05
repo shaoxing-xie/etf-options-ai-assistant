@@ -11,6 +11,12 @@ Coordinate **read-only** calls to existing skills in a fixed order; do **not** a
 
 ## Recommended call order
 
+**对话式短答（优先一次工具拿齐上下文）**
+
+0. `ota-market-regime-brief` → `tool_semantic_market_regime_brief`；若用户关心资金，追加 `ota-flow-sentiment-brief` → `tool_semantic_flow_sentiment_brief`。估值类问题改走 `ota-equity-valuation-brief` → `tool_semantic_equity_valuation_brief`。组合类：`tool_semantic_portfolio_concentration_brief`（POST/JSON `weights`）。
+
+**深度分析链（brief 之后再按需）**
+
 1. `market-scanner` — trading status + breadth / flow snapshot  
 2. `technical-analyst` — default indicator bundle from `technical-analyst_config.yaml`  
 3. `fund-flow-analyst` — northbound + sector + main force context  
