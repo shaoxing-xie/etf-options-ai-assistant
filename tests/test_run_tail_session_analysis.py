@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from io import BytesIO
 from unittest.mock import patch
 
@@ -17,10 +18,26 @@ def _mock_fetch_index_data(**kwargs: object) -> dict:
     return {"success": True, "data": []}
 
 
+def _patch_skip_live_em_nq() -> object:
+    """避免单测触发 AkShare futures_global_spot_em 全表在线拉取（分钟级）。"""
+    return patch(
+        "plugins.data_collection.futures.us_mini_index_futures_spot._try_us_mini_from_em",
+        return_value=None,
+    )
+
+
+def _patch_skip_nasdaq_next_open_predictor() -> object:
+    """次日开盘预测会读盘/写语义层；结构类单测不需要，避免长时间阻塞。"""
+    return patch(
+        "plugins.analysis.nasdaq_next_open_predictor.predict_next_open_direction",
+        return_value={"success": False, "reason": "skipped_in_unit_test"},
+    )
+
+
 def test_build_tail_session_report_data_structure() -> None:
     from plugins.notification.run_tail_session_analysis import build_tail_session_report_data
 
-    with patch(
+    with _patch_skip_live_em_nq(), _patch_skip_nasdaq_next_open_predictor(), patch(
         "plugins.data_collection.utils.check_trading_status.tool_check_trading_status",
         return_value={"success": True, "data": {"market_status": "open"}},
     ), patch(
@@ -89,7 +106,7 @@ def test_tool_run_tail_session_analysis_and_send_calls_sender() -> None:
 def test_build_tail_session_manual_iopv_override() -> None:
     from plugins.notification.run_tail_session_analysis import build_tail_session_report_data
 
-    with patch(
+    with _patch_skip_live_em_nq(), _patch_skip_nasdaq_next_open_predictor(), patch(
         "plugins.notification.run_tail_session_analysis._load_market_data_cfg",
         return_value={
             "iopv_fallback": {
@@ -157,7 +174,7 @@ def test_build_tail_session_nasdaq_valuation_blend_and_temperature() -> None:
             'jsonpgz({"fundcode":"513300","name":"纳斯达克ETF华夏","jzrq":"2026-04-23","dwjz":"2.2900","gsz":"2.2600","gszzl":"-0.55","gztime":"2026-04-24 14:29:00"});'
         )
 
-    with patch(
+    with _patch_skip_nasdaq_next_open_predictor(), patch(
         "plugins.notification.run_tail_session_analysis.urlopen",
         side_effect=_fake_urlopen,
     ), patch(
@@ -265,7 +282,7 @@ def test_build_tail_session_nikkei_m6_next_open_direction_with_degrade() -> None
         rd, errs = build_tail_session_report_data(fetch_mode="test", market_profile="nikkei_513880", monitor_point="M6")
 
     pred = rd.get("next_open_direction") if isinstance(rd.get("next_open_direction"), dict) else {}
-    assert pred.get("direction") in {"up", "down"}
+    assert pred.get("direction") in {"up", "down", "flat"}
     assert isinstance(pred.get("p_up"), float)
     assert pred.get("confidence_level") == "low"
     assert "PREDICTOR_NO_FUTURES_DATA" in str(pred.get("degraded_reason") or "")
@@ -278,7 +295,7 @@ def test_build_tail_session_nikkei_m6_next_open_direction_with_degrade() -> None
 def test_build_tail_session_required_minimum_fields_present() -> None:
     from plugins.notification.run_tail_session_analysis import build_tail_session_report_data
 
-    with patch(
+    with _patch_skip_live_em_nq(), _patch_skip_nasdaq_next_open_predictor(), patch(
         "plugins.data_collection.utils.check_trading_status.tool_check_trading_status",
         return_value={"success": True, "data": {"market_status": "open"}},
     ), patch(
@@ -306,3 +323,69 @@ def test_build_tail_session_required_minimum_fields_present() -> None:
     assert isinstance((rd.get("analysis") or {}).get("signal_summary"), dict)
     assert risk_gate.get("decision") in {"GO", "GO_LIGHT", "WAIT", "EXIT_REDUCE"}
     assert isinstance(risk_gate.get("reason_codes"), list)
+
+
+def test_fetch_nq_futures_snapshot_prefers_em_global_spot() -> None:
+    """513300 期指快照应与 Chart 同源：优先东财 NQ00Y，成功则不调用 NQ=F。"""
+    from plugins.notification.run_tail_session_analysis import _fetch_nq_futures_snapshot
+
+    idx_calls: list[str] = []
+
+    def _fake_idx(**kwargs: object) -> dict:
+        idx_calls.append("idx")
+        return {"success": True, "data": [{"code": "NQ=F", "price": 1.0, "change_pct": 0.1}]}
+
+    with patch.dict(os.environ, {"ENABLE_EM_GLOBAL_FUTURES_SPOT": "1"}, clear=False), patch(
+        "plugins.data_collection.futures.fetch_global_futures_spot_em.tool_fetch_global_futures_spot_em",
+        return_value={
+            "success": True,
+            "data": {
+                "rows": [
+                    {
+                        "代码": "NQ00Y",
+                        "名称": "小型纳指当月连续",
+                        "最新价": 21000.0,
+                        "涨跌幅": 0.55,
+                        "昨结": 20885.0,
+                    }
+                ],
+            },
+        },
+    ), patch(
+        "plugins.merged.fetch_index_data.tool_fetch_index_data",
+        side_effect=_fake_idx,
+    ):
+        out = _fetch_nq_futures_snapshot()
+
+    assert out.get("status") == "ok"
+    assert out.get("symbol") == "NQ00Y"
+    assert out.get("change_pct") == 0.55
+    assert out.get("source", "").startswith("tool_fetch_global_futures_spot_em")
+    assert idx_calls == []
+
+
+def test_fetch_nq_futures_snapshot_falls_back_when_em_disabled() -> None:
+    from plugins.notification.run_tail_session_analysis import _fetch_nq_futures_snapshot
+
+    em_calls: list[str] = []
+
+    def _fake_em(**kwargs: object) -> dict:
+        em_calls.append("em")
+        return {"success": True, "data": {"rows": []}}
+
+    with patch.dict(os.environ, {"ENABLE_EM_GLOBAL_FUTURES_SPOT": "0"}, clear=False), patch(
+        "plugins.data_collection.futures.fetch_global_futures_spot_em.tool_fetch_global_futures_spot_em",
+        side_effect=_fake_em,
+    ), patch(
+        "plugins.merged.fetch_index_data.tool_fetch_index_data",
+        return_value={
+            "success": True,
+            "data": [{"code": "NQ=F", "price": 100.0, "latest_price": 100.0, "change_pct": 0.2}],
+        },
+    ):
+        out = _fetch_nq_futures_snapshot()
+
+    assert out.get("status") == "ok"
+    assert out.get("symbol") == "NQ=F"
+    assert out.get("change_pct") == 0.2
+    assert em_calls == []

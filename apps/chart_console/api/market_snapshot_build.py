@@ -36,6 +36,7 @@ def _repo_root() -> Path:
 
 ROOT = _repo_root()
 _EM_FUTURES_CACHE: dict[str, Any] = {"ts": 0.0, "rows": None}
+_EM_FUTURES_ROWS_LOCK = threading.Lock()
 _SOURCE_LAST_CALL_TS: dict[str, float] = {}
 _YF_MIN_INTERVAL_SEC = 0.6
 _GLOBAL_SPOT_MIN_INTERVAL_SEC = 1.0
@@ -96,6 +97,10 @@ def _finalize_item_quality(item: dict[str, Any], semantics: str) -> dict[str, An
     if semantics == "daily_close":
         out["quality_status"] = "degraded"
         out["degraded_reason"] = reason or "daily_close_snapshot"
+        return out
+    if semantics == "fred_graph_eod":
+        out["quality_status"] = "degraded"
+        out["degraded_reason"] = reason or "fred_prior_session_close"
         return out
     if semantics == "realtime_quote" and isinstance(age_sec, int) and age_sec > 120:
         out["quality_status"] = "degraded"
@@ -572,15 +577,53 @@ def _yf_intraday_metrics(symbol: str, cfg: dict[str, Any]) -> Tuple[Optional[flo
 
 
 def _em_futures_rows_cached(ttl_sec: int = 120) -> Optional[list[dict[str, Any]]]:
-    del ttl_sec
-    # Deprecated: keep plugin-first discipline; futures path uses unified tools in _yf_intraday_metrics/_yf_hist_metrics.
-    return None
+    """东财国际期货现货（YM00Y/ES00Y/NQ00Y）；优先于 Yahoo 连续合约。关闭：ENABLE_EM_GLOBAL_FUTURES_SPOT=0。"""
+    env_raw = (os.environ.get("ENABLE_EM_GLOBAL_FUTURES_SPOT") or "1").strip().lower()
+    if env_raw in ("0", "false", "no", "off"):
+        return None
+    now = time.time()
+    ttl = float(ttl_sec)
+    with _EM_FUTURES_ROWS_LOCK:
+        ts = float(_EM_FUTURES_CACHE.get("ts") or 0.0)
+        cached = _EM_FUTURES_CACHE.get("rows")
+        if isinstance(cached, list) and cached and (now - ts) < ttl:
+            return cached
+    try:
+        from plugins.data_collection.futures.fetch_global_futures_spot_em import (
+            tool_fetch_global_futures_spot_em,
+        )
+
+        resp = tool_fetch_global_futures_spot_em(
+            mode="filter_codes",
+            codes=["YM00Y", "ES00Y", "NQ00Y"],
+            ttl_seconds=ttl,
+        )
+    except Exception:
+        with _EM_FUTURES_ROWS_LOCK:
+            stale = _EM_FUTURES_CACHE.get("rows")
+            return stale if isinstance(stale, list) else None
+    if not isinstance(resp, dict) or not resp.get("success"):
+        with _EM_FUTURES_ROWS_LOCK:
+            stale = _EM_FUTURES_CACHE.get("rows")
+            return stale if isinstance(stale, list) else None
+    data = resp.get("data") if isinstance(resp.get("data"), dict) else {}
+    rows = data.get("rows")
+    if not isinstance(rows, list) or not rows:
+        with _EM_FUTURES_ROWS_LOCK:
+            stale = _EM_FUTURES_CACHE.get("rows")
+            return stale if isinstance(stale, list) else None
+    with _EM_FUTURES_ROWS_LOCK:
+        _EM_FUTURES_CACHE["rows"] = rows
+        _EM_FUTURES_CACHE["ts"] = time.time()
+    return rows
 
 
 def _em_future_quote(instrument_id: str) -> Optional[dict[str, Any]]:
     rows = _em_futures_rows_cached()
     if not rows:
         return None
+    # 东财 futures_global_spot_em 当前以商品与美股迷你连续为主；实测表内无「日经225」股指期货连续行。
+    # future.nkd 的 code/name 模式保留供将来扩展；现阶段日经期货腿仍走 Yahoo。
     code_patterns: dict[str, list[str]] = {
         "future.nq": [r"^NQ00Y$"],
         "future.es": [r"^ES00Y$"],
@@ -619,6 +662,14 @@ def _em_future_quote(instrument_id: str) -> Optional[dict[str, Any]]:
             "as_of": _utc_now_iso(),
         }
     return None
+
+
+def _futures_items_used_em_global_spot(items: list[dict[str, Any]]) -> bool:
+    """True if any leg was filled from AkShare futures_global_spot_em (for _meta.source_tools)."""
+    for it in items:
+        if "futures_global_spot_em" in str(it.get("source_raw") or ""):
+            return True
+    return False
 
 
 def _global_spot_map(symbols: str) -> Tuple[dict[str, dict[str, Any]], list[str], str, dict[str, Any]]:
@@ -762,7 +813,8 @@ def _item_from_spot_row(
         "source_raw": src,
         "as_of": as_of,
     }
-    return _finalize_item_quality(raw, "realtime_quote")
+    sem = str(row.get("data_semantics") or "realtime_quote")
+    return _finalize_item_quality(raw, sem)
 
 
 def _global_index_item_spot_only(
@@ -1011,6 +1063,7 @@ def build_global_market_snapshot(trade_date: str) -> dict[str, Any]:
         ("DJI", ["^DJI"], "道琼斯工业"),
         ("IXIC", ["^IXIC"], "纳斯达克综合"),
         ("SPX", ["^GSPC"], "标普500"),
+        ("VIX", ["^VIX"], "VIX"),
         ("FTSE", ["^FTSE"], "英国富时100"),
         ("GDAXI", ["^GDAXI"], "德国DAX"),
         ("FCHI", ["^FCHI"], "法国CAC40"),
@@ -1051,7 +1104,7 @@ def build_global_market_snapshot(trade_date: str) -> dict[str, Any]:
 
     # Keep futures block focused on always-available legs.
     # Items that frequently show empty/ambiguous futures legs are intentionally excluded from UI for now:
-    # - MSCI中国A50 / EURO STOXX 50 / DAX / VIX / 恒生指数期指
+    # - MSCI中国A50 / EURO STOXX 50 / DAX / 恒生指数期指（VIX 已放入 global_index 欧美组）
     fut_specs: list[dict[str, Any]] = [
         {
             "id": "future.nq",
@@ -1087,6 +1140,7 @@ def build_global_market_snapshot(trade_date: str) -> dict[str, Any]:
     fut_items: list[dict[str, Any]] = []
     tf = time.perf_counter()
     # 受控并发：期货腿并行 2 路，降低阶段总耗时，同时通过 _pace_source 保持源内节流。
+    # 东财表拉取在 tool_fetch_global_futures_spot_em 内 singleflight；多腿并发 miss 时仅一次全表请求。
     normal_specs = [s for s in fut_specs if s["id"] != "future.a50"]
     idx_map = {s["id"]: i for i, s in enumerate(fut_specs)}
     fut_by_idx: dict[int, dict[str, Any]] = {}
@@ -1101,6 +1155,8 @@ def build_global_market_snapshot(trade_date: str) -> dict[str, Any]:
     if str(a50_item.get("source_id")) == "openclaw":
         tools.append("tool_fetch_a50_data")
     fut_items = [fut_by_idx[i] for i in sorted(fut_by_idx.keys())]
+    if _futures_items_used_em_global_spot(fut_items):
+        tools.append("tool_fetch_global_futures_spot_em")
     fut_ok = sum(1 for x in fut_items if str(x.get("quality_status")) == "ok")
     _lineage_event(lineage, "index_futures", fut_ok == len(fut_items), int((time.perf_counter() - tf) * 1000), f"ok={fut_ok}/{len(fut_items)}")
 
@@ -1240,6 +1296,9 @@ def build_qdii_futures_snapshot(trade_date: str) -> dict[str, Any]:
             overall = "degraded"
         elif it.get("quality_status") == "degraded" and overall == "ok":
             overall = "degraded"
+
+    if _futures_items_used_em_global_spot(all_items):
+        tools.append("tool_fetch_global_futures_spot_em")
 
     return {
         "trade_date": trade_date,

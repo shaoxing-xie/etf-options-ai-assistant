@@ -1,0 +1,11 @@
+# 513300 溢价调制（adjust_by_premium）与 premium_risk（max 并入 macro event_risk）
+version: "1"
+# 概率加减（在 LLM/规则融合之后、风险收缩之前施加）
+adjust_delta_above_5: -0.15
+adjust_delta_above_4: -0.08
+adjust_delta_above_3: -0.03
+adjust_delta_below_2: 0.05
+# premium_risk ∈ [0,1]，与 Tavily/YF 的 event_risk 取 max
+premium_risk_above_5: 1.0
+premium_risk_between_4_and_5: 0.6
+premium_risk_between_3_and_4: 0.2

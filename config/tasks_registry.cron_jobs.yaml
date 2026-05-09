@@ -20,7 +20,7 @@ tasks:
       emit_stage_timing: true
       max_concurrency: 4
     continue_on_failure: false
-    timeout_seconds: 1800
+    timeout_seconds: 3600
   task_type: dag
 - id: cron__8f2ef8c2_4d0e_4df4_b3ad_3524d74b47be
   description: 'cron mirror: etf: 开盘实盘报告 — 每天9:40开盘实盘报告（开盘后成交与资金状态确认）'

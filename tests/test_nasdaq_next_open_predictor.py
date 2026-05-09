@@ -91,3 +91,55 @@ def test_predictor_llm_called_flag_and_shift_fields() -> None:
     assert pdebug.get("llm_called") is True
     assert "llm_shift" in pdebug
     assert decision.get("llm_fusion", {}).get("called") is True
+
+
+def test_predictor_m4_skips_external_event_fetch() -> None:
+    """M1–M6：不调用 Tavily/YF；predictor_run_kind=intraday_next_open_preview"""
+    from plugins.analysis import nasdaq_next_open_predictor as mod
+
+    rd = _build_report_data(monitor_point="M4")
+    hist_events = rd.pop("_hist_events_for_test")
+
+    def _boom(*_a: object, **_k: object) -> dict:
+        raise AssertionError("tavily should not be called for non-M7")
+
+    with patch.object(mod, "_load_recent_monitor_events", return_value=hist_events), patch.object(
+        mod, "_fetch_tavily_event_signal", side_effect=_boom
+    ), patch.object(mod, "_fetch_yf_event_signal", side_effect=_boom):
+        out = mod.predict_next_open_direction(rd, persist=False)
+    pdebug = out.get("decision", {}).get("probability_debug") or {}
+    assert pdebug.get("predictor_run_kind") == "intraday_next_open_preview"
+    assert pdebug.get("event_risk_macro") == 0.0
+    assert out.get("quality_status") == "intraday_next_open_preview"
+
+
+def test_premium_adjust_lowers_p_up_when_high_premium() -> None:
+    from plugins.analysis.nasdaq_next_open_predictor import predict_next_open_direction
+
+    rd = _build_report_data(monitor_point="M7")
+    hist_events = rd.pop("_hist_events_for_test")
+    rd["analysis"]["premium_rate_pct"] = 5.5
+    rd["tail_session_snapshot"]["premium_pct"] = 5.5
+    with patch("plugins.analysis.nasdaq_next_open_predictor._load_recent_monitor_events", return_value=hist_events), patch(
+        "plugins.analysis.nasdaq_next_open_predictor._fetch_tavily_event_signal",
+        return_value={"success": True, "event_risk": 0.0, "note": "ok", "events": []},
+    ), patch(
+        "plugins.analysis.nasdaq_next_open_predictor._fetch_yf_event_signal",
+        return_value={"success": True, "event_risk": 0.0, "note": "ok", "events": []},
+    ), patch("plugins.analysis.nasdaq_next_open_predictor._llm_fuse_probability", return_value={"success": False, "note": "off"}):
+        out_hi = predict_next_open_direction(rd, persist=False)
+    rd_lo = _build_report_data(monitor_point="M7")
+    hist_lo = rd_lo.pop("_hist_events_for_test")
+    rd_lo["analysis"]["premium_rate_pct"] = 3.5
+    rd_lo["tail_session_snapshot"]["premium_pct"] = 3.5
+    with patch("plugins.analysis.nasdaq_next_open_predictor._load_recent_monitor_events", return_value=hist_lo), patch(
+        "plugins.analysis.nasdaq_next_open_predictor._fetch_tavily_event_signal",
+        return_value={"success": True, "event_risk": 0.0, "note": "ok", "events": []},
+    ), patch(
+        "plugins.analysis.nasdaq_next_open_predictor._fetch_yf_event_signal",
+        return_value={"success": True, "event_risk": 0.0, "note": "ok", "events": []},
+    ), patch("plugins.analysis.nasdaq_next_open_predictor._llm_fuse_probability", return_value={"success": False, "note": "off"}):
+        out_mid = predict_next_open_direction(rd_lo, persist=False)
+    p_hi = float(out_hi.get("decision", {}).get("probability_debug", {}).get("p_up_after_premium_pre_shrink") or 0)
+    p_mid = float(out_mid.get("decision", {}).get("probability_debug", {}).get("p_up_after_premium_pre_shrink") or 0)
+    assert p_hi < p_mid

@@ -19,6 +19,16 @@
         "type": "number",
         "default": 1200000,
         "description": "tool_runner.py subprocess timeout in ms (after_close + daily send often exceeds 60s)"
+      },
+      "excludeToolIds": {
+        "type": "array",
+        "items": { "type": "string" },
+        "description": "Tool ids to skip registering (dedupe with openclaw-data-china-stock)."
+      },
+      "allowDataPluginToolOverlap": {
+        "type": "boolean",
+        "default": false,
+        "description": "Register tools that overlap openclaw-data-china-stock (assistant-only setups)."
       }
     }
   }

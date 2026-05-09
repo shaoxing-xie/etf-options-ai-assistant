@@ -103,6 +103,32 @@ tasks:
         continue_on_failure: true
         timeout_seconds: 600
 
+  - id: debug_nasdaq_513300_tail_session_format
+    description: "513300 tail_session 格式烟测：orchestrator_cli --context 注入 monitor_point / fetch_mode / mode（勿依赖 PROCESS 时钟）"
+    enabled: false
+    deprecated: false
+    dependencies: []
+    quality_gates: []
+    steps:
+      - id: run
+        kind: tool
+        tool: tool_run_tail_session_analysis_and_send
+        params:
+          mode: test
+          fetch_mode: test
+          market_profile: nasdaq_513300
+          monitor_point: M7
+          workflow_profile: cron_balanced
+          stage_budget_profile: balanced
+          emit_stage_timing: false
+          max_concurrency: 3
+        params_from_context:
+          - monitor_point
+          - fetch_mode
+          - mode
+        continue_on_failure: false
+        timeout_seconds: 1200
+
   - id: weekly_research
     description: "周度轮动/定调（占位）"
     enabled: false

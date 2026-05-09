@@ -101,3 +101,47 @@ tasks:
     outputs:
       - schema_name: decision_reflection_v1
         data_layer: L3_decision
+  - task_id: global-market-snapshot
+    outputs:
+      - schema_name: global_market_snapshot_v1
+        data_layer: L4_semantic
+    producer_tools:
+      - tool_fetch_global_futures_spot_em
+  - task_id: qdii-futures-aggregation
+    outputs:
+      - schema_name: qdii_futures_snapshot_v1
+        data_layer: L4_semantic
+    producer_tools:
+      - tool_fetch_global_futures_spot_em
+  - task_id: cron__etf_nasdaq_intraday_process_513300
+    outputs:
+      - schema_name: nasdaq_513300_monitor_event
+        data_layer: L4_semantic
+      - schema_name: nasdaq_513300_intraday_dashboard_view
+        data_layer: L4_semantic
+      - schema_name: nasdaq_513300_next_open_predictor_features
+        data_layer: L2
+      - schema_name: nasdaq_513300_next_open_direction_event
+        data_layer: L3
+      - schema_name: nasdaq_513300_next_open_direction_semantic
+        data_layer: L4_semantic
+      - schema_name: nasdaq_513300_intraday_guide_v1
+        data_layer: L4_semantic
+    producer_tools:
+      - tool_run_tail_session_analysis_and_send
+  - task_id: cron__etf_nasdaq_close_opportunity_513300
+    outputs:
+      - schema_name: nasdaq_513300_monitor_event
+        data_layer: L4_semantic
+      - schema_name: nasdaq_513300_intraday_dashboard_view
+        data_layer: L4_semantic
+      - schema_name: nasdaq_513300_next_open_predictor_features
+        data_layer: L2
+      - schema_name: nasdaq_513300_next_open_direction_event
+        data_layer: L3
+      - schema_name: nasdaq_513300_next_open_direction_semantic
+        data_layer: L4_semantic
+      - schema_name: nasdaq_513300_intraday_guide_v1
+        data_layer: L4_semantic
+    producer_tools:
+      - tool_run_tail_session_analysis_and_send

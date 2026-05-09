@@ -1,0 +1,53 @@
+version: 1
+
+# 权重模板由 risk_mode 选择；阈值与策略勿在 SKILL 叙事中硬编码。
+risk_modes:
+  default:
+    label: 均衡默认
+    weights:
+      limit_up_ecology: 0.35
+      fund_flow_attitude: 0.30
+      northbound_trend: 0.20
+      sector_structure: 0.15
+  short_term_game:
+    label: 短线博弈
+    weights:
+      limit_up_ecology: 0.40
+      fund_flow_attitude: 0.35
+      northbound_trend: 0.15
+      sector_structure: 0.10
+  institutional_view:
+    label: 机构视角
+    weights:
+      limit_up_ecology: 0.25
+      fund_flow_attitude: 0.30
+      northbound_trend: 0.25
+      sector_structure: 0.20
+
+dynamic_weight_adjustment:
+  northbound_market_closed:
+    description: 港股通休市或北向字段不可用时降低 northbound 权重并均摊至其余项
+    northbound_weight_multiplier: 0.0
+    redistribute_to:
+      - limit_up_ecology
+      - fund_flow_attitude
+      - sector_structure
+
+# overall_score -> sentiment_stage 默认映射（v1.0）；与 docs/sentiment/api_contract.md 一致。
+sentiment_stage_thresholds:
+  overall_score:
+    - { max: 20, stage: 冰点 }
+    - { max: 35, stage: 修复 }
+    - { max: 50, stage: 震荡 }
+    - { max: 65, stage: 混沌 }
+    - { max: 85, stage: 高潮 }
+    - { max: 100, stage: 退潮 }
+
+# 子项分数分歧过大时，可将 sentiment_stage 覆盖为「混沌」（与 overall 主阶段并列记录在 factor_attribution）。
+chaos_subscore_spread_min: 35
+
+output_policy:
+  allow_execution_instruction: false
+  require_counterevidence: true
+  parallel_tool_calls: true
+  aggregate_cache_ttl_seconds: 300

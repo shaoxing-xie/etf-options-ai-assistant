@@ -99,6 +99,9 @@ jobAgentMapping:
   pre-market-sentiment-check: etf_cron_analysis_agent
   extreme-sentiment-monitor: etf_cron_inspection_agent
   f0d82a29-45de-4377-9570-5dda65b3f58a: etf_cron_analysis_agent
+  8f2ef8c2-4d0e-4df4-b3ad-3524d74b47be: etf_cron_inspection_agent
+  9d8e5b7d-f7b1-4116-ac02-055598a74781: etf_cron_research_agent
+  etf-nasdaq-intraday-process-513300: etf_cron_inspection_agent
   8c548101-85b7-4c95-a458-8b0e15317d46: etf_cron_analysis_agent
   7b401fcc-1f51-4db9-b3e1-74115890a296: etf_cron_analysis_agent
   572f20f2-fa1d-4e25-9e0b-fbcccf366790: etf_cron_analysis_agent

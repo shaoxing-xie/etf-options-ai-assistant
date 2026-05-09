@@ -13,7 +13,6 @@ network:
 data_sources:
   intraday_tool_spacing_seconds: 0.45
   limit_up:
-    # P3: 涨停工具 approved 链（em → previous → strong → sub_new）相邻 AkShare 调用间隔（秒）
     upstream_chain_spacing_seconds: 0.35
   circuit_breaker:
     enabled: true
@@ -69,14 +68,17 @@ data_sources:
       enabled: true
     latest:
       priority:
-        - yfinance
-        - fmp
         - sina
+        - fmp
+        - akshare
+        - yfinance
       fmp:
         enabled: true
         api_keys:
           - ${FMP_API_KEY}
           - ${FMP_API_KEY_BACKUP}
+      fred:
+        enabled: true
   stock_realtime:
     priority:
       - mootdx
@@ -165,18 +167,17 @@ tushare:
   enabled: true
   token: ${TUSHARE_TOKEN}
   prefer_minute: false
-  # 默认 2000 积分档不含表二 stk_mins；已单独开通股票分钟时改为 minute_table2 或设 minute_table2: true
-  permission_profile: "2000"
+  permission_profile: '2000'
 iopv_fallback:
   manual_iopv_overrides:
     '513300':
-      iopv: 2.3141
+      iopv: 2.4289
       source: manual_after_14_00
-      updated_date: '2026-04-30'
+      updated_date: '2026-05-07'
     '513880':
-      iopv: 1.8467
+      iopv: 1.9881
       source: manual_after_14_00
-      updated_date: '2026-04-30'
+      updated_date: '2026-05-07'
 wide_inspection_overnight_refs:
   sources:
     a50_futures:

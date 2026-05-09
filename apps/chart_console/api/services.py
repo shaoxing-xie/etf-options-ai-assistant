@@ -568,6 +568,15 @@ class ApiServices:
             return {"success": False, "message": "missing_semantic_file", "data": None}, 404
         return {"success": True, "message": "ok", "data": data}, 200
 
+    def get_semantic_nasdaq_513300_next_open(self, trade_date: str = "", monitor_point: str = "M7") -> dict[str, Any]:
+        return self._semantic.nasdaq_513300_next_open_semantic(trade_date, monitor_point)
+
+    def get_semantic_nasdaq_513300_intraday_guide(self, trade_date: str = "", monitor_point: str = "M7") -> dict[str, Any]:
+        return self._semantic.nasdaq_513300_intraday_guide_semantic(trade_date, monitor_point)
+
+    def get_semantic_nasdaq_513300_premium_history(self, days: int = 30) -> dict[str, Any]:
+        return self._semantic.nasdaq_513300_premium_history_semantic(days)
+
     def get_semantic_equity_valuation_brief(
         self,
         trade_date: str = "",

@@ -4,6 +4,7 @@ import pytest
 
 from apps.chart_console.api.market_snapshot_build import (
     _build_cn_index_items,
+    _em_futures_rows_cached,
     build_global_market_snapshot,
     build_qdii_futures_snapshot,
     persist_qdii_futures_l3_events,
@@ -11,6 +12,29 @@ from apps.chart_console.api.market_snapshot_build import (
     _future_item,
     _meta_block,
 )
+
+
+def test_em_futures_rows_cached_calls_tool(monkeypatch):
+    import apps.chart_console.api.market_snapshot_build as msb
+
+    msb._EM_FUTURES_CACHE["ts"] = 0.0
+    msb._EM_FUTURES_CACHE["rows"] = None
+    captured: dict = {}
+
+    def fake_tool(**kwargs):
+        captured.update(kwargs)
+        return {
+            "success": True,
+            "data": {"rows": [{"代码": "YM00Y", "名称": "小型道指当月连续", "最新价": 99.0}]},
+        }
+
+    monkeypatch.setattr(
+        "plugins.data_collection.futures.fetch_global_futures_spot_em.tool_fetch_global_futures_spot_em",
+        fake_tool,
+    )
+    rows = _em_futures_rows_cached(60)
+    assert rows and rows[0].get("代码") == "YM00Y"
+    assert captured.get("mode") == "filter_codes"
 
 
 def test_meta_block_has_required_keys():
@@ -55,6 +79,25 @@ def test_qdii_snapshot_structure(monkeypatch):
     assert doc.get("trade_date") == "2026-04-25"
     assert isinstance(doc.get("groups"), list)
     assert doc["_meta"]["schema_name"] == "qdii_futures_snapshot_v1"
+
+
+def test_qdii_snapshot_meta_lists_em_tool_when_em_fallback_used(monkeypatch):
+    """美股期指腿若走东财 futures_global_spot_em，_meta.source_tools 须含对应 producer_tools。"""
+    _patch_qdii_offline(monkeypatch, hist_return=(100.0, 1.0, 1.0, "global_hist_sina"))
+    monkeypatch.setattr(
+        "apps.chart_console.api.market_snapshot_build._em_future_quote",
+        lambda _iid: {
+            "instrument_code": "NQ00Y",
+            "last_price": 20000.0,
+            "change_abs": 1.0,
+            "change_pct": 0.01,
+            "source_id": "akshare",
+            "source_raw": "akshare.futures_global_spot_em:NQ00Y",
+            "as_of": "2026-04-25T00:00:00Z",
+        },
+    )
+    doc = build_qdii_futures_snapshot("2026-04-25")
+    assert "tool_fetch_global_futures_spot_em" in doc["_meta"]["source_tools"]
 
 
 @pytest.mark.network
@@ -397,6 +440,7 @@ def test_global_snapshot_hscei_alias_mapping_without_cross_substitute(monkeypatc
     )
 
     doc = build_global_market_snapshot("2026-04-29")
+    assert "tool_fetch_global_futures_spot_em" in (doc.get("_meta") or {}).get("source_tools") or []
     apac = next(g for g in doc["groups"] if g["group_id"] == "global_index")["subgroups"][0]["items"]
     hscei = next(x for x in apac if x["instrument_id"] == "global.apac.HSCEI")
     assert hscei["last_price"] == 9300.0

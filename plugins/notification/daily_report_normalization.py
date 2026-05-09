@@ -13,7 +13,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
 _DAILY_GLOBAL_INDEX_CODES = (
-    "^N225,^HSI,^KS11,^GDAXI,^STOXX50E,^FTSE,^GSPC,^IXIC,^DJI"
+    "^N225,^HSI,^KS11,^GDAXI,^STOXX50E,^FTSE,^GSPC,^IXIC,^DJI,^VIX"
 )
 _MARKET_FLOW_QUERY_KINDS = frozenset({"market_history", "market_proxy_ths", "market_flow_preferred", "main_force_rank"})
 
@@ -772,6 +772,44 @@ def _assess_daily_report_completeness(
     # 日报不再因关键位缺失阻断发送；仅用于审计行提示。
     if not _key_levels_data_present(rd, an):
         missing.append("关键位")
+
+    if (rd.get("report_type") or "").strip() == "daily_market":
+        try:
+            from plugins.notification.send_daily_report import (
+                _build_a_share_volume_lines,
+                _build_market_overview_lines,
+            )
+
+            if not _build_market_overview_lines(rd):
+                missing.append("外盘与指数概览")
+            if not _build_a_share_volume_lines(rd):
+                missing.append("A股量能快照")
+        except Exception:
+            pass
+
+        def _info_surface_has_body(blk: Any) -> bool:
+            if not isinstance(blk, dict):
+                return False
+            if blk.get("success") is False:
+                return False
+            for k in ("items", "bullets", "headlines", "digest", "announcements"):
+                v = blk.get(k)
+                if isinstance(v, list) and len(v) > 0:
+                    return True
+                if isinstance(v, str) and v.strip():
+                    return True
+            return False
+
+        pol = rd.get("policy_news") or rd.get("tool_fetch_policy_news")
+        ind = rd.get("industry_news") or rd.get("tool_fetch_industry_news_brief")
+        ann = rd.get("announcement_digest") or rd.get("tool_fetch_announcement_digest")
+        if not (
+            _info_surface_has_body(pol)
+            or _info_surface_has_body(ind)
+            or _info_surface_has_body(ann)
+        ):
+            missing.append("信息面")
+
     degraded = bool(missing)
     return degraded, missing
 

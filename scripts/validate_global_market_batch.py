@@ -250,6 +250,49 @@ def run_tool_a50(runs: int) -> list[BatchResult]:
     return out
 
 
+def run_em_us_mini_index_futures(runs: int) -> list[BatchResult]:
+    """东财美股迷你三品种（NQ/ES/YM 连续）；与 513300 尾盘 NQ 链同源（EM 优先 + global_spot 回退）。"""
+    from plugins.data_collection.futures.us_mini_index_futures_spot import fetch_us_mini_three_spot
+
+    want = ("nq", "es", "ym")
+    out: list[BatchResult] = []
+    for _ in range(max(1, int(runs))):
+        t0 = time.time()
+        failures: dict[str, str] = {}
+        success: set[str] = set()
+        try:
+            pack = fetch_us_mini_three_spot(mode="production")
+        except Exception as e:
+            for leg in want:
+                failures[f"US_MINI:{leg}"] = repr(e)
+        else:
+            if not isinstance(pack, dict):
+                for leg in want:
+                    failures[f"US_MINI:{leg}"] = "invalid_pack"
+            else:
+                for leg in want:
+                    row = pack.get(leg)
+                    ok = isinstance(row, dict) and str(row.get("status") or "") == "ok"
+                    if ok:
+                        success.add(f"US_MINI:{leg}")
+                    else:
+                        failures[f"US_MINI:{leg}"] = str(
+                            (row or {}).get("reason") or "no_quote"
+                        )
+        out.append(
+            BatchResult(
+                source="eastmoney_us_mini_futures_spot",
+                chunk_size=1,
+                delay_sec=0.0,
+                elapsed_sec=time.time() - t0,
+                success_symbols=len(success),
+                total_symbols=len(want),
+                failures=failures,
+            )
+        )
+    return out
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Validate global market batch pull behavior by source/chunk/delay.")
     parser.add_argument("--chunk-sizes", default="1,3,5,8", help="Comma-separated batch sizes.")
@@ -323,10 +366,12 @@ def main() -> int:
     if args.futures_mode:
         fut_symbols = ["NQ=F", "ES=F", "YM=F", "NKD=F", "XINA50=F", "CN=F", "2823.HK"]
         report["_meta"]["futures_symbols"] = fut_symbols
+        report["_meta"]["em_us_mini_legs"] = ["nq", "es", "ym"]
         for c in chunk_sizes:
             for d in delays:
                 report["results"].extend(x.as_dict() for x in run_yfinance_futures(fut_symbols, cfg, c, d, args.runs))
         report["results"].extend(x.as_dict() for x in run_tool_a50(args.runs))
+        report["results"].extend(x.as_dict() for x in run_em_us_mini_index_futures(args.runs))
 
     # Print concise summary sorted by success rate then elapsed.
     print("=== Validation Summary ===")

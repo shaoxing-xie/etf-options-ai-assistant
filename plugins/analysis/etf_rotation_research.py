@@ -460,6 +460,48 @@ def _build_unified_next_day(
     return out
 
 
+def _synthetic_sector_recommendations_from_unified(unified: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    When the sector-rotation plugin returns success but an empty RPS recommendation list,
+    the unified_next_day view still has ranked rows (three-factor + supplements).
+    Map those rows into the same legacy shape as plugin recommendations so L4 `recommendations`
+    stays aligned with the unified table and Chart Console legacy panels are not blank.
+    """
+    out: List[Dict[str, Any]] = []
+    for row in unified or []:
+        if not isinstance(row, dict):
+            continue
+        code = str(row.get("etf_code") or "").strip()
+        if not code:
+            continue
+        comp = row.get("components") if isinstance(row.get("components"), dict) else {}
+        base_cautions = [str(x) for x in (row.get("cautions") or []) if x is not None]
+        tag = "l4_legacy_projection_from_unified"
+        cautions = base_cautions + ([] if tag in base_cautions else [tag])
+        bullets = [str(b) for b in (row.get("explain_bullets") or []) if b is not None]
+        out.append(
+            {
+                "sector": str(row.get("sector") or ""),
+                "index_code": "",
+                "etf_code": code,
+                "etf_name": str(row.get("etf_name") or ""),
+                "composite_score": float(row.get("unified_score") or 0.0),
+                "signals": {
+                    "rps_20d": comp.get("rps_20d"),
+                    "rps_5d": comp.get("rps_5d"),
+                    "rps_change": comp.get("rps_change"),
+                    "volume_ratio": comp.get("volume_ratio"),
+                    "volume_status": comp.get("volume_status"),
+                },
+                "cautions": cautions,
+                "rank": row.get("rank"),
+                "allocation_pct": row.get("allocation_pct"),
+                "explain_bullets": bullets,
+            }
+        )
+    return out
+
+
 def _persist_rotation_artifacts(
     *,
     task_id: str,
@@ -621,6 +663,14 @@ def _persist_rotation_artifacts(
         sector_env=sector_env,
         three_factor_context=three_factor_context,
     )
+    recommendations_for_semantic = list(sector_recommendations)
+    extra_semantic_warnings: List[str] = []
+    if not recommendations_for_semantic and unified_next_day:
+        recommendations_for_semantic = _synthetic_sector_recommendations_from_unified(unified_next_day)
+        extra_semantic_warnings.append(
+            "sector_rotation_plugin_recommendations_empty; legacy recommendations projected from unified three-factor view."
+        )
+    merged_semantic_warnings = list(warnings) + extra_semantic_warnings
     sector_environment_effective = _sector_environment_effective(
         sector_env=sector_env,
         three_factor_context=three_factor_context,
@@ -666,7 +716,7 @@ def _persist_rotation_artifacts(
                 "dispersion": (three_factor_context.get("sentiment") or {}).get("dispersion"),
                 "gate_multiplier": (three_factor_context.get("gate") or {}).get("total_multiplier"),
             },
-            "recommendations": sector_recommendations if isinstance(sector_recommendations, list) else [],
+            "recommendations": recommendations_for_semantic,
             "sector_environment": (
                 (sector_rotation.get("data") or {}).get("environment")
                 if isinstance(sector_rotation, dict) and sector_rotation.get("success")
@@ -680,7 +730,7 @@ def _persist_rotation_artifacts(
             "data_quality": {
                 "quality_status": quality_status,
                 "degraded_reasons": degraded_reasons,
-                "warnings": warnings,
+                "warnings": merged_semantic_warnings,
                 "errors": errors,
                 "structured_warnings": swarn,
             },

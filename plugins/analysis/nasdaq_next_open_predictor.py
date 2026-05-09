@@ -17,9 +17,14 @@ from datetime import datetime
 import json
 from pathlib import Path
 import re
+import time
 from typing import Any, Dict, List, Optional, Tuple
 
+# LLM 融合结果缓存：带 TTL（小时），避免跨日误用；键为 trade_date + am/pm/close bucket
 _LLM_FUSION_CACHE: Dict[str, Dict[str, Any]] = {}
+LLM_FUSION_CACHE_EXPIRE_HOURS = 2.0
+
+_PREMIUM_THRESHOLDS_CACHE: Optional[Dict[str, Any]] = None
 
 
 def _safe_float(v: Any) -> Optional[float]:
@@ -161,6 +166,110 @@ def _monitor_point_bucket(monitor_point: str) -> str:
     if mp in {"M4", "M5", "M6"}:
         return "pm"
     return "close"
+
+
+def _premium_thresholds_config() -> Dict[str, Any]:
+    global _PREMIUM_THRESHOLDS_CACHE
+    if _PREMIUM_THRESHOLDS_CACHE is not None:
+        return _PREMIUM_THRESHOLDS_CACHE
+    defaults: Dict[str, Any] = {
+        "adjust_delta_above_5": -0.15,
+        "adjust_delta_above_4": -0.08,
+        "adjust_delta_above_3": -0.03,
+        "adjust_delta_below_2": 0.05,
+        "premium_risk_above_5": 1.0,
+        "premium_risk_between_4_and_5": 0.6,
+        "premium_risk_between_3_and_4": 0.2,
+    }
+    p = Path(__file__).resolve().parents[2] / "config" / "premium_thresholds_513300.yaml"
+    if not p.exists():
+        _PREMIUM_THRESHOLDS_CACHE = defaults
+        return defaults
+    try:
+        import yaml
+
+        raw = yaml.safe_load(p.read_text(encoding="utf-8"))
+    except Exception:
+        _PREMIUM_THRESHOLDS_CACHE = defaults
+        return defaults
+    if not isinstance(raw, dict):
+        _PREMIUM_THRESHOLDS_CACHE = defaults
+        return defaults
+    merged = dict(defaults)
+    for k, v in raw.items():
+        if k == "version":
+            continue
+        try:
+            if isinstance(v, (int, float)):
+                merged[str(k)] = float(v)
+        except Exception:
+            continue
+    _PREMIUM_THRESHOLDS_CACHE = merged
+    return merged
+
+
+def premium_risk_from_pct(premium_pct: Optional[float], cfgp: Optional[Dict[str, Any]] = None) -> float:
+    cfgp = cfgp or _premium_thresholds_config()
+    if premium_pct is None:
+        return 0.0
+    x = float(premium_pct)
+    if x >= 5.0:
+        return float(cfgp.get("premium_risk_above_5", 1.0))
+    if x >= 4.0:
+        return float(cfgp.get("premium_risk_between_4_and_5", 0.6))
+    if x >= 3.0:
+        return float(cfgp.get("premium_risk_between_3_and_4", 0.2))
+    return 0.0
+
+
+def adjust_by_premium(base_p_up: float, premium_pct: Optional[float], cfgp: Optional[Dict[str, Any]] = None) -> float:
+    cfgp = cfgp or _premium_thresholds_config()
+    if premium_pct is None:
+        return float(base_p_up)
+    x = float(premium_pct)
+    adj = 0.0
+    if x > 5.0:
+        adj = float(cfgp.get("adjust_delta_above_5", -0.15))
+    elif x > 4.0:
+        adj = float(cfgp.get("adjust_delta_above_4", -0.08))
+    elif x > 3.0:
+        adj = float(cfgp.get("adjust_delta_above_3", -0.03))
+    elif x < 2.0:
+        adj = float(cfgp.get("adjust_delta_below_2", 0.05))
+    return _clip(float(base_p_up) + adj, 0.01, 0.99)
+
+
+def _extract_premium_pct(report_data: Dict[str, Any]) -> Optional[float]:
+    ana = report_data.get("analysis") if isinstance(report_data.get("analysis"), dict) else {}
+    p = _safe_float(ana.get("premium_rate_pct"))
+    if p is not None:
+        return p
+    snap = report_data.get("tail_session_snapshot") if isinstance(report_data.get("tail_session_snapshot"), dict) else {}
+    return _safe_float(snap.get("premium_pct"))
+
+
+def _full_nasdaq_m7_predictor_run(market_profile: str, monitor_point: str) -> bool:
+    return str(market_profile).strip() == "nasdaq_513300" and str(monitor_point).strip().upper() == "M7"
+
+
+def _llm_fusion_cache_get(cache_key: str, expire_hours: float = LLM_FUSION_CACHE_EXPIRE_HOURS) -> Optional[Dict[str, Any]]:
+    raw = _LLM_FUSION_CACHE.get(cache_key)
+    if not isinstance(raw, dict):
+        return None
+    if "data" in raw and "ts" in raw:
+        ts = float(raw.get("ts") or 0)
+        if time.time() - ts > expire_hours * 3600:
+            return None
+        data = raw.get("data")
+        return dict(data) if isinstance(data, dict) else None
+    # legacy: entire dict is fusion payload
+    if raw.get("success") is not None or raw.get("p_up_raw") is not None:
+        return dict(raw)
+    return None
+
+
+def _llm_fusion_cache_set(cache_key: str, fusion: Dict[str, Any]) -> None:
+    _LLM_FUSION_CACHE[cache_key] = {"ts": time.time(), "data": dict(fusion)}
 
 
 def _is_data_quality_normal(report_data: Dict[str, Any]) -> bool:
@@ -549,6 +658,12 @@ def predict_next_open_direction(
         quality_status = "degraded"
         degraded_reason = "PREDICTOR_NO_LATEST_PRICE"
 
+    premium_pct = _extract_premium_pct(report_data)
+    cfg_premium = _premium_thresholds_config()
+    premium_risk = premium_risk_from_pct(premium_pct, cfg_premium)
+    full_predictor = _full_nasdaq_m7_predictor_run(market_profile, monitor_point)
+    predictor_run_kind = "full_m7" if full_predictor else "intraday_next_open_preview"
+
     # ---------- Layer1 momentum score ----------
     # build historical momentum list from recent monitor events
     hist_events = _load_recent_monitor_events(lookback_days=cfg.lookback_days)
@@ -675,11 +790,15 @@ def predict_next_open_direction(
         ],
     }
 
-    # ---------- Layer3 event gate (Tavily + yfinance 双源) ----------
-    event_risk = 0.0
+    # ---------- Layer3 event gate (Tavily + yfinance 双源)；M1–M6 纳指跳过宏观抓取 ----------
+    event_risk_macro = 0.0
     event_note = "event_gate_default"
-    tav_sig = _fetch_tavily_event_signal(trade_date)
-    yf_sig = _fetch_yf_event_signal(trade_date)
+    if full_predictor:
+        tav_sig = _fetch_tavily_event_signal(trade_date)
+        yf_sig = _fetch_yf_event_signal(trade_date)
+    else:
+        tav_sig = {"success": True, "event_risk": 0.0, "note": "skipped_non_m7_preview", "events": []}
+        yf_sig = {"success": True, "event_risk": 0.0, "note": "skipped_non_m7_preview", "events": []}
     event_sources = {"tavily": tav_sig, "yfinance": yf_sig}
     src_ok = [k for k, v in event_sources.items() if isinstance(v, dict) and v.get("success")]
     if not src_ok:
@@ -689,18 +808,19 @@ def predict_next_open_direction(
     else:
         tav_risk = _safe_float((tav_sig or {}).get("event_risk")) or 0.0
         yf_risk = _safe_float((yf_sig or {}).get("event_risk")) or 0.0
-        event_risk = max(tav_risk, yf_risk)
+        event_risk_macro = max(tav_risk, yf_risk)
         event_note = ";".join(
             x for x in [str((tav_sig or {}).get("note") or ""), str((yf_sig or {}).get("note") or "")] if x
         )[:240]
 
-    # ---------- backtest stats (rolling 60) + alpha calibration ----------
+    event_risk_eff = max(float(event_risk_macro), float(premium_risk))
+
+    # ---------- backtest stats (rolling 60) + alpha calibration（仅 M7 全量） ----------
     w1, w2 = cfg.weights
     dates_sorted = sorted(labels.keys())
     recent_dates = dates_sorted[-cfg.lookback_days :] if dates_sorted else []
 
-    # Build (s, y) pairs using leakage-safe pool (prior events only).
-    events_by_date = []
+    events_by_date: List[Tuple[str, Dict[str, Any]]] = []
     for e in hist_events:
         td0 = str(e.get("trade_date") or e.get("date") or "").strip()
         if td0:
@@ -709,58 +829,74 @@ def predict_next_open_direction(
 
     sy_scores: List[float] = []
     sy_labels: List[float] = []
-    for td0, e in events_by_date:
-        if td0 not in recent_dates:
-            continue
-        scored = _score_for_event(e, hist_mom=hist_mom, labels=labels, events_pool=hist_events, klines=klines, cfg=cfg)
-        if scored is None:
-            continue
-        s0, y0 = scored
-        sy_scores.append(float(s0))
-        sy_labels.append(float(y0))
+    if full_predictor:
+        for td0, e in events_by_date:
+            if td0 not in recent_dates:
+                continue
+            scored = _score_for_event(e, hist_mom=hist_mom, labels=labels, events_pool=hist_events, klines=klines, cfg=cfg)
+            if scored is None:
+                continue
+            s0, y0 = scored
+            sy_scores.append(float(s0))
+            sy_labels.append(float(y0))
 
-    alpha_fit, brier_fit = _fit_alpha_platt(sy_scores, sy_labels)
+    alpha_fit: Optional[float]
+    brier_fit: Optional[float]
+    if full_predictor:
+        alpha_fit, brier_fit = _fit_alpha_platt(sy_scores, sy_labels)
+    else:
+        alpha_fit, brier_fit = None, None
     alpha_used = float(alpha_fit) if alpha_fit is not None else float(cfg.alpha)
 
     # ---------- fuse for today ----------
+    # 计划顺序：p_rule → adjust_by_premium → (LLM) → event_risk_shrink
     s = float(w1) * float(momentum_score) + float(w2) * float(corr_score)
-    p_up_raw = _sigmoid(alpha_used * s)
+    p_up_rule = _sigmoid(alpha_used * s)
+    p_up_after_premium = adjust_by_premium(p_up_rule, premium_pct, cfg_premium)
 
-    # LLM 融合（可选，失败不阻断）
+    # LLM 融合（可选，失败不阻断）；仅 M7 全量运行；缓存带 TTL；输入为溢价调整后的基准概率
     llm_called = False
     llm_call_reason: List[str] = []
-    if 0.4 <= float(p_up_raw) <= 0.6:
-        llm_call_reason.append("rule_uncertain")
-    if float(event_risk) > 0.4:
-        llm_call_reason.append("event_risk_high")
-    if float(momentum_score) * float(corr_score) < 0:
-        llm_call_reason.append("layer_conflict")
+    if full_predictor:
+        if 0.4 <= float(p_up_after_premium) <= 0.6:
+            llm_call_reason.append("rule_uncertain")
+        if float(event_risk_macro) > 0.4:
+            llm_call_reason.append("event_risk_high")
+        if float(momentum_score) * float(corr_score) < 0:
+            llm_call_reason.append("layer_conflict")
     llm_cache_key = f"{trade_date}:{_monitor_point_bucket(monitor_point)}"
     llm_fusion: Dict[str, Any] = {"success": False, "note": "llm_not_triggered"}
-    if llm_call_reason:
+    if full_predictor and llm_call_reason:
         llm_called = True
-        cached = _LLM_FUSION_CACHE.get(llm_cache_key)
-        if isinstance(cached, dict):
+        cached = _llm_fusion_cache_get(llm_cache_key)
+        if isinstance(cached, dict) and cached.get("success"):
             llm_fusion = dict(cached)
             llm_fusion["note"] = "llm_cached"
         else:
             llm_fusion = _llm_fuse_probability(
                 momentum_score=float(momentum_score),
                 corr_score=float(corr_score),
-                event_risk=float(event_risk),
-                p_up_rule_raw=float(p_up_raw),
+                event_risk=float(event_risk_macro),
+                p_up_rule_raw=float(p_up_after_premium),
                 tav_sig=tav_sig,
                 yf_sig=yf_sig,
             )
             if isinstance(llm_fusion, dict) and llm_fusion.get("success"):
-                _LLM_FUSION_CACHE[llm_cache_key] = dict(llm_fusion)
+                _llm_fusion_cache_set(llm_cache_key, llm_fusion)
+    elif not full_predictor:
+        llm_fusion = {"success": False, "note": "skipped_non_m7_gate"}
+
     p_up_raw_source = "rule"
+    p_up_after_llm = float(p_up_after_premium)
     if isinstance(llm_fusion, dict) and llm_fusion.get("success"):
-        p_up_raw = float(llm_fusion.get("p_up_raw"))
+        p_up_after_llm = float(llm_fusion.get("p_up_raw"))
         p_up_raw_source = "llm_fused"
 
-    p_up_pre_gate = float(p_up_raw)
-    p_up = 0.5 + (1.0 - float(event_risk)) * (p_up_pre_gate - 0.5)
+    # 供落盘/组件展示：与 LLM 层 historical「p_up_raw」字段对齐，表示收缩前的最终概率
+    p_up_raw = float(p_up_after_llm)
+
+    p_up_pre_gate = float(p_up_after_llm)
+    p_up = 0.5 + (1.0 - float(event_risk_eff)) * (p_up_pre_gate - 0.5)
     p_up = _clip(float(p_up), 0.001, 0.999)
 
     direction = "up" if p_up >= 0.5 else "down"
@@ -806,6 +942,11 @@ def predict_next_open_direction(
         bucket_total += 1
         bucket_up += int(labels.get(td0, 0))
     bucket_up_prob = (bucket_up / float(bucket_total)) if bucket_total > 0 else None
+
+    # M1–M6 轻量预览：与 M7 全量在 _meta.quality_status 上区分（计划 Phase 4）
+    if predictor_run_kind == "intraday_next_open_preview" and quality_status == "ok":
+        quality_status = "intraday_next_open_preview"
+
     backtest_stats = {
         "hit_rate_60d": round(hit_rate, 4) if hit_rate is not None and n >= cfg.min_backtest_n else None,
         "brier_60d": round(brier, 4) if brier is not None and n >= cfg.min_backtest_n else None,
@@ -827,9 +968,9 @@ def predict_next_open_direction(
     data_quality_normal = _is_data_quality_normal(report_data)
     confidence_level = "low"
     if data_quality_normal and n >= cfg.min_backtest_n:
-        if float(event_risk) < 0.3:
+        if float(event_risk_eff) < 0.3:
             confidence_level = "high"
-        elif float(event_risk) <= 0.6:
+        elif float(event_risk_eff) <= 0.6:
             confidence_level = "medium"
         else:
             confidence_level = "low"
@@ -839,15 +980,16 @@ def predict_next_open_direction(
     feature_row = {
         "_meta": {
             "schema_name": "nasdaq_513300_next_open_predictor_features",
-            "schema_version": "1.0.0",
+            "schema_version": "1.2.0",
             "task_id": task_id,
             "run_id": run_id,
             "data_layer": "L2",
             "generated_at": generated_at,
             "trade_date": trade_date,
             "source_tools": ["tool_fetch_etf_data", "tool_fetch_index_data"],
-            "lineage_refs": [f"monitor_point:{monitor_point}"],
+            "lineage_refs": [f"monitor_point:{monitor_point}", "premium_thresholds:premium_thresholds_513300.yaml"],
             "quality_status": quality_status,
+            "predictor_run_kind": predictor_run_kind,
         },
         "market_profile": market_profile,
         "monitor_point": monitor_point,
@@ -858,8 +1000,25 @@ def predict_next_open_direction(
             "topk": int(cfg.nn_topk),
             "debug": similarity_debug,
         },
-        "event_gate": {"event_risk": event_risk, "event_note": event_note, "sources": event_sources},
-        "inputs": {"idx_ret_pct": idx_ret_pct, "nq_change_pct": nq_change_pct, "latest_price_proxy_close": latest_price},
+        "event_gate": {
+            "event_risk_macro": round(float(event_risk_macro), 6),
+            "premium_risk": round(float(premium_risk), 6),
+            "event_risk_effective": round(float(event_risk_eff), 6),
+            "event_note": event_note,
+            "sources": event_sources,
+        },
+        "premium": {
+            "premium_pct": premium_pct,
+            "p_up_rule": round(float(p_up_rule), 6),
+            "p_up_after_premium_rule": round(float(p_up_after_premium), 6),
+            "p_up_after_llm": round(float(p_up_after_llm), 6),
+        },
+        "inputs": {
+            "idx_ret_pct": idx_ret_pct,
+            "nq_change_pct": nq_change_pct,
+            "latest_price_proxy_close": latest_price,
+            "premium_pct": premium_pct,
+        },
         "calibration": {"alpha_used": alpha_used, "method": "platt" if alpha_fit is not None else "none"},
         "llm_fusion": {
             "enabled": True,
@@ -878,7 +1037,7 @@ def predict_next_open_direction(
     decision_row = {
         "_meta": {
             "schema_name": "nasdaq_513300_next_open_direction_event",
-            "schema_version": "1.0.0",
+            "schema_version": "1.2.0",
             "task_id": task_id,
             "run_id": run_id,
             "data_layer": "L3",
@@ -887,6 +1046,7 @@ def predict_next_open_direction(
             "source_tools": ["nasdaq_next_open_predictor"],
             "lineage_refs": [f"features_run_id:{run_id}", f"monitor_point:{monitor_point}"],
             "quality_status": quality_status,
+            "predictor_run_kind": predictor_run_kind,
         },
         "market_profile": market_profile,
         "monitor_point": monitor_point,
@@ -897,8 +1057,18 @@ def predict_next_open_direction(
         "components": [
             {"layer": "layer1_momentum", "score": round(float(momentum_score), 4), "weight": float(w1), "contribution": round(float(w1) * float(momentum_score), 4)},
             {"layer": "layer2_similarity", "score": round(float(corr_score), 4), "weight": float(w2), "contribution": round(float(w2) * float(corr_score), 4)},
-            {"layer": "layer3_event_gate", "event_risk": round(float(event_risk), 4)},
-            {"layer": "layer4_llm_fusion", "source": p_up_raw_source, "p_up_raw": round(float(p_up_raw), 4)},
+            {
+                "layer": "layer3_event_gate",
+                "event_risk_macro": round(float(event_risk_macro), 4),
+                "premium_risk": round(float(premium_risk), 4),
+                "event_risk_effective": round(float(event_risk_eff), 4),
+            },
+            {
+                "layer": "layer4_premium_adjust",
+                "p_up_rule": round(float(p_up_rule), 6),
+                "p_up_after_premium": round(float(p_up_after_premium), 6),
+            },
+            {"layer": "layer5_llm_fusion", "source": p_up_raw_source, "p_up_after_llm": round(float(p_up_after_llm), 6)},
         ],
         "llm_fusion": {
             "source": p_up_raw_source,
@@ -913,13 +1083,19 @@ def predict_next_open_direction(
         },
         "backtest_stats": backtest_stats,
         "probability_debug": {
-            "rule_based_p_up": round(float(_sigmoid(alpha_used * s)), 6),
-            "llm_adjusted_p_up": round(float(p_up_pre_gate), 6),
-            "llm_shift": round(float(p_up_pre_gate) - float(_sigmoid(alpha_used * s)), 6),
+            "predictor_run_kind": predictor_run_kind,
+            "premium_pct": premium_pct,
+            "premium_risk": round(float(premium_risk), 6),
+            "event_risk_macro": round(float(event_risk_macro), 6),
+            "event_risk_effective": round(float(event_risk_eff), 6),
+            "rule_based_p_up": round(float(p_up_rule), 6),
+            "p_up_after_premium_rule": round(float(p_up_after_premium), 6),
+            "llm_adjusted_p_up": round(float(p_up_after_llm), 6),
+            "llm_shift": round(float(p_up_after_llm) - float(p_up_after_premium), 6),
             "llm_confidence": (llm_fusion or {}).get("confidence"),
             "llm_called": llm_called,
+            "p_up_after_premium_pre_shrink": round(float(p_up_after_llm), 6),
             "p_up_raw_pre_gate": round(float(p_up_pre_gate), 6),
-            "event_risk": round(float(event_risk), 6),
             "p_up_final": round(float(p_up), 6),
         },
         "similarity_debug": similarity_debug,
@@ -930,9 +1106,12 @@ def predict_next_open_direction(
     semantic_view = {
         "_meta": {
             "schema_name": "nasdaq_513300_next_open_direction_semantic",
-            "schema_version": "1.0.0",
+            "schema_version": "1.2.0",
             "generated_at": generated_at,
             "trade_date": trade_date,
+            "monitor_point": monitor_point,
+            "quality_status": quality_status,
+            "predictor_run_kind": predictor_run_kind,
         },
         "data": {
             "market_profile": market_profile,

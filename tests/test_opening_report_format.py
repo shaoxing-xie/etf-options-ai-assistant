@@ -1,6 +1,17 @@
 from __future__ import annotations
 
-from plugins.notification.send_daily_report import _format_daily_report
+from plugins.notification.send_daily_report import _format_daily_report, _opening_pick_row
+
+
+def test_opening_pick_row_prefers_daily_close_for_us_indices() -> None:
+    rows = [
+        {"code": "int_dji", "name": "道琼斯", "change_pct": 0.01, "data_semantics": "realtime_quote"},
+        {"code": "^DJI", "name": "道琼斯", "change_pct": 0.35, "data_semantics": "daily_close"},
+    ]
+    picked = _opening_pick_row(rows, "^DJI")
+    assert picked is not None
+    assert float(picked.get("change_pct") or 0) == 0.35
+    assert picked.get("data_semantics") == "daily_close"
 
 
 def test_opening_report_uses_six_section_structure_without_northbound() -> None:

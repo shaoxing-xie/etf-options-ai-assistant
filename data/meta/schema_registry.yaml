@@ -66,3 +66,39 @@ schemas:
     schema_version: "1.0.0"
     data_layer: L3_decision
     lineage_note: "预测验证或规则引擎事后反思；可关联 decision_id / prediction 记录 lineage_refs"
+  - schema_name: global_market_snapshot_v1
+    schema_version: "1.0.0"
+    data_layer: L4_semantic
+    lineage_note: "Chart Console 全球市场合成；股指与期货腿；美股迷你期指可经 tool_fetch_global_futures_spot_em（东财 YM00Y/ES00Y/NQ00Y，内存 TTL，见 ENABLE_EM_GLOBAL_FUTURES_SPOT）"
+  - schema_name: qdii_futures_snapshot_v1
+    schema_version: "1.0.0"
+    data_layer: L4_semantic
+    lineage_note: "QDII 期指子集；同 global 期货东财兜底链"
+  - schema_name: futures_global_spot_em_tool_payload_v1
+    schema_version: "1.0.0"
+    data_layer: L1_raw
+    lineage_note: "插件/助手 tool_fetch_global_futures_spot_em 输出帧；进程内缓存、通常不落盘为独立 L1 文件；AkShare futures_global_spot_em"
+  - schema_name: nasdaq_513300_next_open_predictor_features
+    schema_version: "1.2.0"
+    data_layer: L2
+    lineage_note: "nasdaq_next_open_predictor；顺序 rule→premium→LLM(M7)→收缩；premium_risk 并入 event_risk_eff；M7 全量 / M1–M6 preview"
+  - schema_name: nasdaq_513300_next_open_direction_event
+    schema_version: "1.2.0"
+    data_layer: L3
+    lineage_note: "次日开盘方向 JSONL；components：layer4_premium_adjust / layer5_llm_fusion；quality_status 可为 intraday_next_open_preview"
+  - schema_name: nasdaq_513300_next_open_direction_semantic
+    schema_version: "1.2.0"
+    data_layer: L4_semantic
+    lineage_note: "data/semantic/nasdaq_513300_next_open_direction_view；_meta 含 predictor_run_kind"
+  - schema_name: nasdaq_513300_intraday_guide_v1
+    schema_version: "1.1.0"
+    data_layer: L4_semantic
+    lineage_note: "513300 模式A 规则摘要；analysis.intraday_guide 含 guide_tier/replay_gate/inputs.usd_cnh"
+  - schema_name: nasdaq_513300_monitor_event
+    schema_version: "1.0.0"
+    data_layer: L4_semantic
+    lineage_note: "tail_session 监控 JSONL data/semantic/nasdaq_513300_monitor_events"
+  - schema_name: nasdaq_513300_intraday_dashboard_view
+    schema_version: "1.0.0"
+    data_layer: L4_semantic
+    lineage_note: "日内大屏语义视图 data/semantic/nasdaq_513300_intraday_dashboard_view"

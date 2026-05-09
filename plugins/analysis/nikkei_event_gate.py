@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from datetime import datetime
 import re
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -11,13 +10,6 @@ IMPACT_TEMPLATES: Dict[str, str] = {
     "日本CPI": "影响日银加息预期→汇率→股市",
     "美国CPI": "影响美联储政策→美元/日元→日股",
 }
-
-
-def _safe_date(v: str) -> Optional[datetime]:
-    try:
-        return datetime.strptime(str(v or "").strip(), "%Y-%m-%d")
-    except Exception:
-        return None
 
 
 def _fetch_tavily_events(trade_date: str, timeout_s: float = 8.0) -> Dict[str, Any]:
@@ -99,7 +91,6 @@ def _risk_from_event(name: str) -> float:
 
 
 def calculate_event_gate(trade_date: str) -> Dict[str, Any]:
-    td = _safe_date(trade_date)
     tav = _fetch_tavily_events(trade_date)
     sentinel = _fetch_event_sentinel_events(trade_date)
     events: List[str] = []
@@ -108,9 +99,6 @@ def calculate_event_gate(trade_date: str) -> Dict[str, Any]:
             if isinstance(e, str) and e not in events:
                 events.append(e)
     source_status = "ok" if any(bool(x.get("success")) for x in (tav, sentinel)) else "degraded"
-    # static fallback: BOJ/fed-like risk day proxy (weekday based)
-    if not events and td is not None and td.weekday() in {2, 3}:
-        events.append("FOMC")
     risk = 0.0
     for e in events:
         risk += _risk_from_event(e)

@@ -1608,42 +1608,91 @@ function renderResearchTaskHealth(taskHealth) {
   el.innerHTML = `<div class="research-task-health-warn"><strong>聚合提醒</strong>：${esc(String(n))} 个任务缺失或快照陈旧。</div>${list}<div class="screening-muted" style="margin-top:4px;">对照左侧任务表与右侧时间轴；可与运维任务看板交叉核对。</div>`;
 }
 
-async function fetchRotationWithFallback(tradeDateOverride, rotationDates, tradeDate) {
-  let rotation = await jgetWithFallback(
+async function fetchRotationLatest(tradeDate) {
+  const rotation = await jgetWithFallback(
     tradeDate
       ? `/api/semantic/rotation_latest?trade_date=${encodeURIComponent(tradeDate)}`
       : "/api/semantic/rotation_latest",
     "",
   );
-  let outDate = tradeDate;
-  if (!tradeDateOverride && rotationDates.length > 1 && tradeDate) {
-    const curRecs = Array.isArray((rotation.data || {}).recommendations) ? rotation.data.recommendations : [];
-    if (curRecs.length > 0 && curRecs.length < 5) {
-      const sorted = rotationDates.slice().sort();
-      const prev = sorted.filter((d) => String(d) < String(tradeDate)).pop();
-      if (prev) {
-        const prevRot = await jgetWithFallback(`/api/semantic/rotation_latest?trade_date=${encodeURIComponent(prev)}`, "");
-        const prevRecs = Array.isArray((prevRot.data || {}).recommendations) ? prevRot.data.recommendations : [];
-        if (prevRecs.length >= curRecs.length) {
-          rotation = prevRot;
-          if (!rotation.data || typeof rotation.data !== "object") rotation.data = {};
-          rotation.data._requested_trade_date = tradeDate;
-          rotation.data._auto_fallback_to_prev_trade_date = true;
-          outDate = prev;
-        }
-      }
-    }
+  return rotation;
+}
+
+/** Symbols for legacy 三维共振 table (rotation_latest.data.top5). */
+function rotationTop5Symbols(top5Rows) {
+  const rows = Array.isArray(top5Rows) ? top5Rows : [];
+  return rows.map((r) => String(r?.symbol || "").trim()).filter(Boolean);
+}
+
+function describeRotationTop5VsPrev(currentSyms, prevSyms, prevDateLabel) {
+  if (!prevDateLabel || !Array.isArray(prevSyms) || prevSyms.length === 0) {
+    return `<div><strong>三维Top5环比</strong>：无上一会轮动快照可对照（仅单日或缺文件）。</div>`;
   }
-  return { rotation, tradeDate: outDate };
+  const cur = new Set(currentSyms);
+  const prev = new Set(prevSyms);
+  let overlap = 0;
+  for (const s of cur) {
+    if (prev.has(s)) overlap += 1;
+  }
+  const entered = currentSyms.filter((s) => s && !prev.has(s));
+  const exited = prevSyms.filter((s) => s && !cur.has(s));
+  const enterTxt = entered.length ? entered.join("、") : "无";
+  const exitTxt = exited.length ? exited.join("、") : "无";
+  return `<div><strong>三维Top5环比</strong>（相对 ${esc(prevDateLabel)}）：重合 <strong>${esc(String(overlap))}</strong>/5；新晋 ${esc(
+    enterTxt,
+  )}；掉出 ${esc(exitTxt)}。</div>`;
+}
+
+/** Per-symbol 综合分 day-over-day delta when symbol appears in both top5 lists. */
+function rotationTop5ScoreDeltaLines(currentTop5, prevTop5) {
+  const prevBySym = {};
+  for (const r of Array.isArray(prevTop5) ? prevTop5 : []) {
+    const s = String(r?.symbol || "").trim();
+    if (!s) continue;
+    const v = Number(r?.score ?? r?.composite_score);
+    if (Number.isFinite(v)) prevBySym[s] = v;
+  }
+  const parts = [];
+  for (const r of Array.isArray(currentTop5) ? currentTop5 : []) {
+    const s = String(r?.symbol || "").trim();
+    if (!s) continue;
+    const cur = Number(r?.score ?? r?.composite_score);
+    const pv = prevBySym[s];
+    if (!Number.isFinite(cur) || !Number.isFinite(pv)) continue;
+    const d = cur - pv;
+    parts.push(`${s} Δ=${d >= 0 ? "+" : ""}${d.toFixed(4)}`);
+  }
+  if (!parts.length) return "";
+  return `<div><strong>综合分环比</strong>（同上日可比标的）：${esc(parts.join("；"))}</div>`;
 }
 
 async function ensureResearchRotationLoaded() {
   const td = String(qs("researchDatePick")?.value || researchLastTradeDate || "").trim();
   if (!td) return;
   if (researchRotationLoadedFor === td) return;
-  const rotationDates = researchRotationDatesList.length ? researchRotationDatesList : [];
-  const { rotation } = await fetchRotationWithFallback("", rotationDates, td);
-  renderRotationPanel(rotation.data || {});
+  let compare = null;
+  try {
+    const rotationDatesResp = await jgetWithFallback("/api/semantic/rotation_trade_dates", "");
+    const rotationDates = Array.isArray(rotationDatesResp.data) ? rotationDatesResp.data.filter(Boolean) : [];
+    const sortedRd = rotationDates.slice().sort();
+    const ix = sortedRd.indexOf(td);
+    if (ix > 0) {
+      const pd = sortedRd[ix - 1];
+      const [rotation, prevRot] = await Promise.all([fetchRotationLatest(td), fetchRotationLatest(pd)]);
+      compare = {
+        prevTradeDate: pd,
+        prevTop5: (prevRot.data || {}).top5 || [],
+        prevTop5Symbols: rotationTop5Symbols((prevRot.data || {}).top5),
+      };
+      renderRotationPanel(rotation.data || {}, compare);
+      researchRotationLoadedFor = td;
+      return;
+    }
+  } catch (_) {
+    /* fall through */
+  }
+  const rotation = await fetchRotationLatest(td);
+  renderRotationPanel(rotation.data || {}, compare);
   researchRotationLoadedFor = td;
 }
 
@@ -1700,8 +1749,8 @@ function setResearchSubview(name) {
   if (drawer && name !== "overview") drawer.style.display = "none";
 }
 
-function renderRotationPanel(payload) {
-  const ROTATION_UI_BUILD = "20260501-2028";
+function renderRotationPanel(payload, rotationCompare) {
+  const ROTATION_UI_BUILD = "20260508-2145";
   const sumEl = qs("researchRotationSummary");
   const unifiedTbody = qs("researchRotationUnifiedTbody");
   const tbody = qs("researchRotationLegacyTbody");
@@ -1774,13 +1823,30 @@ function renderRotationPanel(payload) {
   const autoFallback = Boolean(p._auto_fallback_to_prev_trade_date);
   if (sumEl) {
     const rpsCountHint = recs.length < 5 ? `（低于目标5，可能受当日数据可用性影响）` : "";
+    const cmp = rotationCompare && typeof rotationCompare === "object" ? rotationCompare : null;
+    const curSyms = rotationTop5Symbols(top);
+    const prevSyms = cmp?.prevTop5Symbols;
+    const prevDate = cmp?.prevTradeDate ? String(cmp.prevTradeDate) : "";
+    const dodHtml =
+      cmp && prevDate ? describeRotationTop5VsPrev(curSyms, prevSyms, prevDate) : describeRotationTop5VsPrev([], [], "");
+    const deltaHtml =
+      cmp && prevDate && Array.isArray(cmp.prevTop5) ? rotationTop5ScoreDeltaLines(top, cmp.prevTop5) : "";
+    const marketFb =
+      top.length > 0 &&
+      top.every((row) => String(row?.three_factor?.capital_resonance_type || "").includes("market_level"));
+    const resonanceHint = marketFb
+      ? `<div class="screening-muted" style="margin-top:6px">提示：当前三维管线处于资金共振<strong>市场级 fallback</strong>，表中「共振」列常为固定值；清单仍会按综合分重排，并不代表未刷新。请看上方<strong>三维Top5环比</strong>与<strong>综合分环比</strong>。</div>`
+      : "";
     sumEl.innerHTML = `<div><strong>交易日</strong>：${esc(p.trade_date || (p._meta || {}).trade_date || "—")}</div>
       <div><strong>质量状态</strong>：${esc(quality)}</div>
       <div><strong>UI版本</strong>：${esc(ROTATION_UI_BUILD)}</div>
       <div><strong>三维门闸（乘子）</strong>：${esc(gateDisplay)}</div>
       <div><strong>合成环境门闸</strong>：${esc(effGate)}</div>
       <div><strong>RPS条数</strong>：${esc(recs.length)}${esc(rpsCountHint)}</div>
-      <div><strong>降级说明</strong>：${esc(reasonText || "无")}</div>`;
+      <div><strong>降级说明</strong>：${esc(reasonText || "无")}</div>
+      ${dodHtml}
+      ${deltaHtml}
+      ${resonanceHint}`;
     if (autoFallback && requestedDate && displayDate && requestedDate !== displayDate) {
       sumEl.innerHTML += `<div><strong>非交易日回退</strong>：当前为非交易日/低可用日，已自动从 ${esc(
         requestedDate,
@@ -1944,11 +2010,23 @@ async function loadResearch(tradeDateOverride = "") {
     const eagerSix = Boolean(tradeDateOverride) || activeSub === "six-index";
 
     let rotation = { data: {} };
+    let rotationCompare = null;
     if (eagerRotation) {
       if (tradeDate) {
-        const r = await fetchRotationWithFallback(tradeDateOverride, rotationDates, tradeDate);
-        rotation = r.rotation;
-        tradeDate = r.tradeDate;
+        const sortedRd = rotationDates.slice().sort();
+        const ixRd = sortedRd.indexOf(tradeDate);
+        if (ixRd > 0) {
+          const pd = sortedRd[ixRd - 1];
+          const [rotCur, rotPrev] = await Promise.all([fetchRotationLatest(tradeDate), fetchRotationLatest(pd)]);
+          rotation = rotCur;
+          rotationCompare = {
+            prevTradeDate: pd,
+            prevTop5: (rotPrev.data || {}).top5 || [],
+            prevTop5Symbols: rotationTop5Symbols((rotPrev.data || {}).top5),
+          };
+        } else {
+          rotation = await fetchRotationLatest(tradeDate);
+        }
       } else {
         rotation = await jgetWithFallback("/api/semantic/rotation_latest", "");
       }
@@ -2011,7 +2089,7 @@ async function loadResearch(tradeDateOverride = "") {
     renderResearchTaskPools(viewData);
     renderResearchTop(data.top_recommendations || []);
     if (eagerRotation) {
-      renderRotationPanel(rotationData);
+      renderRotationPanel(rotationData, rotationCompare);
     } else {
       renderRotationPanel({});
       researchRotationLoadedFor = "";

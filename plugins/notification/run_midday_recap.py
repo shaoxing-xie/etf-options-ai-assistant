@@ -529,8 +529,8 @@ def _safe_step(name: str, fn: Any, errors: List[Dict[str, str]], /, **kwargs: An
 
 _WORKFLOW_PROFILES = {"legacy", "cron_balanced"}
 _STAGE_BUDGET_PRESETS: Dict[str, Dict[str, int]] = {
-    "balanced": {"critical": 45, "slow_sources": 60, "compose_send": 30},
-    "tight": {"critical": 35, "slow_sources": 45, "compose_send": 25},
+    "balanced": {"critical": 45, "slow_sources": 120, "compose_send": 30},
+    "tight": {"critical": 35, "slow_sources": 90, "compose_send": 25},
 }
 
 

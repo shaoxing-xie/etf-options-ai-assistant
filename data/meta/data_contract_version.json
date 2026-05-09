@@ -1,5 +1,5 @@
 {
-  "version": "1.2.4",
-  "notes": "compatible_plugins_min 0.5.12：插件缓存增强、预热脚本、熔断与可选动态 tie-break；详见 docs/data-source-contract.md。",
+  "version": "1.2.8",
+  "notes": "513300 next_open_predictor features/decision/semantic schema 1.2.0（premium→LLM 与 components 重命名）；intraday_guide 1.1.0。",
   "compatible_plugins_min": "0.5.12"
 }

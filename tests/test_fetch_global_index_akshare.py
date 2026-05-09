@@ -108,5 +108,6 @@ def test_akshare_pure_source_second_pass_after_sina_full_fails(
     ]
     r = fetch_global_index_spot("^DJI")
     assert r.get("success") is True
-    assert r.get("source") == "akshare.index_us_stock_sina"
+    # 配置若含 yfinance，纯 AkShare 成功时 source 会带兼容后缀 ``...,yfinance``。
+    assert str(r.get("source") or "").startswith("akshare.index_us_stock_sina")
     assert (r.get("data") or [{}])[0].get("code") == "^DJI"

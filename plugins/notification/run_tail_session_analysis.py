@@ -12,10 +12,11 @@ from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import json
 import logging
+import os
 from pathlib import Path
 import re
 import time
-from threading import Semaphore
+from threading import Lock, Semaphore
 from typing import Any, Callable, Dict, List, Optional, Tuple
 from urllib.error import URLError
 from urllib.request import urlopen
@@ -44,17 +45,34 @@ def _memo_key(fn: Callable[..., Any], args: Tuple[Any, ...], kwargs: Dict[str, A
 
 
 class _StageBudget:
+    """按「阶段」计费：从该阶段第一次发起工具调用开始计时，而非整段 build 入口。
+
+    否则 critical 耗时较长时，slow_sources 的倒计时已在全局起跑耗尽，后续 NQ/环球现货会被误判超时跳过。
+    """
+
     def __init__(self, budget_s: Optional[float]):
         self.budget_s = budget_s if isinstance(budget_s, (int, float)) and float(budget_s) > 0 else None
-        self.started_at = time.perf_counter()
+        self.started_at: Optional[float] = None
+        self._lock = Lock()
+
+    def begin_stage_if_needed(self) -> None:
+        if self.budget_s is None:
+            return
+        with self._lock:
+            if self.started_at is None:
+                self.started_at = time.perf_counter()
 
     def remaining_s(self) -> Optional[float]:
         if self.budget_s is None:
             return None
+        if self.started_at is None:
+            return float(self.budget_s)
         rem = float(self.budget_s) - (time.perf_counter() - self.started_at)
         return rem if rem > 0 else 0.0
 
     def expired(self) -> bool:
+        if self.budget_s is None:
+            return False
         rem = self.remaining_s()
         return rem is not None and rem <= 0
 
@@ -64,12 +82,17 @@ def _stage_budget_profile(profile: str) -> Dict[str, Optional[float]]:
     if p in ("off", "disabled", "none"):
         return {"critical": None, "slow_sources": None, "analytics": None}
     if p in ("tight", "fast"):
-        return {"critical": 35.0, "slow_sources": 25.0, "analytics": 30.0}
-    return {"critical": 45.0, "slow_sources": 35.0, "analytics": 40.0}
+        # slow_sources：环球现货 + 期指 + fundgz 串联可能 >60s；并行纳指仍可能受隔夜 spot 拖累
+        return {"critical": 35.0, "slow_sources": 120.0, "analytics": 30.0}
+    # balanced：隔夜 global_spot 峰值可达 ~160s，需留 NQ（东财）+ fundgz 余量
+    return {"critical": 45.0, "slow_sources": 240.0, "analytics": 40.0}
 
 
 def _provider_key_for_step(step_name: str) -> str:
     n = (step_name or "").strip().lower()
+    # 纳指过程/尾盘：期指优先东财 NQ00Y（futures_global_spot_em），独立节流以免挡指数 K 线
+    if "nq_futures" in n:
+        return "em_global_futures"
     if "yf" in n or "futures" in n:
         return "yfinance"
     if "fundgz" in n:
@@ -88,6 +111,7 @@ def _semaphore_pool(max_concurrency: int) -> Dict[str, Semaphore]:
         "fundgz": Semaphore(1),
         "global_spot": Semaphore(1),
         "akshare_sina": Semaphore(1),
+        "em_global_futures": Semaphore(1),
         "default": Semaphore(min(2, m)),
     }
 
@@ -856,44 +880,11 @@ def _fetch_nikkei_futures_snapshot() -> Dict[str, Any]:
 
 
 def _fetch_nq_futures_snapshot() -> Dict[str, Any]:
-    try:
-        from plugins.merged.fetch_index_data import tool_fetch_index_data  # type: ignore
-    except Exception as e:
-        return {"status": "unavailable", "reason": f"import_error:{e}"}
-    try:
-        resp = tool_fetch_index_data(data_type="global_spot", index_codes="NQ=F", mode="production")
-    except Exception as e:
-        return {"status": "unavailable", "reason": f"query_error:{e}"}
-    rows = (resp or {}).get("data") if isinstance(resp, dict) else None
-    if not isinstance(rows, list):
-        return {"status": "unavailable", "reason": "no_quote"}
-    row = next(
-        (
-            r
-            for r in rows
-            if isinstance(r, dict) and str(r.get("code") or r.get("symbol") or "").strip().upper() == "NQ=F"
-        ),
-        None,
+    from plugins.data_collection.futures.us_mini_index_futures_spot import (
+        fetch_us_mini_index_future_spot,
     )
-    if not isinstance(row, dict):
-        return {"status": "unavailable", "reason": "no_quote"}
-    last = _safe_float(row.get("price"))
-    if last is None:
-        last = _safe_float(row.get("latest_price"))
-    prev = _safe_float(row.get("prev_close"))
-    change_pct = _safe_float(row.get("change_pct"))
-    if change_pct is None and prev not in (None, 0) and last is not None:
-        change_pct = (last - prev) / prev * 100.0
-    if last is None:
-        return {"status": "unavailable", "reason": "no_quote"}
-    return {
-        "status": "ok",
-        "symbol": "NQ=F",
-        "price": last,
-        "prev_close": prev,
-        "change_pct": change_pct,
-        "source": "tool_fetch_index_data:global_spot",
-    }
+
+    return fetch_us_mini_index_future_spot("nq", mode="production")
 
 
 def _nasdaq_futures_weight(monitor_point: str) -> float:
@@ -1236,6 +1227,8 @@ def build_tail_session_report_data(
         if stage not in stage_started_at:
             stage_started_at[stage] = started_at
         sb = stage_budget.get(stage)
+        if enable_optimized and isinstance(sb, _StageBudget):
+            sb.begin_stage_if_needed()
         if enable_optimized and sb and sb.expired():
             skipped_tasks[stage].append(step_name)
             _mark_stage_degraded(stage)
@@ -1321,8 +1314,9 @@ def build_tail_session_report_data(
     }
     stage_p95_targets = {
         "nasdaq_513300": {
-            "PROCESS": {"critical": 85.0, "slow_sources": 95.0, "analytics": 80.0},
-            "M7": {"critical": 60.0, "slow_sources": 70.0, "analytics": 55.0},
+            # 与 cron_balanced slow_sources=240s 及隔夜 global_spot 长尾对齐（仅观测参考，非硬门禁）
+            "PROCESS": {"critical": 85.0, "slow_sources": 260.0, "analytics": 80.0},
+            "M7": {"critical": 60.0, "slow_sources": 200.0, "analytics": 55.0},
         }
     }
     now = _now_sh()
@@ -1404,25 +1398,42 @@ def build_tail_session_report_data(
         rd["tool_fetch_index_hist"] = index_hist
 
     overnight = None
+    nasdaq_nq_prefetch: Optional[Dict[str, Any]] = None
     if enable_optimized and max_concurrency > 1:
-        with ThreadPoolExecutor(max_workers=max(1, int(max_concurrency))) as ex:
-            future_map = {
-                ex.submit(
+        # 纳指：隔夜环球现货往往很慢；NQ（东财 NQ00Y）可与隔夜并行，缩短 slow_sources 墙钟时间
+        pool_workers = max(2, int(max_concurrency)) if market_profile == "nasdaq_513300" else max(1, int(max_concurrency))
+        with ThreadPoolExecutor(max_workers=pool_workers) as ex:
+            future_map: Dict[Any, str] = {}
+            fut_ov = ex.submit(
+                _call_tool,
+                "slow_sources",
+                "fetch_global_spot_for_overnight",
+                tool_fetch_index_data,
+                data_type="global_spot",
+                mode=mode,
+                index_codes="^IXIC,^DJI,^N225,^VIX,CNH=X",
+                source_hint="global_spot",
+            )
+            future_map[fut_ov] = "fetch_global_spot_for_overnight"
+            if market_profile == "nasdaq_513300":
+                fut_nq = ex.submit(
                     _call_tool,
                     "slow_sources",
-                    "fetch_global_spot_for_overnight",
-                    tool_fetch_index_data,
-                    data_type="global_spot",
-                    mode=mode,
-                    index_codes="^IXIC,^DJI,^N225",
-                    source_hint="global_spot",
-                ): "fetch_global_spot_for_overnight"
-            }
+                    "fetch_nq_futures_snapshot",
+                    _fetch_nq_futures_snapshot,
+                )
+                future_map[fut_nq] = "fetch_nq_futures_snapshot"
             for fut in as_completed(future_map):
+                step = future_map[fut]
                 try:
-                    overnight = fut.result()
+                    res = fut.result()
                 except Exception as e:
-                    errors.append({"step": future_map[fut], "error": str(e)})
+                    errors.append({"step": step, "error": str(e)})
+                    res = None
+                if step == "fetch_global_spot_for_overnight":
+                    overnight = res
+                else:
+                    nasdaq_nq_prefetch = res if isinstance(res, dict) else {}
     else:
         overnight = _call_tool(
             "slow_sources",
@@ -1430,7 +1441,7 @@ def build_tail_session_report_data(
             tool_fetch_index_data,
             data_type="global_spot",
             mode=mode,
-            index_codes="^IXIC,^DJI,^N225",
+            index_codes="^IXIC,^DJI,^N225,^VIX,CNH=X",
             source_hint="global_spot",
         )
     if overnight is not None:
@@ -1506,6 +1517,7 @@ def build_tail_session_report_data(
     streak, day_ret, streak_ret = _calc_streak_and_return(closes)
     index_close = close
     index_day_ret_pct = day_ret
+    global_risk_snapshot: Dict[str, Any] = {}
     if market_profile in {"nasdaq_513300", "nikkei_513880"} and isinstance(overnight, dict):
         spot_rows = overnight.get("data")
         if isinstance(spot_rows, list):
@@ -1527,6 +1539,43 @@ def build_tail_session_report_data(
                     index_close = idx_price
                 if idx_ret is not None:
                     index_day_ret_pct = idx_ret
+            if market_profile == "nasdaq_513300":
+                vix_row = next(
+                    (x for x in spot_rows if isinstance(x, dict) and str(x.get("code") or "").strip().upper() == "^VIX"),
+                    None,
+                )
+                if isinstance(vix_row, dict):
+                    vx = _safe_float(vix_row.get("price"))
+                    if vx is None:
+                        vx = _safe_float(vix_row.get("latest_price"))
+                    if vx is not None:
+                        global_risk_snapshot["vix"] = vx
+                        global_risk_snapshot["^VIX"] = vx
+                    vxc = _safe_float(vix_row.get("change_pct"))
+                    if vxc is not None:
+                        global_risk_snapshot["vix_change_pct"] = vxc
+                    global_risk_snapshot["source"] = "tool_fetch_index_data:global_spot"
+                cnh_row = next(
+                    (
+                        x
+                        for x in spot_rows
+                        if isinstance(x, dict)
+                        and str(x.get("code") or "").strip().upper() in {"CNH=X", "USDCNH=X", "USDCNH"}
+                    ),
+                    None,
+                )
+                if isinstance(cnh_row, dict):
+                    fx = _safe_float(cnh_row.get("price"))
+                    if fx is None:
+                        fx = _safe_float(cnh_row.get("latest_price"))
+                    if fx is not None:
+                        global_risk_snapshot["usd_cnh"] = fx
+                        global_risk_snapshot["USDCNH"] = fx
+                    fxc = _safe_float(cnh_row.get("change_pct"))
+                    if fxc is not None:
+                        global_risk_snapshot["usd_cnh_change_pct"] = fxc
+                else:
+                    global_risk_snapshot["usd_cnh_quality"] = "degraded"
 
     # 日经/纳指：期指快照用于偏离代理与日经指数回退
     if market_profile == "nikkei_513880":
@@ -1537,12 +1586,14 @@ def build_tail_session_report_data(
             source_hint="yfinance",
         ) or {}
     else:
-        futures_ref = _call_tool(
-            "slow_sources",
-            "fetch_nq_futures_snapshot",
-            _fetch_nq_futures_snapshot,
-            source_hint="yfinance",
-        ) or {}
+        if nasdaq_nq_prefetch is not None:
+            futures_ref = nasdaq_nq_prefetch
+        else:
+            futures_ref = _call_tool(
+                "slow_sources",
+                "fetch_nq_futures_snapshot",
+                _fetch_nq_futures_snapshot,
+            ) or {}
 
     iopv_source = "realtime" if (iopv_val is not None and premium_pct is not None) else "unavailable"
     manual_iopv = _resolve_manual_iopv(market_cfg, etf_code=etf_code, trade_date=rd["trade_date"])
@@ -1956,6 +2007,7 @@ def build_tail_session_report_data(
         "index_symbol": index_symbol,
         "index_close": index_close,
         "index_day_ret_pct": index_day_ret_pct,
+        "global_risk_snapshot": global_risk_snapshot if market_profile == "nasdaq_513300" else {},
         "ma25": ma25,
         "ma25_dev_pct": ma25_dev,
         "rsi14": rsi14,
@@ -2013,9 +2065,28 @@ def build_tail_session_report_data(
         except Exception as e:
             errors.append({"step": "next_open_predictor", "error": str(e)})
             rd["next_open_direction"] = {"success": False, "reason": "predictor_exception"}
+        try:
+            from plugins.analysis.nasdaq_intraday_guide import build_intraday_guide
+
+            ig = build_intraday_guide(rd)
+            if isinstance(rd.get("analysis"), dict):
+                rd["analysis"]["intraday_guide"] = ig
+        except Exception as e:
+            errors.append({"step": "intraday_guide", "error": str(e)})
     elif market_profile == "nikkei_513880":
         try:
+            from plugins.analysis.nasdaq_next_open_predictor import (
+                _calc_close_to_next_open_labels,
+                _extract_etf_klines,
+            )
             from plugins.analysis.nikkei_next_open_predictor import predict_next_open_direction
+
+            try:
+                _kl0 = _extract_etf_klines(rd)
+                _lb0 = _calc_close_to_next_open_labels(_kl0)
+                rd["next_open_nikkei_samples"] = len(_lb0)
+            except Exception:
+                rd["next_open_nikkei_samples"] = int(rd.get("next_open_nikkei_samples") or 0)
 
             pred = predict_next_open_direction(rd)
             if isinstance(pred, dict) and pred.get("success"):
@@ -2132,10 +2203,15 @@ def build_tail_session_report_data(
         if stage in degraded_stages:
             stage_status = "degraded"
             stage_reason = "timeout_or_partial"
+        t_stage0 = stage_started_at.get(stage)
+        if t_stage0 is None and isinstance(sb, _StageBudget) and sb.started_at is not None:
+            t_stage0 = sb.started_at
+        if t_stage0 is None:
+            t_stage0 = time.perf_counter()
         _record_stage_timing(
             stage_timing,
             stage=stage,
-            started_at=stage_started_at.get(stage, sb.started_at if sb else time.perf_counter()),
+            started_at=t_stage0,
             budget_s=sb.budget_s if sb else None,
             status=stage_status,
             degraded_reason=stage_reason,

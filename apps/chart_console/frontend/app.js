@@ -36,7 +36,9 @@ function setView(view) {
     loadData().catch(() => {});
   }
   if (view === "global-market") {
-    loadGlobalMarketSnapshot(false).catch(() => {});
+    if (!globalMarketManualRebuildInFlight) {
+      loadGlobalMarketSnapshot(false).catch(() => {});
+    }
   }
 }
 
@@ -82,6 +84,8 @@ try {
   charts = null;
 }
 let chartBootLoaded = false;
+/** 手动「重建」进行中时，禁止静默 load 用旧 JSON 覆盖界面（此前与轮询/切 Tab 竞态）。 */
+let globalMarketManualRebuildInFlight = false;
 const state = {
   draw_objects: [],
   layer: { volume: true, macd: true, rsi: true, ma: true },
@@ -550,7 +554,13 @@ async function loadGlobalMarketSnapshot(refresh) {
   const st = qs("globalMarketStatus");
   const btn = qs("btnGlobalMarketRefresh");
   if (!root) return;
-  if (st) st.textContent = refresh ? "刷新中…" : "加载中…";
+
+  if (!refresh && globalMarketManualRebuildInFlight) {
+    if (st) st.textContent = "正在后台重建全球快照…";
+    return;
+  }
+
+  if (st) st.textContent = refresh ? "刷新中（可能需数分钟，请勿切页）…" : "加载中…";
   if (btn) btn.disabled = true;
   const cacheBuster = `t=${Date.now()}`;
   const q = refresh ? `refresh=1&${cacheBuster}` : `refresh=0&${cacheBuster}`;
@@ -566,55 +576,31 @@ async function loadGlobalMarketSnapshot(refresh) {
     }
   };
 
-  const extractFetchedAt = (obj) => String(((obj || {}).data || {}).fetched_at || "");
-
   try {
-    if (!refresh) {
-      const r = await fetchJsonWithTimeout(`/api/semantic/global_market_snapshot?${q}`, 45000);
-      if (!r.success) {
-        if (st) st.textContent = r.message || "加载失败";
-        return;
-      }
-      renderGlobalMarketPage(root, r.data || {});
+    if (refresh) {
+      globalMarketManualRebuildInFlight = true;
+    }
+    const timeoutMs = refresh ? 600000 : 45000;
+    const r = await fetchJsonWithTimeout(`/api/semantic/global_market_snapshot?${q}`, timeoutMs);
+    if (!r.success) {
+      if (st) st.textContent = r.message || (refresh ? "刷新失败" : "加载失败");
       return;
     }
-
-    const before = await fetchJsonWithTimeout(`/api/semantic/global_market_snapshot?refresh=0&t=${Date.now()}`, 20000);
-    const beforeTs = extractFetchedAt(before);
-
-    const refreshPromise = fetchJsonWithTimeout(`/api/semantic/global_market_snapshot?${q}`, 240000);
-    const startedAt = Date.now();
-    const pollMs = 3000;
-    const maxWaitMs = 260000;
-
-    while (Date.now() - startedAt < maxWaitMs) {
-      const finished = await Promise.race([
-        refreshPromise.then((x) => ({ done: true, payload: x })),
-        new Promise((resolve) => setTimeout(() => resolve({ done: false }), pollMs)),
-      ]);
-
-      if (finished && finished.done) {
-        const r = finished.payload || {};
-        if (!r.success) {
-          if (st) st.textContent = r.message || "刷新失败";
-          return;
-        }
-        renderGlobalMarketPage(root, r.data || {});
-        if (st) st.textContent = "已刷新";
-        return;
-      }
-
-      const probe = await fetchJsonWithTimeout(`/api/semantic/global_market_snapshot?refresh=0&t=${Date.now()}`, 20000);
-      if (probe && probe.success && extractFetchedAt(probe) && extractFetchedAt(probe) !== beforeTs) {
-        renderGlobalMarketPage(root, probe.data || {});
-        if (st) st.textContent = "已刷新";
-        return;
-      }
-    }
-    if (st) st.textContent = "刷新超时，请稍后重试";
+    // 状态栏文案由 renderGlobalMarketPage 写入（交易日 / 质量 / 延迟 / 北京时间更新时间）
+    renderGlobalMarketPage(root, r.data || {});
   } catch (e) {
-    if (st) st.textContent = e?.name === "AbortError" ? "刷新超时，请稍后重试" : String(e?.message || e);
+    if (st) {
+      st.textContent =
+        e?.name === "AbortError"
+          ? refresh
+            ? "刷新超时（>10min），请稍后重试或检查网络"
+            : "加载超时"
+          : String(e?.message || e);
+    }
   } finally {
+    if (refresh) {
+      globalMarketManualRebuildInFlight = false;
+    }
     if (btn) btn.disabled = false;
   }
 }

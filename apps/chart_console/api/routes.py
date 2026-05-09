@@ -7,7 +7,7 @@ import pandas as pd
 from .services import ApiServices
 
 # Bump when adding semantic HTTP routes so operators can `curl /api/health` and detect stale processes.
-CHART_CONSOLE_ROUTES_TAG = "2026-05-04_orchestrator_task_runs"
+CHART_CONSOLE_ROUTES_TAG = "2026-05-09_nasdaq_513300_semantic"
 
 
 class ApiRoutes:
@@ -192,6 +192,20 @@ class ApiRoutes:
         if path == "/api/semantic/six_index_next_day":
             trade_date = (query.get("trade_date") or [""])[0]
             return self.svc.get_semantic_six_index_next_day(str(trade_date)), 200, {}
+        if path == "/api/semantic/nasdaq_513300_next_open":
+            trade_date = (query.get("trade_date") or [""])[0]
+            mp = (query.get("monitor_point") or ["M7"])[0]
+            return self.svc.get_semantic_nasdaq_513300_next_open(str(trade_date), str(mp)), 200, {}
+        if path == "/api/semantic/nasdaq_513300_intraday_guide":
+            trade_date = (query.get("trade_date") or [""])[0]
+            mp = (query.get("monitor_point") or ["M7"])[0]
+            return self.svc.get_semantic_nasdaq_513300_intraday_guide(str(trade_date), str(mp)), 200, {}
+        if path == "/api/semantic/nasdaq_513300_premium_history":
+            try:
+                days = int((query.get("days") or ["30"])[0])
+            except Exception:
+                days = 30
+            return self.svc.get_semantic_nasdaq_513300_premium_history(days), 200, {}
         if path == "/api/semantic/global_market_snapshot":
             trade_date = (query.get("trade_date") or [""])[0]
             refresh = str((query.get("refresh") or ["0"])[0]).lower() in ("1", "true", "yes", "on")

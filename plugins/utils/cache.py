@@ -351,3 +351,7 @@ def get_cache_stats(cache_type: Optional[str] = None) -> Dict[str, Any]:
             'memory': _memory_cache.get_stats(),
             'result': _result_cache.get_stats()
         }
+
+
+# plugins/data_collection/a_share_fund_flow.tool_fetch_a_share_fund_flow
+fund_flow_tool_memory_cache = TTLCache(default_ttl=60)

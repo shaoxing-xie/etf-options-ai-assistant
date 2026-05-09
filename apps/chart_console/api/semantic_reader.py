@@ -1827,3 +1827,60 @@ class SemanticReader:
         p = self.root / "data" / "semantic" / "l4_pe_ttm_percentile" / f"{td}_{suf}_wy{wy}.json"
         doc = _read_json(p)
         return doc if isinstance(doc, dict) else {}
+
+    def nasdaq_513300_next_open_semantic(self, trade_date: str = "", monitor_point: str = "M7") -> dict[str, Any]:
+        td = self._resolve_trade_date(trade_date)
+        mp = str(monitor_point or "M7").strip().upper()
+        p = self.root / "data" / "semantic" / "nasdaq_513300_next_open_direction_view" / f"{td}_{mp}.json"
+        doc = _read_json(p)
+        if isinstance(doc, dict):
+            return {"success": True, "data": doc, "trade_date": td, "monitor_point": mp}
+        return {"success": False, "message": "missing_semantic_file", "data": None, "trade_date": td}
+
+    def nasdaq_513300_intraday_guide_semantic(self, trade_date: str = "", monitor_point: str = "M7") -> dict[str, Any]:
+        td = self._resolve_trade_date(trade_date)
+        mp = str(monitor_point or "M7").strip().upper()
+        path = self.root / "data" / "semantic" / "nasdaq_513300_monitor_events" / f"{td}.jsonl"
+        if not path.is_file():
+            return {"success": False, "message": "missing_monitor_events", "data": None, "trade_date": td}
+        ig = None
+        for line in reversed(path.read_text(encoding="utf-8").splitlines()):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                row = json.loads(line)
+            except Exception:
+                continue
+            if not isinstance(row, dict):
+                continue
+            mc = row.get("monitor_context") if isinstance(row.get("monitor_context"), dict) else {}
+            if str(mc.get("monitor_point") or "").strip().upper() != mp:
+                continue
+            ana = row.get("analysis") if isinstance(row.get("analysis"), dict) else {}
+            ig = ana.get("intraday_guide")
+            if ig is not None:
+                break
+        if ig is None:
+            return {"success": False, "message": "intraday_guide_not_found", "data": None, "trade_date": td}
+        return {"success": True, "data": ig, "trade_date": td, "monitor_point": mp}
+
+    def nasdaq_513300_premium_history_semantic(self, days: int = 30) -> dict[str, Any]:
+        base = self.root / "data" / "semantic" / "nasdaq_513300_monitor_events"
+        if not base.is_dir():
+            return {"success": True, "data": {"series": []}}
+        files = sorted([p for p in base.glob("*.jsonl") if p.is_file()], reverse=True)
+        n = max(1, min(int(days), 120))
+        series: list[dict[str, Any]] = []
+        for p in files[:n]:
+            td = p.stem
+            if not validate_screening_date_key(td):
+                continue
+            rows = _read_jsonl(p)
+            if not rows:
+                continue
+            last = rows[-1]
+            snap = last.get("tail_session_snapshot") if isinstance(last.get("tail_session_snapshot"), dict) else {}
+            prem = snap.get("premium_pct")
+            series.append({"trade_date": td, "premium_pct": prem})
+        return {"success": True, "data": {"series": series}}

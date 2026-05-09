@@ -48,6 +48,20 @@ const defaultPythonBin = (() => {
 
 const PYTHON_BIN = defaultPythonBin;
 
+/** 与 `openclaw-data-china-stock` 清单重复；两插件同开时只应由数据插件注册，避免 gateway 报 tool name conflict。 */
+const OPENCLAW_DATA_CHINA_STOCK_OVERLAPPING_TOOL_IDS = new Set([
+  "tool_screen_equity_factors",
+  "tool_screen_by_factors",
+  "tool_l4_valuation_context",
+  "tool_l4_pe_ttm_percentile",
+  "tool_resolve_symbol",
+  "tool_get_entity_meta",
+  "tool_plugin_catalog_digest",
+  "tool_summarize_attempts",
+  "tool_capital_flow",
+  "tool_fetch_a_share_fund_flow",
+]);
+
 const plugin = {
   id: "option-trading-assistant",
   name: "Option Trading Assistant",
@@ -75,11 +89,23 @@ const plugin = {
         description:
           "tool_runner.py 子进程超时（毫秒）。盘后分析 + overlay + 日报发送常超过 60s；与 cron timeoutSeconds≈1200 对齐，默认 20 分钟。",
       },
+      excludeToolIds: {
+        type: "array",
+        items: { type: "string" },
+        description:
+          "不向网关注册这些 tool id（用于与 openclaw-data-china-stock 等同名工具去重，避免 plugin tool name conflict）。",
+      },
+      allowDataPluginToolOverlap: {
+        type: "boolean",
+        default: false,
+        description:
+          "为 true 时仍注册与 openclaw-data-china-stock 重叠的 tool（仅在不加载数据插件时使用；默认 false）。",
+      },
     },
   },
   register(api: OpenClawPluginApi) {
     registerAllTools(api);
-    api.logger.info?.("option-trading-assistant: Registered all tools from manifest");
+    api.logger.info?.("option-trading-assistant: tool registration from manifest finished");
   },
 };
 
@@ -101,14 +127,35 @@ function registerAllTools(api: OpenClawPluginApi) {
       ? Math.floor(toolExecTimeoutMsRaw)
       : 1_200_000;
 
+  const excludeToolIds = new Set<string>();
+  const allowOverlap = config.allowDataPluginToolOverlap === true;
+  if (!allowOverlap) {
+    for (const id of OPENCLAW_DATA_CHINA_STOCK_OVERLAPPING_TOOL_IDS) {
+      excludeToolIds.add(id);
+    }
+  }
+  const excludeRaw = config.excludeToolIds;
+  if (Array.isArray(excludeRaw)) {
+    for (const x of excludeRaw) {
+      if (typeof x === "string" && x.trim().length > 0) {
+        excludeToolIds.add(x.trim());
+      }
+    }
+  }
+
+  let skippedOverlap = 0;
   for (const t of tools) {
     const id = t.id;
+    if (excludeToolIds.has(id)) {
+      skippedOverlap += 1;
+      continue;
+    }
     const parameters = (t.parameters && typeof t.parameters === "object" && "type" in t.parameters)
       ? (t.parameters as { type: string; properties?: Record<string, unknown>; required?: string[] })
       : { type: "object" as const, properties: {} };
   
-  api.registerTool(
-    {
+    api.registerTool(
+      {
         name: id,
         label: t.label || id,
         description: t.description || "",
@@ -122,6 +169,11 @@ function registerAllTools(api: OpenClawPluginApi) {
         },
       },
       { name: id }
+    );
+  }
+  if (skippedOverlap > 0) {
+    api.logger.info?.(
+      `option-trading-assistant: skipped ${skippedOverlap} tool(s) overlapping openclaw-data-china-stock (set allowDataPluginToolOverlap=true to register them).`,
     );
   }
 }

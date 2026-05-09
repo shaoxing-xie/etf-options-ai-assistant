@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 _OPENING_GLOBAL_SPOT_TIMEOUT_S = 8.0
 
 # 与日报外盘推荐集合对齐：美股三大 + 日韩现货开盘参考 + 港股 + 欧股收市口径（开盘前展示更稳定）
-_OPENING_GLOBAL_INDEX_CODES = "^DJI,^GSPC,^IXIC,^N225,^KS11,^HSI,^GDAXI,^STOXX50E,^FTSE"
+_OPENING_GLOBAL_INDEX_CODES = "^DJI,^GSPC,^IXIC,^VIX,^N225,^KS11,^HSI,^GDAXI,^STOXX50E,^FTSE"
 
 # 历史日线口径补齐（上一完整交易日收盘）：当 yfinance/新浪 spot 缺行或缺 change_pct 时补全。
 # 需覆盖隔夜指示三组：美股三大、日/韩、欧股；否则会出现「仅有欧股行、美股空白」等半屏问题。
@@ -43,12 +43,22 @@ _OPENING_GLOBAL_HIST_CODES = (
     "^STOXX50E",
     "^FTSE",
 )
+# 美股三大：新浪 int_dji 等现货常带「日内」微小涨跌且仍非空，会误跳过日线补全。
+_OPENING_US_HIST_FORCE_DAILY = frozenset({"^DJI", "^GSPC", "^IXIC"})
 
 
 def _now_sh() -> datetime:
     if pytz is None:
         return datetime.now()
     return datetime.now(pytz.timezone("Asia/Shanghai"))
+
+
+def _opening_sector_payload_usable(obj: Any) -> bool:
+    """True when send_daily_report can render opening 热点与板块 from tool_sector_heat_score."""
+    if not isinstance(obj, dict):
+        return False
+    sectors = obj.get("sectors")
+    return isinstance(sectors, list) and len(sectors) > 0
 
 
 def _previous_trading_day_yyyymmdd_for_opening_sector() -> str:
@@ -167,15 +177,16 @@ def _stage_budget_profile(profile: str) -> Dict[str, Optional[float]]:
             "analytics": None,
         }
     if p in ("tight", "fast"):
+        # slow_sources：环球 spot + 多路并发；与 tail_session 对齐，避免 global_spot 长尾吃掉尾票
         return {
             "critical": 35.0,
-            "slow_sources": 20.0,
+            "slow_sources": 120.0,
             "analytics": 30.0,
         }
     # balanced
     return {
         "critical": 45.0,
-        "slow_sources": 30.0,
+        "slow_sources": 240.0,
         "analytics": 40.0,
     }
 
@@ -1049,7 +1060,7 @@ def _build_overnight_bias(rd: Dict[str, Any]) -> Dict[str, Any]:
         "target_count": len(_OVERNIGHT_DEFAULT_WEIGHTS),
         "missing_codes": missing_codes,
         "available_weight": round(available_weight, 4),
-        "scope": "A50,^N225,^DJI,^GSPC,^IXIC",
+        "scope": "A50,^N225,^DJI,^GSPC,^IXIC,^VIX",
     }
 
 
@@ -1327,7 +1338,11 @@ def _maybe_fill_opening_global_from_hist(rd: Dict[str, Any], errors: List[Dict[s
     for code in _OPENING_GLOBAL_HIST_CODES:
         rows_preview = _merged_preview_rows()
         existing = _opening_pick_row(rows_preview, code)
-        if _change_pct_is_usable(existing):
+        skip_hist = _change_pct_is_usable(existing)
+        if skip_hist and code in _OPENING_US_HIST_FORCE_DAILY:
+            sem = str((existing or {}).get("data_semantics") or "").strip()
+            skip_hist = sem == "daily_close"
+        if skip_hist:
             continue
         resp = _safe_step(f"fetch_global_index_hist_sina:{code}", tool_fetch_global_index_hist_sina, errors, symbol=code, limit=2)
         if not isinstance(resp, dict) or not resp.get("success"):
@@ -1353,6 +1368,125 @@ def _maybe_fill_opening_global_from_hist(rd: Dict[str, Any], errors: List[Dict[s
             "data": filled_rows,
             "source": "akshare.index_global_hist_sina",
         }
+        mo["indices"] = list(by_code.values())
+        rd["market_overview"] = mo
+
+
+def _ensure_opening_realtime_snapshots(rd: Dict[str, Any], errors: List[Dict[str, str]], mode_inner: str) -> None:
+    """
+    critical 阶段若因预算跳过或采集返回空表，指数/ETF 实时在「开盘实盘」里会整段缺失。
+    在组装 opening_market_snapshot 前做一次轻量补拉（与 critical 相同代码与标的）。
+    """
+    mode = mode_inner if mode_inner in ("production", "test") else "production"
+
+    def _need_refill(tool_key: str) -> bool:
+        t = rd.get(tool_key)
+        rows = _rows_from_tool_data(t)
+        if not rows:
+            return True
+        if isinstance(t, dict) and t.get("success") is False:
+            return True
+        return False
+
+    try:
+        from plugins.merged.fetch_index_data import tool_fetch_index_data
+        from plugins.merged.fetch_etf_data import tool_fetch_etf_data
+    except Exception as e:
+        logger.warning("opening_runner: import realtime refill failed: %s", e)
+        return
+
+    if _need_refill("tool_fetch_index_realtime"):
+        out = _safe_step(
+            "refill_index_realtime_snapshot",
+            tool_fetch_index_data,
+            errors,
+            data_type="realtime",
+            index_code="000300,000016,000001,399006",
+            mode=mode,
+        )
+        if out is not None:
+            rd["tool_fetch_index_realtime"] = out
+    if _need_refill("tool_fetch_etf_realtime"):
+        out = _safe_step(
+            "refill_etf_realtime_snapshot",
+            tool_fetch_etf_data,
+            errors,
+            data_type="realtime",
+            etf_code="510300,510050,510500",
+            mode=mode,
+        )
+        if out is not None:
+            rd["tool_fetch_etf_realtime"] = out
+
+
+def _sync_opening_us_indices_daily(
+    rd: Dict[str, Any], errors: List[Dict[str, str]], *, force: bool = False
+) -> None:
+    """
+    美股三大：保证 ``market_overview`` 内同时存在 ^DJI/^GSPC/^IXIC 的日线昨收涨跌（与 Chart
+    ``tool_fetch_global_index_hist_sina`` 一致）。若仅道指被日线覆盖、标普/纳指仍缺或仍非 daily_close，
+    钉钉「隔夜指示」会只渲染一行美股。
+
+    当三者均已为 daily_close 且涨跌可用时跳过（避免重复请求）；``force=True`` 时始终重拉三指（开盘实盘用）。
+    """
+    try:
+        from plugins.data_collection.index.fetch_global_hist_sina import tool_fetch_global_index_hist_sina
+        from plugins.notification.send_daily_report import (
+            _OPENING_US_CODES,
+            _opening_global_index_rows,
+            _opening_index_code_match,
+            _opening_pick_row,
+        )
+    except Exception as e:
+        logger.warning("opening_runner: import _sync_opening_us_indices_daily failed: %s", e)
+        return
+
+    if not force:
+        rows_prev = _opening_global_index_rows(rd)
+        all_daily = True
+        for c in _OPENING_US_CODES:
+            ex = _opening_pick_row(rows_prev, c)
+            if not (
+                _change_pct_is_usable(ex)
+                and str((ex or {}).get("data_semantics") or "").strip() == "daily_close"
+            ):
+                all_daily = False
+                break
+        if all_daily:
+            return
+
+    mo = rd.get("market_overview")
+    if not isinstance(mo, dict):
+        mo = {}
+    indices = [x for x in (mo.get("indices") or []) if isinstance(x, dict)] if isinstance(mo.get("indices"), list) else []
+    by_code: Dict[str, Any] = {str(x.get("code") or x.get("name") or ""): x for x in indices if (x.get("code") or x.get("name"))}
+
+    changed = False
+    for code in _OPENING_US_CODES:
+        resp = _safe_step(
+            f"sync_us_hist_daily:{code}",
+            tool_fetch_global_index_hist_sina,
+            errors,
+            symbol=code,
+            limit=12,
+        )
+        if not isinstance(resp, dict) or not resp.get("success"):
+            continue
+        row = _hist_resp_to_index_row(code, resp)
+        if not row:
+            continue
+        tmp_rows = _opening_global_index_rows({**rd, "market_overview": {"indices": list(by_code.values())}})
+        ex = _opening_pick_row(tmp_rows, code)
+        if isinstance(ex, dict) and ex.get("name"):
+            row["name"] = ex.get("name")
+        for k in list(by_code.keys()):
+            o = by_code[k]
+            if isinstance(o, dict) and _opening_index_code_match(o.get("code"), code):
+                del by_code[k]
+        by_code[str(row.get("code") or code)] = row
+        changed = True
+
+    if changed:
         mo["indices"] = list(by_code.values())
         rd["market_overview"] = mo
 
@@ -1483,6 +1617,7 @@ def build_opening_report_data(fetch_mode: str = "production") -> Tuple[Dict[str,
 
     # 全球主要指数：用历史日线补齐 spot 缺口（美/日/韩/欧），避免隔夜指示只出半屏
     _maybe_fill_opening_global_from_hist(rd, errors)
+    _sync_opening_us_indices_daily(rd, errors)
 
     pn = _safe_step(
         "fetch_policy_news",
@@ -1671,9 +1806,11 @@ def build_opening_report_data(fetch_mode: str = "production") -> Tuple[Dict[str,
     if sig is not None:
         rd["tool_generate_option_trading_signals"] = sig
 
+    _ensure_opening_realtime_snapshots(rd, errors, mode)
+
     # 开盘数据契约：供发送层按“开盘快照/资金与成交状态/跟踪标的”渲染
-    idx_rows = _rows_from_tool_data(rt_idx)
-    etf_rows = _rows_from_tool_data(rt_etf)
+    idx_rows = _rows_from_tool_data(rd.get("tool_fetch_index_realtime"))
+    etf_rows = _rows_from_tool_data(rd.get("tool_fetch_etf_realtime"))
     tracked_etf = []
     for r in etf_rows[:12]:
         code = str(r.get("code") or r.get("symbol") or "").strip()
@@ -1920,6 +2057,41 @@ def tool_run_opening_analysis_and_send(
                     txt = rule.strip()
                     rd["a_share_regime_note"] = txt if txt.startswith("- ") else f"- {txt}"
 
+        # 板块热度：放在 critical 早期执行，避免与 slow_sources 并发预算抢尾票被取消，
+        # 导致钉钉「热点与板块」长期显示「板块热度暂缺」。
+        sector_td = _previous_trading_day_yyyymmdd_for_opening_sector()
+        if not _guard_budget_or_skip("tool_sector_heat_score"):
+            sector_c = _call_tool(
+                stage,
+                "tool_sector_heat_score",
+                "sector_heat_score",
+                tool_sector_heat_score,
+                errors,
+                date=sector_td,
+            )
+        else:
+            sector_c = None
+        if sector_c is not None:
+            rd["tool_sector_heat_score"] = sector_c
+            rd["sector_heat_ref_trade_date"] = sector_td
+            rd["sector_heat_ref_note"] = (
+                "盘前任务采用上一交易日涨停与板块样本；当日开盘初刻数据可能尚未完整。"
+            )
+
+        # 关键位：放在指数实时大 IO 之前，避免 critical 45s 在 rt 上耗尽后整段被跳过 →「关键位数据暂缺」。
+        kl = None
+        if not _guard_budget_or_skip("tool_compute_index_key_levels"):
+            kl = _call_tool(
+                stage,
+                "tool_compute_index_key_levels",
+                "compute_index_key_levels",
+                tool_compute_index_key_levels,
+                errors,
+                index_code="000300",
+            )
+        if kl is not None:
+            rd["tool_compute_index_key_levels"] = kl
+
         idx_opening = None
         if not _guard_budget_or_skip("tool_fetch_index_opening"):
             idx_opening = _call_tool(
@@ -1965,19 +2137,6 @@ def tool_run_opening_analysis_and_send(
         if rt_etf is not None:
             rd["tool_fetch_etf_realtime"] = rt_etf
 
-        kl = None
-        if not _guard_budget_or_skip("tool_compute_index_key_levels"):
-            kl = _call_tool(
-                stage,
-                "tool_compute_index_key_levels",
-                "compute_index_key_levels",
-                tool_compute_index_key_levels,
-                errors,
-                index_code="000300",
-            )
-        if kl is not None:
-            rd["tool_compute_index_key_levels"] = kl
-
         mo = _merge_market_overview(None, idx_opening)
         if mo:
             rd["market_overview"] = mo
@@ -2010,7 +2169,6 @@ def tool_run_opening_analysis_and_send(
             ("tool_fetch_macro_commodities", "fetch_macro_commodities", tool_fetch_macro_commodities, tuple(), {}),
             ("tool_fetch_overnight_futures_digest", "fetch_overnight_futures_digest", tool_fetch_overnight_futures_digest, tuple(), {"disable_network": False}),
             ("tool_fetch_announcement_digest", "fetch_announcement_digest", tool_fetch_announcement_digest, tuple(), {"max_items": 5, "disable_network": False}),
-            ("tool_sector_heat_score", "sector_heat_score", tool_sector_heat_score, tuple(), {"date": _previous_trading_day_yyyymmdd_for_opening_sector()}),
         ]
 
         skipped_tasks: List[str] = []
@@ -2184,12 +2342,29 @@ def tool_run_opening_analysis_and_send(
         ann = slow_results.get("tool_fetch_announcement_digest")
         if ann is not None:
             rd["tool_fetch_announcement_digest"] = ann
-        sector = slow_results.get("tool_sector_heat_score")
-        if sector is not None:
-            sector_td = rd.get("sector_heat_ref_trade_date") or _previous_trading_day_yyyymmdd_for_opening_sector()
-            rd["tool_sector_heat_score"] = sector
-            rd["sector_heat_ref_trade_date"] = sector_td
-            rd["sector_heat_ref_note"] = "盘前任务采用上一交易日涨停与板块样本；当日开盘初刻数据可能尚未完整。"
+
+        if not _opening_sector_payload_usable(rd.get("tool_sector_heat_score")):
+            sector_td_fill = rd.get("sector_heat_ref_trade_date") or _previous_trading_day_yyyymmdd_for_opening_sector()
+            sector_retry = _safe_step(
+                "sector_heat_score_post_slow_fill",
+                tool_sector_heat_score,
+                errors,
+                date=sector_td_fill,
+            )
+            if isinstance(sector_retry, dict) and _opening_sector_payload_usable(sector_retry):
+                rd["tool_sector_heat_score"] = sector_retry
+                rd["sector_heat_ref_trade_date"] = sector_td_fill
+                rd["sector_heat_ref_note"] = (
+                    "盘前任务采用上一交易日涨停与板块样本；当日开盘初刻数据可能尚未完整。"
+                )
+                rd.setdefault("degraded", {})
+                rd["degraded"]["sector_heat_post_slow_fill"] = True
+
+        # 先写入 spot+opening 合并视图，再日线补全；否则 hist 写入会被 mo2 整表覆盖，
+        # 导致外盘投票恒为 0/5、仅余 Tavily 摘要而无逐点涨跌幅。
+        mo2 = _merge_market_overview(rd.get("tool_fetch_global_index_spot"), rd.get("tool_fetch_index_opening"))
+        if mo2:
+            rd["market_overview"] = mo2
 
         # global hist fill (budgeted best-effort; keep sequential inside helper)
         if not sb.expired():
@@ -2198,9 +2373,8 @@ def tool_run_opening_analysis_and_send(
             if skipped_tasks is not None:
                 skipped_tasks.append("tool_fetch_global_index_hist_sina(fill)")
 
-        mo2 = _merge_market_overview(rd.get("tool_fetch_global_index_spot"), rd.get("tool_fetch_index_opening"))
-        if mo2:
-            rd["market_overview"] = mo2
+        _sync_opening_us_indices_daily(rd, errors)
+
         if not sb.expired():
             _maybe_attach_global_market_tavily_digest(rd, rd.get("tool_fetch_global_index_spot"))
 
@@ -2354,6 +2528,8 @@ def tool_run_opening_analysis_and_send(
         if sig is not None:
             rd["tool_generate_option_trading_signals"] = sig
 
+        _ensure_opening_realtime_snapshots(rd, errors, mode_inner)
+
         # snapshots and runtime context (do not budget-gate; cheap)
         idx_rows = _rows_from_tool_data(rd.get("tool_fetch_index_realtime"))
         etf_rows = _rows_from_tool_data(rd.get("tool_fetch_etf_realtime"))
@@ -2465,6 +2641,12 @@ def tool_run_opening_analysis_and_send(
 
     rv = str(report_variant or "").strip().lower()
     report_data["opening_report_variant"] = "realtime" if rv == "realtime" else "legacy"
+    if rv == "realtime":
+        re_list = report_data.get("runner_errors")
+        if not isinstance(re_list, list):
+            re_list = []
+            report_data["runner_errors"] = re_list
+        _sync_opening_us_indices_daily(report_data, re_list, force=True)
     ah = report_data.get("analysis_health") if isinstance(report_data.get("analysis_health"), dict) else {}
     analysis_degraded = bool(ah.get("status") == "degraded")
     policy_quality = report_data.get("policy_event_quality") if isinstance(report_data.get("policy_event_quality"), dict) else {}

@@ -274,6 +274,14 @@ def test_safe_step_records_error() -> None:
     assert errors == [{"step": "boom_step", "error": "x"}]
 
 
+def test_opening_sector_payload_usable() -> None:
+    from plugins.notification import run_opening_analysis as m
+
+    assert m._opening_sector_payload_usable(None) is False
+    assert m._opening_sector_payload_usable({"success": False, "sectors": []}) is False
+    assert m._opening_sector_payload_usable({"sectors": [{"name": "半导体"}]}) is True
+
+
 def test_build_opening_marks_analysis_health_degraded_when_analysis_missing(
     patch_opening_chain: None,
 ) -> None:

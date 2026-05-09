@@ -45,6 +45,23 @@ def test_confidence_medium_on_normal_day_with_m6_cap() -> None:
     assert out["decision"].get("confidence_reason")
 
 
+def test_discount_converging_raises_p_up_vs_neutral() -> None:
+    from plugins.analysis.nikkei_next_open_predictor import predict_next_open_direction
+
+    gate = {"event_risk": 0.08, "event_triggers": [], "impact_templates": [], "event_note": "ok", "source_status": "ok"}
+    rd_neutral = _base_report_data()
+    rd_neutral["analysis"]["deviation_proxy"] = {"deviation_pct": 0.1, "deviation_trend": "sideways"}
+    rd_neutral["analysis_premium"] = {"quality_status": "ok", "premium_rate_pct": -0.5}
+    with patch("plugins.analysis.nikkei_next_open_predictor.calculate_event_gate", return_value=gate):
+        out_n = predict_next_open_direction(rd_neutral)
+    rd_disc = _base_report_data()
+    rd_disc["analysis"]["deviation_proxy"] = {"deviation_pct": -5.5, "deviation_trend": "converging"}
+    rd_disc["analysis_premium"] = {"quality_status": "ok", "premium_rate_pct": -4.2}
+    with patch("plugins.analysis.nikkei_next_open_predictor.calculate_event_gate", return_value=gate):
+        out_d = predict_next_open_direction(rd_disc)
+    assert float(out_d["decision"]["p_up"]) > float(out_n["decision"]["p_up"])
+
+
 def test_event_gate_integration_exposes_triggers() -> None:
     from plugins.analysis.nikkei_next_open_predictor import predict_next_open_direction
 

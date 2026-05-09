@@ -242,6 +242,23 @@ def _build_market_overview_lines(report_data: Dict[str, Any]) -> List[str]:
             if parts3:
                 lines.append("大宗商品： " + " | ".join(parts3))
 
+    if not lines:
+        g_rows = _opening_global_index_rows(report_data)
+        if g_rows:
+            parts_go: List[str] = []
+            for it in g_rows[:8]:
+                if not isinstance(it, dict):
+                    continue
+                name = it.get("name") or it.get("code") or ""
+                chg = it.get("change_pct")
+                if chg is None:
+                    chg = it.get("change_percent")
+                chg_s = _fmt_pct(chg) or (str(chg) if chg is not None else "N/A")
+                if name:
+                    parts_go.append(f"{name}: {chg_s}")
+            if parts_go:
+                lines.append("外盘/指数概览： " + " | ".join(parts_go))
+
     return lines
 
 
@@ -257,6 +274,8 @@ def _daily_market_outer_overview_is_research_digest(report_data: Dict[str, Any],
 
 def _build_a_share_volume_lines(report_data: Dict[str, Any]) -> List[str]:
     snap = report_data.get("tool_fetch_index_realtime")
+    if not isinstance(snap, dict):
+        snap = report_data.get("tool_fetch_index_data")
     if not isinstance(snap, dict):
         return []
     data = snap.get("data")
@@ -1018,7 +1037,13 @@ def _opening_pick_row(rows: List[Dict[str, Any]], wanted_yf: str) -> Optional[Di
             candidates.append(_normalize_global_row_meta(it))
     if not candidates:
         return None
-    rank = {"realtime_quote": 0, "minute_bar": 1, "daily_close": 2}
+    # 美股三大：盘前「隔夜/昨收」应以完整交易日收盘涨跌为准（与 Chart 全球指数
+    # ``tool_fetch_global_index_hist_sina`` 日线一致），避免新浪 hq 现货日内微幅
+    # 覆盖 yfinance/东财日线。
+    if wanted_yf in ("^DJI", "^GSPC", "^IXIC"):
+        rank = {"daily_close": 0, "minute_bar": 1, "realtime_quote": 2}
+    else:
+        rank = {"realtime_quote": 0, "minute_bar": 1, "daily_close": 2}
     candidates.sort(key=lambda x: rank.get(str(x.get("data_semantics") or ""), 9))
     return candidates[0]
 
@@ -1900,13 +1925,29 @@ def _build_volatility_lines(report_data: Dict[str, Any]) -> List[str]:
 
 
 def _row_price(row: Dict[str, Any]) -> Optional[float]:
-    for k in ("price", "current_price", "last_price", "latest_price", "close", "last_close"):
+    for k in ("price", "current_price", "last_price", "latest_price", "close", "last_close", "最新价", "现价"):
         v = row.get(k)
         try:
             if v is not None:
                 return float(v)
         except Exception:
             continue
+    # 部分主源只给涨跌幅与昨收，不给最新价：用昨收 × (1+涨跌幅%) 反推展示价（与 change_pct 自洽）
+    prev_keys = ("prev_close", "pre_close", "yesterday_close", "昨收", "前收盘")
+    prev = None
+    for pk in prev_keys:
+        try:
+            if row.get(pk) is not None:
+                prev = float(row.get(pk))
+                break
+        except Exception:
+            continue
+    cp = row.get("change_pct") if row.get("change_pct") is not None else row.get("change_percent")
+    try:
+        if prev is not None and cp is not None and prev != 0:
+            return float(prev) * (1.0 + float(cp) / 100.0)
+    except Exception:
+        pass
     return None
 
 
@@ -2031,7 +2072,7 @@ def _build_opening_conclusion_evidence_lines(report_data: Dict[str, Any]) -> Lis
         flat = len([x for x in matched if float(x.get("strength_factor") or 0) == 0])
     matched_count = int(report_data.get("trend_resolution") and report_data.get("trend_resolution").get("matched_count") or report_data.get("matched_count") or (up + down + flat))
     target_count = int(report_data.get("trend_resolution") and report_data.get("trend_resolution").get("target_count") or report_data.get("target_count") or 5)
-    scope = str(report_data.get("scope") or "A50,^N225,^DJI,^GSPC,^IXIC")
+    scope = str(report_data.get("scope") or "A50,^N225,^DJI,^GSPC,^IXIC,^VIX")
     lines = [
         f"外盘投票：上涨 {up} / 下跌 {down} / 中性 {flat}（命中 {matched_count}/{target_count}；口径 {scope}）",
         f"隔夜加权得分：{float(tr.get('overnight_score') or 0.0):.2f}（{report_data.get('overnight_bias_label') or '分化'}）",
@@ -2099,6 +2140,77 @@ def _tail_layer_label(layer_name: str) -> str:
     return m.get(str(layer_name).strip(), str(layer_name))
 
 
+def _repo_root_from_daily_report() -> Path:
+    return Path(__file__).resolve().parents[2]
+
+
+def _semantic_prev_m7_nasdaq_summary(trade_date: str) -> Optional[Dict[str, Any]]:
+    """读取上一交易日 L4 语义文件中 M7 终版（次日开盘预览对照）。"""
+    try:
+        from plugins.notification.run_opening_analysis import _previous_trading_day_ymd
+
+        prev = _previous_trading_day_ymd(trade_date)
+    except Exception:
+        prev = ""
+    if not prev:
+        return None
+    p = _repo_root_from_daily_report() / "data" / "semantic" / "nasdaq_513300_next_open_direction_view" / f"{prev}_M7.json"
+    if not p.is_file():
+        return None
+    try:
+        raw = json.loads(p.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    data = raw.get("data") if isinstance(raw.get("data"), dict) else {}
+    meta = raw.get("_meta") if isinstance(raw.get("_meta"), dict) else {}
+    if isinstance(data, dict):
+        return {
+            "trade_date": prev,
+            "direction": data.get("direction"),
+            "p_up": _safe_float(data.get("p_up")),
+            "confidence_level": data.get("confidence_level"),
+            "predictor_run_kind": meta.get("predictor_run_kind"),
+        }
+    return None
+
+
+def _format_intraday_guide_block(report_data: Dict[str, Any]) -> List[str]:
+    """模式 A：动量-情绪-溢价规则摘要（计划 §4.6）。"""
+    ana = report_data.get("analysis") if isinstance(report_data.get("analysis"), dict) else {}
+    ig = ana.get("intraday_guide") if isinstance(ana.get("intraday_guide"), dict) else {}
+    if not ig:
+        return []
+    snap = report_data.get("tail_session_snapshot") if isinstance(report_data.get("tail_session_snapshot"), dict) else {}
+    etf_code = str(snap.get("etf_code") or "").strip()
+    index_symbol = str(ana.get("index_symbol") or "").strip().upper()
+    if etf_code != "513300" and index_symbol != "^IXIC":
+        return []
+    sig = str(ig.get("signal") or "").strip().upper()
+    wt = _safe_float(ig.get("weight"))
+    tier = str(ig.get("guide_tier") or "").strip().lower()
+    lines: List[str] = []
+    lines.append("### 动量·情绪·溢价规则摘要（模式 A）")
+    lines.append(
+        "> 以下为基于规则与公开数据的非唯一参考倾向（含 BUY/SELL/HOLD 标签），不构成投资建议；请结合自有研究与风险承受能力独立决策。"
+    )
+    if tier == "experimental":
+        lines.append("- **状态**：experimental（待回放门槛验收后可升级为 production；见 `scripts/replay_intraday_guide_513300.py`）")
+    elif tier == "production":
+        lines.append("- **状态**：production（已通过 `data/meta/intraday_guide_replay_gate.json` 门槛）")
+    lines.append(f"- 倾向：**{sig}**（权重≈{_fmt_num(wt, 4) or 'N/A'}）")
+    lines.append(f"- 摘要：{ig.get('rationale') or 'N/A'}")
+    conflicts = ig.get("conflict_flags") if isinstance(ig.get("conflict_flags"), list) else []
+    if conflicts:
+        lines.append(f"- 与偏离/门禁冲突标记：`{', '.join(str(x) for x in conflicts[:5])}`")
+    inp = ig.get("inputs") if isinstance(ig.get("inputs"), dict) else {}
+    if inp:
+        lines.append(
+            f"- 输入快照：NQ动量 {_fmt_pct(inp.get('momentum_pct')) or 'N/A'} / 溢价 {_fmt_pct(inp.get('premium_pct')) or 'N/A'} / VIX {_fmt_num(inp.get('vix'), 2) or 'N/A'} / USD/CNH {_fmt_num(inp.get('usd_cnh'), 4) or 'N/A'}"
+        )
+    lines.append("")
+    return lines
+
+
 def _format_next_open_direction_block(report_data: Dict[str, Any], quick_mode: bool = False) -> List[str]:
     """
     次日开盘方向预测（纳指 513300 尾盘任务扩展字段）。
@@ -2124,26 +2236,52 @@ def _format_next_open_direction_block(report_data: Dict[str, Any], quick_mode: b
     monitor_ctx = report_data.get("monitor_context") if isinstance(report_data.get("monitor_context"), dict) else {}
     monitor_point = str(monitor_ctx.get("monitor_point") or "").strip().upper()
 
-    arrow = "↑" if direction == "up" else ("↓" if direction == "down" else "—")
-    dir_txt = "看涨" if direction == "up" else ("看跌" if direction == "down" else "未知")
+    arrow = (
+        "↑"
+        if direction == "up"
+        else ("↓" if direction == "down" else ("≈" if direction == "flat" else "—"))
+    )
+    dir_txt = (
+        "看涨"
+        if direction == "up"
+        else ("看跌" if direction == "down" else ("中性（无边际）" if direction == "flat" else "未知"))
+    )
     lines: List[str] = []
     lines.append("### 次日开盘方向预测（新增）")
     lines.append("> 预测目标：今日收盘价 → 次交易日开盘价（binary 涨/跌）。")
+    prk = str(prob_debug.get("predictor_run_kind") or "").strip()
+    if prk == "intraday_next_open_preview":
+        lines.append(
+            "- **本时点模式**：`intraday_next_open_preview`（M1–M6 轻量预览；完整 Tavily/LLM/滚动校准仅 M7）"
+        )
+    elif prk == "full_m7":
+        lines.append("- **本时点模式**：`full_m7`（M7 全量终版）")
+    trade_date_r = str(report_data.get("trade_date") or report_data.get("date") or "").strip()
+    mprof = str(report_data.get("market_profile") or "").strip()
+    if mprof == "nasdaq_513300" and monitor_point in {"M1", "M2", "M3", "M4", "M5", "M6"} and trade_date_r:
+        pm7 = _semantic_prev_m7_nasdaq_summary(trade_date_r)
+        if pm7 and pm7.get("p_up") is not None:
+            lines.append(
+                f"- **上一交易日 M7 终版（L4）**：{pm7.get('trade_date')} P(up)={_fmt_num(pm7.get('p_up'), 4)} 方向={pm7.get('direction') or 'N/A'}"
+            )
     if prob is not None:
         lines.append(f"- 方向：{arrow} {dir_txt}")
         lines.append(f"- 概率：**{prob*100:.0f}%**（P(up)={_fmt_num(p_up, 4) or 'N/A'}）")
     else:
         lines.append(f"- 方向：{arrow} {dir_txt}")
         lines.append("- 概率：N/A")
+    edge_mode = str(pred.get("edge_mode") or "").strip()
+    if edge_mode == "no_statistical_edge" and not quick_mode:
+        lines.append("- 边际说明：|P(up)−0.5| 小于阈值，不作强方向结论（与行业「无统计边」口径一致）。")
     lines.append(f"- 置信度：{conf}")
     if confidence_reason:
         lines.append(f"- 置信度说明：{confidence_reason}")
-    source = str(llm_fusion.get("source") or "").strip() or "rule"
+    source = str(llm_fusion.get("source") or pred.get("probability_source") or "").strip() or "rule"
     lines.append(f"- 概率来源：{source}")
     p_raw = _safe_float(prob_debug.get("p_up_raw_pre_gate"))
     p_final = _safe_float(prob_debug.get("p_up_final"))
     if p_raw is not None and p_final is not None:
-        lines.append(f"- 概率口径：raw={_fmt_num(p_raw, 4) or 'N/A'} → final={_fmt_num(p_final, 4) or 'N/A'}（event gate后）")
+        lines.append(f"- 概率口径：raw={_fmt_num(p_raw, 4) or 'N/A'} → final={_fmt_num(p_final, 4) or 'N/A'}（风险收缩与历史基率后）")
     if quick_mode:
         if event_gate:
             er = _safe_float(event_gate.get("event_risk"))
@@ -2382,6 +2520,9 @@ def _format_tail_session_report(
     next_open_block = _format_next_open_direction_block(report_data, quick_mode=next_open_quick)
     if next_open_block:
         lines.extend(next_open_block)
+    ig_block = _format_intraday_guide_block(report_data)
+    if ig_block:
+        lines.extend(ig_block)
 
     if quick_mode:
         lines.append("### 四、偏离代理与门禁")
@@ -3127,8 +3268,9 @@ def _format_daily_report(
 
         def _tool_rows(tool_key: str) -> list[dict]:
             blk = report_data.get(tool_key)
-            if not (isinstance(blk, dict) and blk.get("success") and isinstance(blk.get("data"), list)):
+            if not isinstance(blk, dict) or not isinstance(blk.get("data"), list):
                 return []
+            # 不因 success=false 丢弃非空 data（部分采集链路与网关包装不一致）
             return [x for x in (blk.get("data") or []) if isinstance(x, dict)]
 
         # 兜底：发送层可能已补采 tool_fetch_*，但 runner 早期构造的 opening_market_snapshot 未更新。
@@ -3806,6 +3948,9 @@ def tool_analyze_after_close_and_send_daily_report(
         _drn._merge_extra_report_data_skipping_tool_arg_stubs(rd, extra_report_data)
     _record_stage(stage_timing, "critical_data", critical_started, budgets.get("critical_data"), "ok", "")
 
+    # 全球指数 P0 与外盘概览强相关：必须与「可选补采预算」解耦，避免因 critical 超预算而整段跳过。
+    _drn._maybe_autofill_cron_daily_market_p0(rd)
+
     optional_budget = budgets.get("enrich_optional")
     optional_started = time.perf_counter()
     if optional_budget is not None and stage_timing["critical_data"]["elapsed_ms"] >= int(optional_budget * 1000):
@@ -3816,9 +3961,6 @@ def tool_analyze_after_close_and_send_daily_report(
     ):
         skipped_optional = True
         optional_degraded_reason = "critical_data_budget_hit"
-
-    if not skipped_optional:
-        _drn._maybe_autofill_cron_daily_market_p0(rd)
 
     # P0 自动补齐：避免日报退化为“有模板无内容”
     try:
@@ -4143,25 +4285,29 @@ def tool_analyze_after_close_and_send_daily_report(
         except Exception:
             pass
 
-    if not skipped_optional:
-        _ensure_index_etf_info_blocks()
+    _ensure_index_etf_info_blocks()
 
     # 派生字段：修复日报模板字段对齐
-    gis = rd.get("global_index_spot")
-    if isinstance(gis, dict) and isinstance(gis.get("data"), list):
-        rows = gis.get("data") or []
-        if rows and not isinstance(rd.get("market_overview"), dict):
-            rd["market_overview"] = {
-                "indices": [
-                    {
-                        "name": r.get("name") or r.get("code"),
-                        "code": r.get("code"),
-                        "change_pct": r.get("change_pct"),
-                    }
-                    for r in rows
-                    if isinstance(r, dict)
-                ]
-            }
+    rows: List[Any] = []
+    for gk in ("global_index_spot", "tool_fetch_global_index_spot", "fetch_global_index_spot"):
+        gis = rd.get(gk)
+        if isinstance(gis, dict) and isinstance(gis.get("data"), list) and gis.get("data"):
+            rows = list(gis.get("data") or [])
+            break
+    if rows and not isinstance(rd.get("market_overview"), dict):
+        rd["market_overview"] = {
+            "indices": [
+                {
+                    "name": r.get("name") or r.get("code"),
+                    "code": r.get("code"),
+                    "change_pct": r.get("change_pct")
+                    if r.get("change_pct") is not None
+                    else r.get("change_percent"),
+                }
+                for r in rows
+                if isinstance(r, dict)
+            ]
+        }
     if not rd.get("global_market_digest"):
         mo = rd.get("market_overview") if isinstance(rd.get("market_overview"), dict) else {}
         idx = mo.get("indices") if isinstance(mo.get("indices"), list) else []
